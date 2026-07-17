@@ -145,26 +145,9 @@ fdw config unset logging level
 
 ## SQL connection pooling
 
-Connection pooling reuses open TDS connections across queries to avoid the TCP+TLS+TDS handshake overhead on every call. Resolution order (env var > config > built-in):
-
-| Knob | Env var | Config key | Built-in default |
-|---|---|---|---|
-| Connection pooling enabled | `FABRIC_CONN_POOLING` | `conn_pooling` | true |
-
-Pooling is enabled by default. Disable it only when diagnosing connection issues or when running in an environment where persistent connections are not supported.
-
-To disable connection pooling:
-
-```shell
-fdw config set conn-pooling false
-```
-
-To re-enable pooling (or to revert to the built-in default):
-
-```shell
-fdw config set conn-pooling true
-fdw config unset conn-pooling
-```
+`fabric-dw` explicitly enables the native pooling provided by `mssql-python`
+before connecting. It has no `fabric-dw` configuration key or environment
+variable: pool behaviour is owned entirely by the driver.
 
 ## Telemetry
 
@@ -247,7 +230,7 @@ fdw config clear
 
 ### config set
 
-Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, `conn-pooling`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled`, `logging level`, and `mcp workspace-allowlist` for section-scoped knobs.
+Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled`, `logging level`, and `mcp workspace-allowlist` for section-scoped knobs.
 
 **Synopsis**
 
@@ -258,7 +241,6 @@ fdw config set max-429-retries N
 fdw config set retry-deadline SECONDS
 fdw config set sql-retry-deadline SECONDS
 fdw config set sql-retry-executes true|false
-fdw config set conn-pooling true|false
 fdw config set auth-mode MODE
 fdw config set telemetry disabled true|false
 fdw config set logging level LEVEL
@@ -274,7 +256,6 @@ fdw config set max-429-retries 20
 fdw config set retry-deadline 600
 fdw config set sql-retry-deadline 300
 fdw config set sql-retry-executes true
-fdw config set conn-pooling false
 fdw config set auth-mode interactive
 fdw config set telemetry disabled true
 fdw config set logging level DEBUG
@@ -305,7 +286,7 @@ warehouse  MyWarehouse
 
 ### config unset
 
-Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, `conn-pooling`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled`, `logging level`, and `mcp workspace-allowlist` for section-scoped knobs.
+Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled`, `logging level`, and `mcp workspace-allowlist` for section-scoped knobs.
 
 **Synopsis**
 
@@ -316,7 +297,6 @@ fdw config unset max-429-retries
 fdw config unset retry-deadline
 fdw config unset sql-retry-deadline
 fdw config unset sql-retry-executes
-fdw config unset conn-pooling
 fdw config unset auth-mode
 fdw config unset telemetry disabled
 fdw config unset logging level

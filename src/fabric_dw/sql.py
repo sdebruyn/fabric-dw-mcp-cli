@@ -4,41 +4,16 @@ Public API
 ----------
 - :class:`SqlTarget`          — frozen dataclass identifying a warehouse.
 - :func:`build_connection_string` — augment the raw API connection string.
-- :func:`open_connection`     — checkout a pooled (or fresh) connection; caller closes.
+- :func:`open_connection`     — open a native-driver connection; caller closes.
 - :func:`map_driver_error`    — classify a driver exception → high-level error.
 - :func:`is_transient_connection_error` — True when an exception is a retryable TDS drop.
 - :func:`run_query`           — open connection, execute, fetch, map errors.
 - :func:`run_statements`      — execute multiple DDL statements on ONE connection.
-- :func:`reset_pool`          — drain and physically close all pooled connections.
 
 __all__
 -------
-Only the public names listed below are part of the stable API.  Internal
-helpers (``_pool``, ``_driver``, ``_PooledConnection``, ...) are not exported.
-
-Connection Pool
----------------
-``open_connection`` returns a thin wrapper whose ``.close()`` method returns
-the underlying connection to a per-key LIFO pool instead of physically closing
-it.  The pool is keyed on ``(workspace_id, database, mode)`` and bounded by two
-module-level constants:
-
-``POOL_MAX_IDLE``       — maximum idle connections per key (default 4).
-``POOL_MAX_IDLE_SECS``  — maximum idle age in seconds before eviction (default 300).
-
-Disable pooling by setting the environment variable ``FABRIC_CONN_POOLING``
-to a falsy value (``"0"``, ``"false"``, ``"no"``, or ``"off"``) before
-process startup, or at runtime by assigning the same value and then calling
-:func:`reset_pool` to drain existing connections.  Pooling can also be
-disabled via ``config.toml`` ``[defaults] conn_pooling = false`` (resolution
-order: env var > config > built-in default on).  An empty or whitespace-only
-``FABRIC_CONN_POOLING`` is treated as absent and falls through to the config/default
-layer.  When disabled every ``open_connection`` call opens a fresh physical
-connection and ``.close()`` physically closes it.
-
-Call :func:`reset_pool` on graceful shutdown to close all idle connections.  The
-MCP server lifespan calls ``reset_pool`` in its ``finally`` block so pooled TDS
-connections are drained on server shutdown.
+Only the public names listed below are part of the stable API. Connection
+pooling is provided exclusively by mssql-python.
 """
 
 from __future__ import annotations
@@ -65,46 +40,22 @@ from fabric_dw.sql_pool import (
     _FALSY_STRINGS,  # noqa: F401 (backwards-compat alias)
     _MIN_SQL_RETRY_DEADLINE_S,  # noqa: F401 (test shim: _sql_module._MIN_SQL_RETRY_DEADLINE_S)
     _SQL_RETRY_DEADLINE_S_DEFAULT,  # noqa: F401 (test shim: _sql_module._SQL_RETRY_DEADLINE_S_DEFAULT)
-    POOL_MAX_IDLE,
-    # POOL_MAX_IDLE is read from sql_pool.py's globals by _pool_checkout/_pool_checkin.
-    # Tests that SET POOL_MAX_IDLE to change pool capacity MUST target
-    # fabric_dw.sql_pool.POOL_MAX_IDLE — setting fabric_dw.sql.POOL_MAX_IDLE is a
-    # silent no-op for those callers.
-    POOL_MAX_IDLE_SECS,
     SQL_COPT_SS_ACCESS_TOKEN,
     SQL_LOGIN_TIMEOUT_S,
     SQL_QUERY_TIMEOUT_S,
     _driver,  # noqa: F401 (test shim: _sql_module._driver)
     _get_mssql,  # noqa: F401 (test shim)
-    _is_alive,  # noqa: F401 (backwards-compat alias)
     _load_sql_config,  # noqa: F401 (test shim)
-    _make_pool_key,  # noqa: F401 (backwards-compat alias)
     # _mssql is the import-time value (None). Patching fabric_dw.sql._mssql is a
     # silent no-op because _get_mssql() reads _mssql from sql_pool's own globals,
     # not from sql.py's namespace.  Tests MUST patch fabric_dw.sql_pool._mssql.
     _mssql,  # noqa: F401 (import-time snapshot; do NOT patch via fabric_dw.sql)
-    _pool,  # noqa: F401 (test access: from fabric_dw.sql import _pool; same object as sql_pool._pool)
-    _pool_checkin,  # noqa: F401 (backwards-compat alias)
-    _pool_checkout,  # noqa: F401 (backwards-compat alias)
-    # _pool_enabled is called by bare name via _PooledConnection.close() and
-    # open_connection — both live in sql_pool.py.  Patching fabric_dw.sql._pool_enabled
-    # is a silent no-op for those callers.  Tests that call _pool_enabled() directly
-    # via _sql_module._pool_enabled() call the function (which executes in sql_pool
-    # context) and get the correct result — the function reference is the same object.
-    _pool_enabled,  # noqa: F401 (test access via _sql_module._pool_enabled())
-    _pool_lock,  # noqa: F401 (test access: from fabric_dw.sql import _pool_lock; same object)
-    # _pool_time is called by bare name inside _pool_checkout/_pool_checkin, both in
-    # sql_pool.py.  Tests that patch _pool_time MUST target fabric_dw.sql_pool._pool_time
-    # — patching fabric_dw.sql._pool_time is a silent no-op for those callers.
-    _pool_time,  # noqa: F401 (import-time snapshot; do NOT patch via fabric_dw.sql)
-    _PooledConnection,
     _resolve_sql_retry_deadline_s,
     _resolve_sql_retry_executes,
     _sql_config_cache_clear,  # noqa: F401 (test hook: _sql_module._sql_config_cache_clear())
     _validate_sql_retry_deadline_s,  # noqa: F401 (test shim: _sql_module._validate_sql_retry_deadline_s)
     build_connection_string,
     open_connection,
-    reset_pool,
 )
 
 # Re-export shims rationale (two groups):
@@ -123,10 +74,8 @@ from fabric_dw.sql_pool import (
 # run_query / run_statements, and test accesses such as
 # `_sql_module._SQL_RETRY_DEADLINE_S_DEFAULT`.
 #
-# IMPORTANT — silent no-ops (do NOT patch via fabric_dw.sql):
-#   _mssql        — tests MUST patch fabric_dw.sql_pool._mssql
-#   _pool_time    — tests MUST patch fabric_dw.sql_pool._pool_time
-#   POOL_MAX_IDLE — tests that SET this MUST target fabric_dw.sql_pool.POOL_MAX_IDLE
+# IMPORTANT — tests that monkeypatch the driver must patch
+# ``fabric_dw.sql_pool._mssql`` because ``_get_mssql`` reads that binding.
 #
 # _sql_config_cache and _sql_config_lock are intentionally NOT re-exported:
 # they are mutable state owned by sql_pool; tests that must inject a cached
@@ -135,8 +84,6 @@ from fabric_dw.sql_pool import (
 _log = logging.getLogger(__name__)
 
 __all__ = [
-    "POOL_MAX_IDLE",
-    "POOL_MAX_IDLE_SECS",
     "SQL_COPT_SS_ACCESS_TOKEN",
     "SQL_LOGIN_TIMEOUT_S",
     "SQL_QUERY_TIMEOUT_S",
@@ -147,7 +94,6 @@ __all__ = [
     "is_transient_connection_error",
     "map_driver_error",
     "open_connection",
-    "reset_pool",
     "run_query",
     "run_statements",
     "tenant_from_connection_string_host",
@@ -685,9 +631,6 @@ def run_query(  # noqa: PLR0913, PLR0915
         try:
             result = _execute_and_fetch(conn)
         except Exception as exc:
-            # Mark tainted so close() physically closes instead of pooling.
-            if isinstance(conn, _PooledConnection):
-                conn.mark_discard()
             mapped = map_driver_error(exc)
             if mapped:
                 # Auth/permission/not-found errors are deterministic —
@@ -710,8 +653,7 @@ def run_query(  # noqa: PLR0913, PLR0915
             # Set the deadline on the first execute-phase transient failure.
             if execute_deadline is None:
                 execute_deadline = time.monotonic() + _resolve_sql_retry_deadline_s()
-            # Close the tainted connection before sleeping.  _PooledConnection
-            # is idempotent so a later close() call is a no-op.
+            # Close the tainted connection before sleeping.
             conn.close()
             # Check both guards: attempt cap and wall-clock deadline.
             if execute_attempt >= _max_execute_attempts or time.monotonic() >= execute_deadline:
@@ -735,8 +677,6 @@ def run_query(  # noqa: PLR0913, PLR0915
                 if commit and not autocommit:
                     conn.commit()
             except Exception:
-                if isinstance(conn, _PooledConnection):
-                    conn.mark_discard()
                 conn.close()
                 raise
             conn.close()
@@ -832,8 +772,6 @@ def run_statements(  # noqa: PLR0913
                 if not autocommit and commit_per_statement:
                     conn.commit()
             except Exception as exc:
-                if isinstance(conn, _PooledConnection):
-                    conn.mark_discard()
                 mapped = map_driver_error(exc)
                 if mapped:
                     raise mapped from exc

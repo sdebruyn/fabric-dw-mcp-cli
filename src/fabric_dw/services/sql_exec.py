@@ -280,14 +280,7 @@ async def get_plan(
     then concatenates the first column of every returned row (the standard SQL
     Server Showplan column, read positionally to avoid locale/version sensitivity).
     ``SET SHOWPLAN_XML OFF`` is guaranteed to run in a ``finally`` block before
-    the connection is closed or returned to the pool.
-
-    **Pool-safety guarantee:** if ``SET SHOWPLAN_XML OFF`` itself raises, the
-    connection is marked for physical discard (via
-    :meth:`~fabric_dw.sql._PooledConnection.mark_discard`) before ``close()``
-    is called.  This prevents a poisoned connection with
-    ``SHOWPLAN_XML`` still ``ON`` from being checked back into the pool and
-    corrupting the next query on that connection.
+    the connection is closed.
 
     The query is **not** executed under ``SHOWPLAN_XML`` — only the estimated
     plan is returned.  This means DDL/DML query text is safe to plan without
@@ -345,26 +338,19 @@ async def get_plan(
                     raise
                 finally:
                     # Always attempt to restore SHOWPLAN_XML to OFF before the
-                    # connection is closed or returned to the pool.  If the OFF
-                    # command itself fails, mark the connection for physical discard
-                    # so it is never returned to the pool with SHOWPLAN_XML still ON
-                    # (which would poison the next query on that connection).
+                    # connection is closed.
                     #
                     # When the main body already raised an exception (_exc_in_flight),
                     # we suppress the OFF exception so the original error propagates
                     # unmodified.  When the main body succeeded, we let the OFF
-                    # exception propagate (which also ensures mark_discard is called).
+                    # exception propagate.
                     #
                     # BaseException (KeyboardInterrupt, SystemExit) that fires inside
                     # the try body also sets _exc_in_flight via the `except BaseException`
-                    # block above, so the OFF failure is suppressed and mark_discard is
-                    # still called in that case too.
+                    # block above, so the OFF failure is suppressed in that case too.
                     try:
                         cursor.execute("SET SHOWPLAN_XML OFF")
                     except Exception:
-                        # Discard the connection: it must not re-enter the pool.
-                        if isinstance(conn, sql._PooledConnection):
-                            conn.mark_discard()
                         if not _exc_in_flight:
                             # No original exception — propagate the OFF failure.
                             raise

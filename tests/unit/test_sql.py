@@ -26,7 +26,6 @@ from fabric_dw.sql import (
     is_auth_failed_message,
     is_transient_connection_error,
     map_driver_error,
-    reset_pool,
     run_query,
     run_statements,
 )
@@ -73,25 +72,6 @@ def _patch_mssql(monkeypatch: pytest.MonkeyPatch, mock_mssql: MagicMock) -> None
     binding.
     """
     monkeypatch.setattr(_sql_pool_module, "_mssql", mock_mssql)
-
-
-# ---------------------------------------------------------------------------
-# Autouse fixture: disable pooling for legacy tests that check physical closes
-#
-# The connection pool intercepts .close() calls and returns connections to the
-# pool instead of physically closing them.  Legacy tests that assert
-# mock_conn.close.assert_called_once() were written before pooling existed.
-# This autouse fixture disables the pool globally for every test in this
-# module and drains any leftover pool state, so those tests remain intact.
-# Pool-specific tests below re-enable pooling locally with monkeypatch.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _disable_pool_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Disable the connection pool for all tests unless they opt in."""
-    monkeypatch.setenv("FABRIC_CONN_POOLING", "0")
-    reset_pool()
 
 
 # ---------------------------------------------------------------------------
@@ -236,8 +216,27 @@ class TestOpenConnection:
         from fabric_dw.sql import open_connection  # noqa: PLC0415
 
         conn = open_connection(_make_target())
-        # The returned object is a _PooledConnection wrapper; its _raw is the mock_conn.
-        assert conn._raw is mock_conn  # type: ignore[attr-defined]
+        assert conn is mock_conn
+
+    def test_enables_native_driver_pooling_before_connect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_mssql, _, _ = _make_mock_mssql()
+        calls: list[str] = []
+        mock_mssql.pooling.side_effect = lambda **_kwargs: calls.append("pooling")
+        def _connect(*_args: object, **_kwargs: object) -> MagicMock:
+            calls.append("connect")
+            return MagicMock()
+
+        mock_mssql.connect.side_effect = _connect
+        _patch_mssql(monkeypatch, mock_mssql)
+
+        from fabric_dw.sql import open_connection  # noqa: PLC0415
+
+        open_connection(_make_target())
+        assert mock_mssql.pooling.call_args.kwargs == {"enabled": True}
+        assert calls == ["pooling", "connect"]
+        assert [record[0] for record in mock_mssql.method_calls[:2]] == ["pooling", "connect"]
 
     def test_driver_called_with_augmented_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_mssql, _, _ = _make_mock_mssql()
@@ -923,221 +922,15 @@ class TestRunStatements:
 
 
 # ---------------------------------------------------------------------------
-# Connection pool tests
+# Native driver pooling
 # ---------------------------------------------------------------------------
 
 
-class TestConnectionPool:
-    """Tests for the LIFO connection pool integrated into open_connection."""
-
-    @pytest.fixture(autouse=True)
-    def _enable_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Enable the pool for all tests in this class and drain it after."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "1")
-        reset_pool()
-
-    def test_pool_reuse_same_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Two sequential open_connection calls with the same key reuse one underlying conn."""
-        mock_mssql, mock_conn, _ = _make_mock_mssql()
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        from fabric_dw.sql import open_connection  # noqa: PLC0415
-
-        target = _make_target()
-        # First checkout: opens a fresh physical connection.
-        conn1 = open_connection(target)
-        assert mock_mssql.connect.call_count == 1
-        conn1.close()  # returns underlying to pool
-
-        # Second checkout: reuses the pooled connection (connect not called again).
-        conn2 = open_connection(target)
-        assert mock_mssql.connect.call_count == 1
-        assert conn2._raw is mock_conn  # type: ignore[attr-defined]
-        conn2.close()
-
-    def test_different_keys_do_not_share(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Connections for different targets/modes are never shared."""
-        mock_mssql, _, _ = _make_mock_mssql()
-
-        conn_a = MagicMock()
-        conn_b = MagicMock()
-        mock_mssql.connect.side_effect = [conn_a, conn_b]
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        from fabric_dw.sql import open_connection  # noqa: PLC0415
-
-        target_a = _make_target(workspace_id="ws-A")
-        target_b = _make_target(workspace_id="ws-B")
-
-        ca = open_connection(target_a)
-        ca.close()
-        cb = open_connection(target_b)
-        # Each key always opened its own fresh connection.
-        assert mock_mssql.connect.call_count == 2
-        assert cb._raw is conn_b  # type: ignore[attr-defined]
-        cb.close()
-
-    def test_idle_eviction_on_checkout(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A connection older than POOL_MAX_IDLE_SECS is discarded on checkout."""
-        mock_mssql, mock_conn_old, _ = _make_mock_mssql()
-        mock_conn_fresh = MagicMock()
-        mock_mssql.connect.side_effect = [mock_conn_old, mock_conn_fresh]
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        import fabric_dw.sql as sql_mod  # noqa: PLC0415
-        from fabric_dw.sql import open_connection  # noqa: PLC0415
-
-        # Patch _pool_time BEFORE checkin so the stored timestamp is deterministic.
-        # _pool_time is called in order:
-        #   1. first open_connection → _pool_checkout (pool empty, doesn't use the time)
-        #   2. conn1.close() → _pool_checkin stores t=0.0
-        #   3. second open_connection → _pool_checkout sees now=idle_limit+1.0
-        #      → age = idle_limit+1.0 - 0.0 = idle_limit+1.0 > idle_limit → eviction
-        idle_limit = sql_mod.POOL_MAX_IDLE_SECS
-        # Provide enough values:
-        #   42.0 → first checkout (pool empty, value consumed but irrelevant)
-        #   0.0  → checkin timestamp stored for conn_old
-        #   idle_limit+1.0 → now during second checkout, triggers eviction
-        #   999.0 → checkin timestamp for conn2 after the test
-        fake_times = iter([42.0, 0.0, idle_limit + 1.0, 999.0])
-
-        def _fake_time() -> float:
-            return next(fake_times)
-
-        # _pool_time is called by bare name inside _pool_checkout/_pool_checkin,
-        # both of which live in sql_pool.py.  Must patch sql_pool's own binding.
-        monkeypatch.setattr(_sql_pool_module, "_pool_time", _fake_time)
-
-        # Put the first conn into the pool (checkin stores t=0.0).
-        conn1 = open_connection(_make_target())
-        conn1.close()
-        assert mock_mssql.connect.call_count == 1
-
-        # Checkout sees t=idle_limit+1, age=idle_limit+1 > idle_limit — evicts.
-        conn2 = open_connection(_make_target())
-        assert mock_mssql.connect.call_count == 2
-        assert conn2._raw is mock_conn_fresh  # type: ignore[attr-defined]
-        # The old connection must have been physically closed.
-        mock_conn_old.close.assert_called_once()
-        conn2.close()
-
-    def test_dead_connection_discarded_on_checkout(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A connection whose .closed attribute is truthy is discarded and a fresh one opened."""
-        mock_mssql, mock_conn_dead, _ = _make_mock_mssql()
-        mock_conn_fresh = MagicMock()
-        mock_mssql.connect.side_effect = [mock_conn_dead, mock_conn_fresh]
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        from fabric_dw.sql import open_connection  # noqa: PLC0415
-
-        target = _make_target()
-        conn1 = open_connection(target)
-        conn1.close()  # conn_dead is now pooled
-
-        # Mark the pooled connection as closed (simulates server-side closure).
-        mock_conn_dead.closed = 1
-
-        conn2 = open_connection(target)
-        assert mock_mssql.connect.call_count == 2, "fresh conn should have been opened"
-        assert conn2._raw is mock_conn_fresh  # type: ignore[attr-defined]
-        conn2.close()
-
-    def test_failed_query_does_not_pool_connection(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """After a query exception the tainted connection is NOT returned to the pool."""
-        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
-        mock_cursor.execute.side_effect = Exception("network error")
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        with pytest.raises(Exception, match="network error"):
-            run_query(_make_target(), "SELECT 1")
-
-        # The tainted connection must have been physically closed.
-        mock_conn.close.assert_called_once()
-
-        # Pool should be empty — the next call must open a fresh connection.
-        mock_cursor2 = MagicMock()
-        mock_cursor2.description = []
-        mock_cursor2.fetchall.return_value = []
-        mock_conn2 = MagicMock()
-        mock_conn2.cursor.return_value = mock_cursor2
-        mock_mssql.connect.return_value = mock_conn2
-        mock_cursor2.execute.side_effect = None  # no error this time
-
-        run_query(_make_target(), "SELECT 1", fetch="none")
-        assert mock_mssql.connect.call_count == 2
-
-    def test_pool_disabled_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FABRIC_CONN_POOLING=0 disables the pool — every call opens+closes."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "0")
-
-        mock_mssql, mock_conn, _ = _make_mock_mssql()
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        run_query(_make_target(), "SELECT 1")
-        run_query(_make_target(), "SELECT 1")
-
-        # With pool disabled two calls must open two physical connections.
-        assert mock_mssql.connect.call_count == 2
-        # Both connections must be physically closed (not pooled).
-        assert mock_conn.close.call_count == 2
-
-    def test_reset_pool_physically_closes_all(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """reset_pool() drains the pool and physically closes every connection."""
-        mock_mssql, _, _ = _make_mock_mssql()
-        conns = [MagicMock() for _ in range(3)]
-        mock_mssql.connect.side_effect = list(conns)
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        from fabric_dw.sql import open_connection  # noqa: PLC0415
-
-        target = _make_target()
-        # Check out all 3 concurrently (hold them open), then return all to pool.
-        # Sequential open/close would reuse the pooled conn each time.
-        checked_out = [open_connection(target) for _ in range(3)]
-        for c in checked_out:
-            c.close()  # return each to pool
-
-        assert mock_mssql.connect.call_count == 3
-
-        reset_pool()
-
-        for conn in conns:
-            conn.close.assert_called_once()
-
-    def test_max_idle_cap_per_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Pool never grows beyond POOL_MAX_IDLE per key; excess are physically closed."""
-        # POOL_MAX_IDLE is read from sql_pool.py's globals by _pool_checkin.
-        # Must target sql_pool's own binding, not the re-export shim in sql.py.
-        original_max = _sql_pool_module.POOL_MAX_IDLE
-        _sql_pool_module.POOL_MAX_IDLE = 2
-        try:
-            mock_mssql, _, _ = _make_mock_mssql()
-            conns = [MagicMock() for _ in range(4)]
-            mock_mssql.connect.side_effect = list(conns)
-            _patch_mssql(monkeypatch, mock_mssql)
-
-            from fabric_dw.sql import _pool, _pool_lock, open_connection  # noqa: PLC0415
-
-            target = _make_target()
-            checked_out = [open_connection(target) for _ in range(4)]
-            for c in checked_out:
-                c.close()  # attempt to pool all 4
-
-            with _pool_lock:
-                key = ("ws-1", "db-1", "default")
-                pool_size = len(_pool.get(key, []))
-
-            assert pool_size == 2, f"expected 2 idle, got {pool_size}"
-            # The two excess connections must have been physically closed.
-            closed_count = sum(1 for c in conns if c.close.called)
-            assert closed_count == 2
-        finally:
-            _sql_pool_module.POOL_MAX_IDLE = original_max
-
-    def test_run_statements_checks_out_once_checks_in_once(
+class TestNativeDriverPooling:
+    def test_run_statements_opens_one_connection(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """run_statements opens exactly one connection for multiple statements."""
+        """run_statements opens exactly one native-driver connection for a batch."""
         mock_mssql, _, _ = _make_mock_mssql()
         _patch_mssql(monkeypatch, mock_mssql)
 
@@ -1940,55 +1733,6 @@ class TestOpenConnectionOidcTokenInjection:
 
         assert SQL_COPT_SS_ACCESS_TOKEN == 1256
 
-    def test_oidc_pool_hit_does_not_call_connect(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Pool HIT under OIDC must NOT call connect and must NOT invoke get_sql_token_struct.
-
-        On the first call a new physical connection is opened (pool miss).
-        After .close() returns the connection to the pool, the second call must
-        return the cached connection without acquiring a token — verifying that
-        the token acquisition is gated behind the pool-miss path.
-        """
-        import struct  # noqa: PLC0415
-
-        mock_mssql, mock_conn, _ = _make_mock_mssql()
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        # Enable the pool for this test.
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "1")
-        reset_pool()
-
-        # Track how many times the token stub is invoked.
-        token_call_count = 0
-
-        token_bytes = b"fake-oidc-token"
-        fake_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
-
-        def _counting_token_stub(*_a: object, **_kw: object) -> bytes:
-            nonlocal token_call_count
-            token_call_count += 1
-            return fake_struct
-
-        monkeypatch.setattr(_sql_pool_module, "get_sql_token_struct", _counting_token_stub)
-
-        from fabric_dw.sql import open_connection  # noqa: PLC0415
-
-        target = _make_target()
-
-        # First call: pool miss → opens a new physical connection, acquires token.
-        conn1 = open_connection(target)
-        assert mock_mssql.connect.call_count == 1
-        assert token_call_count == 1
-        conn1.close()  # return to pool
-
-        # Second call: pool HIT → must reuse cached connection, not call connect,
-        # and must NOT invoke get_sql_token_struct at all.
-        conn2 = open_connection(target)
-        assert mock_mssql.connect.call_count == 1, "connect must NOT be called on pool hit"
-        assert token_call_count == 1, "get_sql_token_struct must NOT be called on pool hit"
-        assert conn2._raw is mock_conn  # type: ignore[attr-defined]
-        conn2.close()
-
-
 # ---------------------------------------------------------------------------
 # D01 — params contract: sequence passed as second positional arg, not unpacked
 # ---------------------------------------------------------------------------
@@ -2090,66 +1834,6 @@ class TestNativeErrorRegex:
 
 
 # ---------------------------------------------------------------------------
-# D06 -- pool checkin evicts stale entries from the full slot list
-# ---------------------------------------------------------------------------
-
-
-class TestPoolCheckinEvictsStale:
-    """D06: _pool_checkin must sweep and evict expired connections from the entire slot list."""
-
-    @pytest.fixture(autouse=True)
-    def _enable_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "1")
-        reset_pool()
-
-    def test_stale_bottom_layer_evicted_on_checkin(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A connection buried below the top of the LIFO stack is evicted on next checkin.
-
-        Scenario:
-        1. Open conn_a and conn_b (both from the same key).
-        2. Close conn_a (checkin at t=0) -> slot list = [(conn_a, 0)].
-        3. Close conn_b (checkin at t=expired+5) -> sweep evicts conn_a;
-           adds conn_b -> slot list = [(conn_b, expired+5)].
-        """
-        import fabric_dw.sql as sql_mod  # noqa: PLC0415
-        from fabric_dw.sql import _pool, _pool_lock, open_connection  # noqa: PLC0415
-
-        mock_mssql, _, _ = _make_mock_mssql()
-        conn_a = MagicMock()
-        conn_b = MagicMock()
-        mock_mssql.connect.side_effect = [conn_a, conn_b]
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        idle_limit = sql_mod.POOL_MAX_IDLE_SECS
-        # _pool_time is called for:
-        #   checkout 1 (pool empty): t=1.0 (irrelevant -- no stored timestamp)
-        #   checkout 2 (pool empty): t=2.0 (irrelevant)
-        #   checkin conn_a:          t=0.0  <- stored as last_used
-        #   checkin conn_b (now):    t=idle_limit+5.0
-        #     -> age of conn_a = idle_limit+5.0 > idle_limit => evict
-        fake_times = iter([1.0, 2.0, 0.0, idle_limit + 5.0])
-        # _pool_time is called by bare name inside _pool_checkin, which lives in
-        # sql_pool.py.  Must patch sql_pool's own binding, not the shim in sql.py.
-        monkeypatch.setattr(_sql_pool_module, "_pool_time", lambda: next(fake_times))
-
-        target = _make_target()
-        wrap_a = open_connection(target)
-        wrap_b = open_connection(target)
-
-        wrap_a.close()  # checkin at t=0.0
-        wrap_b.close()  # checkin at t=idle_limit+5 -> sweeps and evicts conn_a
-
-        with _pool_lock:
-            key = ("ws-1", "db-1", "default")
-            slots = _pool.get(key, [])
-            pool_conns = [s[0] for s in slots]
-
-        assert conn_a not in pool_conns, "stale conn_a should have been evicted on checkin"
-        assert conn_b in pool_conns, "fresh conn_b should remain in pool"
-        conn_a.close.assert_called_once()  # physically closed
-
-
-# ---------------------------------------------------------------------------
 # D10 -- retry boundary: DML (fetch="none") must NOT be retried on execute error
 # ---------------------------------------------------------------------------
 
@@ -2209,9 +1893,7 @@ class TestD10RetryBoundary:
 
         assert rows == [(42,)]
         assert mock_mssql.connect.call_count == 2
-        # _PooledConnection.close() is idempotent; despite being called once
-        # explicitly (retry path) and once in the outer finally, the underlying
-        # bad_conn must receive close() exactly once.
+        # The retry path closes the failed raw connection before reopening.
         bad_conn.close.assert_called_once()
 
     def test_fetch_one_retried_once_on_transient_execute_error(
@@ -2238,62 +1920,6 @@ class TestD10RetryBoundary:
 
         assert rows == [(99,)]
         assert mock_mssql.connect.call_count == 2
-
-
-# ---------------------------------------------------------------------------
-# D23 -- pool reset: rollback called before checkin so next caller starts clean
-# ---------------------------------------------------------------------------
-
-
-class TestD23PoolRollbackOnReturn:
-    """D23: _PooledConnection.close() must call rollback() before returning to pool."""
-
-    @pytest.fixture(autouse=True)
-    def _enable_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "1")
-        reset_pool()
-
-    def test_rollback_called_before_checkin(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Closing a healthy pooled connection must call rollback() on the underlying conn."""
-        mock_mssql, mock_conn, _ = _make_mock_mssql()
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        from fabric_dw.sql import open_connection  # noqa: PLC0415
-
-        conn = open_connection(_make_target())
-        conn.close()
-
-        mock_conn.rollback.assert_called_once()
-        # The underlying must NOT have been physically closed (it went to pool).
-        mock_conn.close.assert_not_called()
-
-    def test_rollback_not_called_when_discarded(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """mark_discard() must skip rollback and physically close instead."""
-        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
-        mock_cursor.execute.side_effect = Exception("network error")
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        with pytest.raises(Exception, match="network error"):
-            run_query(_make_target(), "SELECT 1")
-
-        # Tainted connection must be physically closed, not rolled back then pooled.
-        mock_conn.close.assert_called_once()
-        mock_conn.rollback.assert_not_called()
-
-    def test_successful_run_query_rolls_back_before_pool(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A successful SELECT must roll back before returning connection to pool."""
-        mock_mssql, mock_conn, mock_cursor = _make_mock_mssql()
-        mock_cursor.description = [("n",)]
-        mock_cursor.fetchall.return_value = [(1,)]
-        _patch_mssql(monkeypatch, mock_mssql)
-
-        run_query(_make_target(), "SELECT 1")
-
-        # rollback called on pool return; underlying NOT physically closed.
-        mock_conn.rollback.assert_called_once()
-        mock_conn.close.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -3459,114 +3085,6 @@ class TestSqlRetryExecutes:
         assert mock_mssql.connect.call_count == 1, (
             "DML (fetch='none') must not retry on execute-phase transient errors by default"
         )
-
-
-# ---------------------------------------------------------------------------
-# _pool_enabled — 3-layer precedence (env > config > default True)
-# ---------------------------------------------------------------------------
-
-
-class TestPoolEnabledConfig:
-    """_pool_enabled follows the 3-layer rule: env > config > built-in True.
-
-    Note: the module-level ``_disable_pool_by_default`` autouse fixture sets
-    ``FABRIC_CONN_POOLING=0`` for every test in this module.  Tests that need to
-    remove the env var entirely (to test config or default fall-through) call
-    ``monkeypatch.delenv("FABRIC_CONN_POOLING", raising=False)`` to undo it.
-    """
-
-    def test_env_zero_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FABRIC_CONN_POOLING=0 disables pooling even when config says True."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "0")
-        cfg = UserConfig(defaults=Defaults(conn_pooling=True))
-        _sql_pool_module._sql_config_cache = cfg
-        assert _sql_module._pool_enabled() is False
-
-    def test_env_one_enables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FABRIC_CONN_POOLING=1 enables pooling even when config says False."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "1")
-        cfg = UserConfig(defaults=Defaults(conn_pooling=False))
-        _sql_pool_module._sql_config_cache = cfg
-        assert _sql_module._pool_enabled() is True
-
-    def test_env_false_string_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FABRIC_CONN_POOLING=false (string) disables pooling."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "false")
-        assert _sql_module._pool_enabled() is False
-
-    def test_env_off_string_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FABRIC_CONN_POOLING=off (string) disables pooling."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "off")
-        assert _sql_module._pool_enabled() is False
-
-    def test_env_no_string_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FABRIC_CONN_POOLING=no (string) disables pooling."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "no")
-        assert _sql_module._pool_enabled() is False
-
-    def test_env_empty_string_falls_through_to_default_on(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """FABRIC_CONN_POOLING='' (empty string) is treated as absent — pooling stays ON.
-
-        An empty placeholder (e.g. Docker ``ENV FABRIC_CONN_POOLING=``) must not
-        silently disable pooling.  Only a non-empty falsy value disables it.
-        """
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "")
-        assert _sql_module._pool_enabled() is True
-
-    def test_env_whitespace_only_falls_through_to_default_on(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """FABRIC_CONN_POOLING='  ' (whitespace only) is treated as absent — pooling stays ON."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "   ")
-        assert _sql_module._pool_enabled() is True
-
-    def test_env_true_string_enables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FABRIC_CONN_POOLING=true enables pooling."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "true")
-        assert _sql_module._pool_enabled() is True
-
-    def test_env_any_non_falsy_string_enables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Any non-falsy FABRIC_CONN_POOLING value enables pooling."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "yes")
-        assert _sql_module._pool_enabled() is True
-
-    def test_config_false_disables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Config conn_pooling=False disables pooling when env var is absent."""
-        monkeypatch.delenv("FABRIC_CONN_POOLING", raising=False)
-        cfg = UserConfig(defaults=Defaults(conn_pooling=False))
-        _sql_pool_module._sql_config_cache = cfg
-        assert _sql_module._pool_enabled() is False
-
-    def test_config_true_enables_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Config conn_pooling=True enables pooling when env var is absent."""
-        monkeypatch.delenv("FABRIC_CONN_POOLING", raising=False)
-        cfg = UserConfig(defaults=Defaults(conn_pooling=True))
-        _sql_pool_module._sql_config_cache = cfg
-        assert _sql_module._pool_enabled() is True
-
-    def test_falls_back_to_true_when_no_env_no_config(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """When neither env var nor config is set, pooling is enabled (default True)."""
-        monkeypatch.delenv("FABRIC_CONN_POOLING", raising=False)
-        # _isolate_sql_config autouse fixture already cleared the cache.
-        assert _sql_module._pool_enabled() is True
-
-    def test_config_none_falls_back_to_true(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Config conn_pooling=None (unset) falls through to the built-in True default."""
-        monkeypatch.delenv("FABRIC_CONN_POOLING", raising=False)
-        cfg = UserConfig(defaults=Defaults(conn_pooling=None))
-        _sql_pool_module._sql_config_cache = cfg
-        assert _sql_module._pool_enabled() is True
-
-    def test_env_wins_over_config_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FABRIC_CONN_POOLING=1 wins over config conn_pooling=False."""
-        monkeypatch.setenv("FABRIC_CONN_POOLING", "1")
-        cfg = UserConfig(defaults=Defaults(conn_pooling=False))
-        _sql_pool_module._sql_config_cache = cfg
-        assert _sql_module._pool_enabled() is True
 
 
 # ---------------------------------------------------------------------------
