@@ -224,6 +224,7 @@ class TestOpenConnection:
         mock_mssql, _, _ = _make_mock_mssql()
         calls: list[str] = []
         mock_mssql.pooling.side_effect = lambda **_kwargs: calls.append("pooling")
+
         def _connect(*_args: object, **_kwargs: object) -> MagicMock:
             calls.append("connect")
             return MagicMock()
@@ -927,9 +928,7 @@ class TestRunStatements:
 
 
 class TestNativeDriverPooling:
-    def test_run_statements_opens_one_connection(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_run_statements_opens_one_connection(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """run_statements opens exactly one native-driver connection for a batch."""
         mock_mssql, _, _ = _make_mock_mssql()
         _patch_mssql(monkeypatch, mock_mssql)
@@ -1732,6 +1731,7 @@ class TestOpenConnectionOidcTokenInjection:
         from fabric_dw.sql import SQL_COPT_SS_ACCESS_TOKEN  # noqa: PLC0415
 
         assert SQL_COPT_SS_ACCESS_TOKEN == 1256
+
 
 # ---------------------------------------------------------------------------
 # D01 — params contract: sequence passed as second positional arg, not unpacked

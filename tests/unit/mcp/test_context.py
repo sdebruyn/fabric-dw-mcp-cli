@@ -240,6 +240,7 @@ class TestFabricLifespan:
         # __aexit__ must still have been called.
         assert fake_http.exited == 1
 
+
 # ---------------------------------------------------------------------------
 # build_context reads config.toml
 # ---------------------------------------------------------------------------
