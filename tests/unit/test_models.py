@@ -331,6 +331,77 @@ class TestRunningQuery:
         obj = RunningQuery.model_validate(payload)
         assert obj.request_id is None
 
+    def test_new_perf_fields_populated(self) -> None:
+        payload = {
+            "session_id": 42,
+            "status": "running",
+            "start_time": "2024-03-15T10:00:00Z",
+            "total_elapsed_time": 1500,
+            "blocking_session_id": 10,
+            "wait_type": "LCK_M_S",
+            "wait_time": 500,
+            "cpu_time": 750,
+            "reads": 100,
+            "writes": 5,
+            "logical_reads": 1000,
+            "row_count": 50,
+            "open_transaction_count": 1,
+        }
+        obj = RunningQuery.model_validate(payload)
+        assert obj.blocking_session_id == 10
+        assert obj.wait_type == "LCK_M_S"
+        assert obj.wait_time == 500
+        assert obj.cpu_time == 750
+        assert obj.reads == 100
+        assert obj.writes == 5
+        assert obj.logical_reads == 1000
+        assert obj.row_count == 50
+        assert obj.open_transaction_count == 1
+
+    def test_dist_statement_id_uuid_coerced_to_str(self) -> None:
+        """The mssql driver returns uniqueidentifier columns as UUID objects."""
+        from uuid import UUID  # noqa: PLC0415
+
+        guid = UUID("a1b2c3d4-1234-5678-abcd-ef0123456789")
+        payload = {
+            "session_id": 1,
+            "status": "running",
+            "start_time": "2024-03-15T10:00:00Z",
+            "total_elapsed_time": 100,
+            "dist_statement_id": guid,
+        }
+        obj = RunningQuery.model_validate(payload)
+        assert obj.dist_statement_id == "a1b2c3d4-1234-5678-abcd-ef0123456789"
+
+    def test_dist_statement_id_none_accepted(self) -> None:
+        payload = {
+            "session_id": 1,
+            "status": "running",
+            "start_time": "2024-03-15T10:00:00Z",
+            "total_elapsed_time": 100,
+        }
+        obj = RunningQuery.model_validate(payload)
+        assert obj.dist_statement_id is None
+
+    def test_new_fields_default_to_none(self) -> None:
+        payload = {
+            "session_id": 1,
+            "status": "running",
+            "start_time": "2024-03-15T10:00:00Z",
+            "total_elapsed_time": 100,
+        }
+        obj = RunningQuery.model_validate(payload)
+        assert obj.dist_statement_id is None
+        assert obj.blocking_session_id is None
+        assert obj.wait_type is None
+        assert obj.wait_time is None
+        assert obj.cpu_time is None
+        assert obj.reads is None
+        assert obj.writes is None
+        assert obj.logical_reads is None
+        assert obj.row_count is None
+        assert obj.open_transaction_count is None
+
 
 class TestCreationModeType:
     """CreationModeType is now a proper StrEnum."""
