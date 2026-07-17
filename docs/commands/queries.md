@@ -109,6 +109,33 @@ fdw [-w WORKSPACE] queries kill [WAREHOUSE] SESSION_ID
 fdw -w MyWorkspace --yes queries kill SalesWH 42
 ```
 
+### queries locks
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+List active locks from `sys.dm_tran_locks`, joined with `sys.dm_exec_requests` to show blocking info. DATABASE-scoped rows are excluded by default to reduce noise from idle connections.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] queries locks [OPTIONS] [ITEM]
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--limit INTEGER` | Maximum rows to return (1-10 000). | `100` |
+| `--waiting-only` | Only show locks with `request_status = WAIT`. | off |
+| `--blocked-only` | Only show sessions blocked by another session. | off |
+| `--include-database` | Include DATABASE-scoped lock rows. | off |
+
+**Example**
+
+```shell
+fdw -w MyWorkspace queries locks SalesWH
+fdw -w MyWorkspace queries locks SalesWH --waiting-only
+fdw -w MyWorkspace queries locks SalesWH --blocked-only --limit 50
+```
+
 ### queries long-running
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
@@ -235,6 +262,23 @@ Return frequently-run queries from `queryinsights.frequently_run_queries`.
 - `until` (`str | null`, optional): ISO-8601 upper bound on `last_run_start_time`.
 
 **Returns:** `list[dict]`: array of frequently-run query row objects. Elapsed-time fields (e.g. `avg_total_elapsed_time_ms`, `min_run_total_elapsed_time_ms`, `max_run_total_elapsed_time_ms`, `last_run_total_elapsed_time_ms`) are JSON `number` (float); count fields remain `integer`.
+
+### list_locks
+
+**Targets:** Data Warehouse / SQL Analytics Endpoint
+
+Return active lock rows from `sys.dm_tran_locks` joined with `sys.dm_exec_requests`. DATABASE-scoped rows are excluded by default.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): warehouse or SQL Analytics Endpoint name or GUID.
+- `limit` (`int`, default `100`): maximum rows to return (1-10 000).
+- `waiting_only` (`bool`, default `false`): restrict to locks with `request_status = 'WAIT'`.
+- `blocked_only` (`bool`, default `false`): restrict to sessions blocked by another session.
+- `include_database` (`bool`, default `false`): include DATABASE-scoped lock rows.
+
+**Returns:** `list[dict]`: array of lock row objects, each with `session_id`, `resource_type`, `request_mode`, `request_status`, `schema_name`, `object_name`, `blocking_session_id`, `wait_type`, `wait_time` (ms), and `command`.
 
 ### list_long_running_queries
 

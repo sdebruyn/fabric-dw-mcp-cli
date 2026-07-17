@@ -118,6 +118,7 @@ DOMAIN_MAP: dict[str, str] = {
     "list_session_history": "queries",
     "list_frequent_queries": "queries",
     "list_long_running_queries": "queries",
+    "list_locks": "queries",
     # SQL execution
     "execute_sql": "sql",
     "get_query_plan": "sql",

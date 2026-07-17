@@ -252,6 +252,51 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             ) from exc
         return [q.model_dump(by_alias=True, mode="json") for q in result]
 
+    @mcp.tool(name="list_locks")
+    async def list_locks(  # noqa: PLR0913
+        workspace: str,
+        item: str,
+        limit: Annotated[int, Field(ge=1, le=10000)] = 100,
+        waiting_only: bool = False,  # noqa: FBT001, FBT002
+        blocked_only: bool = False,  # noqa: FBT001, FBT002
+        include_database: bool = False,  # noqa: FBT001, FBT002
+    ) -> list[dict[str, Any]]:
+        """Return active lock rows from sys.dm_tran_locks joined with sys.dm_exec_requests.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: Warehouse or SQL Analytics Endpoint name or GUID.
+            limit: Maximum rows to return (1-10000, default 100).
+            waiting_only: When True, restrict to locks with request_status = 'WAIT'.
+            blocked_only: When True, restrict to sessions blocked by another session.
+            include_database: When True, include DATABASE-scoped lock rows (excluded by default).
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug("list_locks ws=%s item=%s limit=%d", ws_id, entry.id, limit)
+            target = make_sql_target(ws_id, entry, item)
+            result = await queries.list_locks(
+                target,
+                limit=limit,
+                waiting_only=waiting_only,
+                blocked_only=blocked_only,
+                include_database=include_database,
+                mode=ctx.auth_mode,
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        except Exception as exc:
+            if isinstance(exc, ToolError):
+                raise
+            _log.debug("list_locks: unhandled driver exception (suppressed)", exc_info=True)
+            raise ToolError("Listing locks failed due to a driver or network error.") from exc
+        return [lock.model_dump(by_alias=True, mode="json") for lock in result]
+
     @mcp.tool(name="list_long_running_queries")
     async def list_long_running_queries(
         workspace: str,

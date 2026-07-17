@@ -33,6 +33,7 @@ from fabric_dw.models import (
     ExecSessionHistory,
     FrequentlyRunQuery,
     LongRunningQuery,
+    QueryLock,
     RunningQuery,
 )
 from tests.unit.mcp.conftest import (
@@ -1115,6 +1116,154 @@ async def test_kill_session_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch
         await mcp._tool_manager.call_tool(
             "kill_session",
             {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 42},
+        )
+
+    assert _FakeDriverError._INTERNAL_DETAIL not in str(exc_info.value), (
+        "raw driver exception detail must not appear in the ToolError message"
+    )
+
+
+# ---------------------------------------------------------------------------
+# list_locks
+# ---------------------------------------------------------------------------
+
+
+def _make_query_lock() -> QueryLock:
+    return QueryLock.model_validate(
+        {
+            "session_id": 42,
+            "resource_type": "OBJECT",
+            "request_mode": "S",
+            "request_status": "GRANT",
+            "schema_name": "dbo",
+            "object_name": "sales",
+            "blocking_session_id": None,
+            "wait_type": None,
+            "wait_time": None,
+            "command": "SELECT",
+        }
+    )
+
+
+async def test_list_locks_happy_path(mock_ctx, ctx_patch) -> None:
+    """list_locks returns list of serialised lock dicts."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    lock = _make_query_lock()
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.queries.list_locks",
+            new=AsyncMock(return_value=[lock]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_locks",
+            {"workspace": _WS_NAME, "item": _WH_NAME},
+        )
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0]["session_id"] == 42
+    assert result[0]["resource_type"] == "OBJECT"
+
+
+async def test_list_locks_returns_dicts(mock_ctx, ctx_patch) -> None:
+    """list_locks returns plain dicts, not model instances."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    lock = _make_query_lock()
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.queries.list_locks",
+            new=AsyncMock(return_value=[lock]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_locks",
+            {"workspace": _WS_NAME, "item": _WH_NAME},
+        )
+
+    for row in result:
+        assert isinstance(row, dict)
+
+
+async def test_list_locks_fabric_error_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """list_locks wraps FabricError as ToolError."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.queries.list_locks",
+            new=AsyncMock(side_effect=FabricError("lock query failed")),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_locks",
+            {"workspace": _WS_NAME, "item": _WH_NAME},
+        )
+
+
+async def test_list_locks_empty_result(mock_ctx, ctx_patch) -> None:
+    """list_locks returns empty list when no locks are held."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    item = make_item_entry()
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=item)
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.queries.list_locks",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        result = await mcp._tool_manager.call_tool(
+            "list_locks",
+            {"workspace": _WS_NAME, "item": _WH_NAME},
+        )
+
+    assert result == []
+
+
+async def test_list_locks_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """A raw driver exception from list_locks is converted to ToolError."""
+    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.queries.list_locks",
+            new=AsyncMock(side_effect=_RAW_DRIVER_EXC),
+        ),
+        pytest.raises(ToolError) as exc_info,
+    ):
+        await mcp._tool_manager.call_tool(
+            "list_locks",
+            {"workspace": _WS_NAME, "item": _WH_NAME},
         )
 
     assert _FakeDriverError._INTERNAL_DETAIL not in str(exc_info.value), (
