@@ -211,6 +211,8 @@ DOMAIN_MAP: dict[str, str] = {
     "set_data_lake_log_publishing": "settings",
     # Tables (load sub-domain)
     "import_table_from_url": "tables",
+    # Server meta
+    "list_capabilities": "server",
 }
 
 # ---------------------------------------------------------------------------
@@ -240,6 +242,7 @@ _KNOWN_DOMAINS: frozenset[str] = frozenset(
         "completion",
         "settings",
         "permissions",
+        "server",
     }
 )
 

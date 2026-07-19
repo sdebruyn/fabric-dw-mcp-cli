@@ -26,6 +26,7 @@ Domains
 - :mod:`.settings` — warehouse database settings (result-set caching, time-travel retention)
 - :mod:`.cache` — cache management (clear_cache)
 - :mod:`.dbt` — generate dbt-fabric project file contents
+- :mod:`.capabilities` — list all available tools grouped by domain
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from mcp.server.fastmcp import FastMCP
 from fabric_dw.mcp.tools import (
     audit,
     cache,
+    capabilities,
     dbt,
     functions,
     load,
@@ -78,6 +80,7 @@ _DOMAINS = [
     sql_pools,
     cache,
     dbt,
+    capabilities,
 ]
 
 
