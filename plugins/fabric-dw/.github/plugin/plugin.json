@@ -1,7 +1,7 @@
 {
   "name": "fabric-dw",
   "description": "Agent skills for Fabric Data Warehouse: query performance analysis, warehouse-wide performance investigation and tuning, and dbt project bootstrap.",
-  "version": "2026.7.2",
+  "version": "2026.7.3",
   "author": {
     "name": "Sam Debruyn",
     "email": "sam@debruyn.dev"
