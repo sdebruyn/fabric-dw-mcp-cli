@@ -42,6 +42,7 @@ nav = [
     { "Concepts" = "concepts.md" },
     { "Authentication" = "authentication.md" },
     { "Agent Skills" = "skills.md" },
+    { "MCP capabilities" = "reference/mcp-capabilities.md" },
     { "Exit codes" = "reference/exit-codes.md" },
     { "Shell Completion" = "completion.md" },
     { "Troubleshooting" = "troubleshooting.md" },

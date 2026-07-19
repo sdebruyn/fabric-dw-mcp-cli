@@ -31,7 +31,8 @@ from fabric_dw.telemetry_commands import resolve_domain
 # The text is permanently resident in every client's context, so it must stay
 # compact. The original 700-char budget (~175 tokens) covered 18 named tools
 # across 5 domains. The domain index added in issue #992 brings the text to
-# 795 chars. 900 chars (~225 tokens) provides ~105 chars of headroom for
+# 795 chars. Adding list_capabilities + server domain (#1018) brings it to
+# 822 chars. 900 chars (~225 tokens) provides ~78 chars of headroom for
 # future additions without requiring a new justification.
 # The budget exists to stop the block growing into a manual.
 # ---------------------------------------------------------------------------
