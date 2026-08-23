@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
@@ -20,7 +20,7 @@ __all__ = ["register"]
 _log = logging.getLogger(__name__)
 
 
-def register(mcp: FastMCP) -> None:  # noqa: PLR0915
+def register(mcp: MCPServer) -> None:  # noqa: PLR0915
     """Register restore point tools against *mcp*."""
 
     @mcp.tool(name="list_restore_points")

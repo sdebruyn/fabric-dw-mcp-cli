@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import WarehouseSnapshot

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
@@ -33,7 +33,7 @@ __all__ = ["register"]
 _log = logging.getLogger(__name__)
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     """Register dbt tools against *mcp*."""
 
     @mcp.tool(name="generate_dbt_profile")

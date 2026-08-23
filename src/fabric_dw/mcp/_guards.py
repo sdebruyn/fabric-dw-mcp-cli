@@ -57,7 +57,7 @@ import os
 import uuid as _uuid_mod
 from collections.abc import Sequence
 
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from fabric_dw.services._helpers import SelectBodyError, _validate_select_body
 

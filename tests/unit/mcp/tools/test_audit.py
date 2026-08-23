@@ -117,7 +117,7 @@ async def test_get_audit_settings_disabled_state(mock_ctx, ctx_patch) -> None:
 
 async def test_get_audit_settings_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """get_audit_settings converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -141,7 +141,7 @@ async def test_get_audit_settings_fabric_error_becomes_tool_error(mock_ctx, ctx_
 
 async def test_get_audit_settings_workspace_not_in_allowlist(ctx_patch) -> None:
     """get_audit_settings raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -217,7 +217,7 @@ async def test_enable_audit_with_retention_days(mock_ctx, ctx_patch) -> None:
 
 async def test_enable_audit_readonly_mode_blocked(ctx_patch) -> None:
     """enable_audit raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -237,7 +237,7 @@ async def test_enable_audit_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_enable_audit_workspace_not_in_allowlist(ctx_patch) -> None:
     """enable_audit raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -255,7 +255,7 @@ async def test_enable_audit_workspace_not_in_allowlist(ctx_patch) -> None:
 
 async def test_enable_audit_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """enable_audit converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -311,7 +311,7 @@ async def test_disable_audit_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_disable_audit_readonly_mode_blocked(ctx_patch) -> None:
     """disable_audit raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -331,7 +331,7 @@ async def test_disable_audit_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_disable_audit_workspace_not_in_allowlist(ctx_patch) -> None:
     """disable_audit raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -349,7 +349,7 @@ async def test_disable_audit_workspace_not_in_allowlist(ctx_patch) -> None:
 
 async def test_disable_audit_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """disable_audit converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -499,7 +499,7 @@ async def test_set_audit_action_groups_enabled_warehouse_state_unchanged(
 
 async def test_set_audit_action_groups_readonly_mode_blocked(ctx_patch) -> None:
     """set_audit_action_groups raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -523,7 +523,7 @@ async def test_set_audit_action_groups_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_set_audit_action_groups_workspace_not_in_allowlist(ctx_patch) -> None:
     """set_audit_action_groups raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -545,7 +545,7 @@ async def test_set_audit_action_groups_workspace_not_in_allowlist(ctx_patch) -> 
 
 async def test_set_audit_action_groups_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """set_audit_action_groups converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -605,7 +605,7 @@ async def test_add_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_add_audit_group_readonly_mode_blocked(ctx_patch) -> None:
     """add_audit_group raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -625,7 +625,7 @@ async def test_add_audit_group_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_add_audit_group_workspace_not_in_allowlist(ctx_patch) -> None:
     """add_audit_group raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -643,7 +643,7 @@ async def test_add_audit_group_workspace_not_in_allowlist(ctx_patch) -> None:
 
 async def test_add_audit_group_value_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """add_audit_group converts ValueError (audit disabled) to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -669,7 +669,7 @@ async def test_add_audit_group_value_error_becomes_tool_error(mock_ctx, ctx_patc
 
 async def test_add_audit_group_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """add_audit_group converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -728,7 +728,7 @@ async def test_remove_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_remove_audit_group_readonly_mode_blocked(ctx_patch) -> None:
     """remove_audit_group raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -748,7 +748,7 @@ async def test_remove_audit_group_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_remove_audit_group_workspace_not_in_allowlist(ctx_patch) -> None:
     """remove_audit_group raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -766,7 +766,7 @@ async def test_remove_audit_group_workspace_not_in_allowlist(ctx_patch) -> None:
 
 async def test_remove_audit_group_value_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """remove_audit_group converts ValueError (audit disabled) to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -792,7 +792,7 @@ async def test_remove_audit_group_value_error_becomes_tool_error(mock_ctx, ctx_p
 
 async def test_remove_audit_group_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """remove_audit_group converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -849,7 +849,7 @@ async def test_set_audit_retention_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_set_audit_retention_readonly_mode_blocked(ctx_patch) -> None:
     """set_audit_retention raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -869,7 +869,7 @@ async def test_set_audit_retention_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_set_audit_retention_workspace_not_in_allowlist(ctx_patch) -> None:
     """set_audit_retention raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -887,7 +887,7 @@ async def test_set_audit_retention_workspace_not_in_allowlist(ctx_patch) -> None
 
 async def test_set_audit_retention_value_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """set_audit_retention converts ValueError (disabled audit) to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -913,7 +913,7 @@ async def test_set_audit_retention_value_error_becomes_tool_error(mock_ctx, ctx_
 
 async def test_set_audit_retention_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """set_audit_retention converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 

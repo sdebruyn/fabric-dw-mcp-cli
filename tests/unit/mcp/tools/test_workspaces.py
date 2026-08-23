@@ -14,7 +14,7 @@ import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from fabric_dw.exceptions import NotFoundError
 from tests.unit._call import call_tool
@@ -196,7 +196,7 @@ async def test_list_capacities_happy_path(ctx_patch) -> None:
 
 async def test_list_capacities_fabric_error_becomes_tool_error(ctx_patch) -> None:
     """list_capacities wraps FabricError into ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.exceptions import PermissionDeniedError  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
@@ -246,7 +246,7 @@ async def test_assign_workspace_to_capacity_invalid_uuid_raises_tool_error(
     ctx_patch,
 ) -> None:
     """assign_workspace_to_capacity raises ToolError when capacity_id is not a UUID."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -263,7 +263,7 @@ async def test_assign_workspace_to_capacity_invalid_uuid_raises_tool_error(
 
 async def test_assign_workspace_to_capacity_readonly_blocks(ctx_patch) -> None:
     """assign_workspace_to_capacity raises ToolError when FABRIC_MCP_READONLY is set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -281,7 +281,7 @@ async def test_assign_workspace_to_capacity_readonly_blocks(ctx_patch) -> None:
 
 async def test_assign_workspace_to_capacity_allowlist_blocks(ctx_patch) -> None:
     """assign_workspace_to_capacity raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -301,7 +301,7 @@ async def test_assign_workspace_to_capacity_fabric_error_becomes_tool_error(
     mock_ctx, ctx_patch
 ) -> None:
     """assign_workspace_to_capacity wraps FabricError into ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.exceptions import NotFoundError  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415

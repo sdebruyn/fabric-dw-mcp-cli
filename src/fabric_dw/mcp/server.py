@@ -1,4 +1,4 @@
-"""FastMCP server exposing all fabric-dw service functions as MCP tools.
+"""MCPServer server exposing all fabric-dw service functions as MCP tools.
 
 Architecture
 ------------
@@ -8,7 +8,7 @@ per-domain sub-modules under :mod:`fabric_dw.mcp.tools`.
 Startup / Shutdown
 ------------------
 A :func:`~fabric_dw.mcp._context.fabric_lifespan` async context manager is
-passed to the :class:`~mcp.server.fastmcp.FastMCP` constructor.  On startup
+passed to the :class:`~mcp.server.mcpserver.MCPServer` constructor.  On startup
 it calls :func:`~fabric_dw.mcp._context.build_context` to construct one
 :class:`~fabric_dw.mcp._context.ServerContext` (HTTP client, cache, resolver,
 auth mode) and stores it in a module-level sentinel accessible via
@@ -21,7 +21,7 @@ Context access
 Every tool function calls :func:`~fabric_dw.mcp._context.get_context` to
 obtain the shared :class:`~fabric_dw.mcp._context.ServerContext`.  The sentinel
 pattern (module-level ``ServerContext | None``) was chosen over injecting a
-``Context`` parameter into every tool because FastMCP's lifespan context is
+``Context`` parameter into every tool because MCPServer's lifespan context is
 not ergonomically accessible from tool functions without either adding a
 ``Context`` import to every tool or using fragile ``request_context``
 internals.  The sentinel is safe for streamable-HTTP concurrency because it is
@@ -62,7 +62,7 @@ from fabric_dw.config import load_config
 from fabric_dw.logging import setup_logging
 from fabric_dw.mcp._context import fabric_lifespan
 from fabric_dw.mcp._guards import env_flag as _guards_env_flag
-from fabric_dw.mcp._helpers import InstrumentedFastMCP
+from fabric_dw.mcp._helpers import InstrumentedMCPServer
 from fabric_dw.mcp.tools import register_all
 from fabric_dw.telemetry import (
     maybe_print_first_run_notice,
@@ -105,10 +105,10 @@ _SERVER_INSTRUCTIONS: str = (
 )
 
 # ---------------------------------------------------------------------------
-# FastMCP server instance (instrumented subclass emits command_invoked events)
+# MCPServer server instance (instrumented subclass emits command_invoked events)
 # ---------------------------------------------------------------------------
 
-mcp: InstrumentedFastMCP = InstrumentedFastMCP(
+mcp: InstrumentedMCPServer = InstrumentedMCPServer(
     "fabric-dw",
     lifespan=fabric_lifespan,
     instructions=_SERVER_INSTRUCTIONS,
@@ -161,7 +161,7 @@ def _resolve_log_level() -> int:
 
 
 def run(argv: Sequence[str] | None = None) -> None:
-    """Parse CLI arguments and start the FastMCP server.
+    """Parse CLI arguments and start the MCPServer server.
 
     Args:
         argv: Argument list (defaults to ``sys.argv[1:]`` when ``None``).
@@ -233,7 +233,7 @@ def run(argv: Sequence[str] | None = None) -> None:
                 args.port,
             )
 
-        # Update FastMCP settings before run so uvicorn picks them up.
+        # Update MCPServer settings before run so uvicorn picks them up.
         mcp.settings.host = args.host
         mcp.settings.port = args.port
 

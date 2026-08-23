@@ -19,7 +19,7 @@ import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import ItemAccess, Warehouse, WarehouseKind

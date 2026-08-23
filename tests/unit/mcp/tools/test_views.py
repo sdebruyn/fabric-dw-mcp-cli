@@ -6,7 +6,7 @@ Goal:   ≥95 % branch coverage.
 Strategy
 --------
 - All calls routed via the shared ``call_tool()`` helper (``tests/unit/_call.py``),
-  which wraps ``mcp._tool_manager.call_tool`` (same path FastMCP uses at
+  which wraps ``mcp._tool_manager.call_tool`` (same path MCPServer uses at
   runtime) so the ``@mcp.tool`` decorator, Pydantic validation, and guards
   are all exercised.
 - ``ServerContext`` injected by patching ``fabric_dw.mcp._context._SERVER_CTX``
@@ -142,7 +142,7 @@ async def test_list_views_empty_result(mock_ctx, ctx_patch) -> None:
 
 async def test_list_views_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """list_views converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -166,7 +166,7 @@ async def test_list_views_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -
 
 async def test_list_views_no_connection_string_tool_error(mock_ctx, ctx_patch) -> None:
     """list_views raises ToolError when the item has no connection string."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -186,7 +186,7 @@ async def test_list_views_no_connection_string_tool_error(mock_ctx, ctx_patch) -
 
 async def test_list_views_workspace_not_in_allowlist(ctx_patch) -> None:
     """list_views raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -291,7 +291,7 @@ async def test_read_view_with_count(mock_ctx, ctx_patch) -> None:
 
 async def test_read_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
     """read_view raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -310,7 +310,7 @@ async def test_read_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
 
 async def test_read_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """read_view converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -334,7 +334,7 @@ async def test_read_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) ->
 
 async def test_read_view_workspace_not_in_allowlist(ctx_patch) -> None:
     """read_view raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -409,7 +409,7 @@ async def test_read_view_without_as_of_passes_none(mock_ctx, ctx_patch) -> None:
 
 async def test_read_view_invalid_as_of_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """read_view raises ToolError when as_of is not a valid ISO-8601 string."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -468,7 +468,7 @@ async def test_get_view_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_get_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
     """get_view raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -485,7 +485,7 @@ async def test_get_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
 
 async def test_get_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """get_view converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -509,7 +509,7 @@ async def test_get_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> 
 
 async def test_get_view_workspace_not_in_allowlist(ctx_patch) -> None:
     """get_view raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -564,7 +564,7 @@ async def test_create_view_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_create_view_readonly_mode_blocked(ctx_patch) -> None:
     """create_view raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -589,7 +589,7 @@ async def test_create_view_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_create_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
     """create_view raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -611,7 +611,7 @@ async def test_create_view_unqualified_name_raises_tool_error(ctx_patch) -> None
 
 async def test_create_view_workspace_not_in_allowlist(ctx_patch) -> None:
     """create_view raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -634,7 +634,7 @@ async def test_create_view_workspace_not_in_allowlist(ctx_patch) -> None:
 
 async def test_create_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """create_view converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -700,7 +700,7 @@ async def test_update_view_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_update_view_readonly_mode_blocked(ctx_patch) -> None:
     """update_view raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -725,7 +725,7 @@ async def test_update_view_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_update_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
     """update_view raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -747,7 +747,7 @@ async def test_update_view_unqualified_name_raises_tool_error(ctx_patch) -> None
 
 async def test_update_view_workspace_not_in_allowlist(ctx_patch) -> None:
     """update_view raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -770,7 +770,7 @@ async def test_update_view_workspace_not_in_allowlist(ctx_patch) -> None:
 
 async def test_update_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """update_view converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -833,7 +833,7 @@ async def test_drop_view_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_drop_view_readonly_mode_blocked(ctx_patch) -> None:
     """drop_view raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -853,7 +853,7 @@ async def test_drop_view_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_drop_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
     """drop_view raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -870,7 +870,7 @@ async def test_drop_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
 
 async def test_drop_view_workspace_not_in_allowlist(ctx_patch) -> None:
     """drop_view raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -891,7 +891,7 @@ async def test_drop_view_workspace_not_in_allowlist(ctx_patch) -> None:
 
 async def test_drop_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """drop_view converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -953,7 +953,7 @@ async def test_rename_view_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_rename_view_readonly_mode_blocked(ctx_patch) -> None:
     """rename_view raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -978,7 +978,7 @@ async def test_rename_view_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_rename_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
     """rename_view raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1000,7 +1000,7 @@ async def test_rename_view_unqualified_name_raises_tool_error(ctx_patch) -> None
 
 async def test_rename_view_workspace_not_in_allowlist(ctx_patch) -> None:
     """rename_view raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1023,7 +1023,7 @@ async def test_rename_view_workspace_not_in_allowlist(ctx_patch) -> None:
 
 async def test_rename_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """rename_view converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1052,7 +1052,7 @@ async def test_rename_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) 
 
 async def test_rename_view_value_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """rename_view converts ValueError (e.g. validation error) to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1151,7 +1151,7 @@ async def test_transfer_view_does_not_reject_sql_endpoint(mock_ctx, ctx_patch) -
 
 async def test_transfer_view_readonly_mode_blocked(ctx_patch) -> None:
     """transfer_view raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1176,7 +1176,7 @@ async def test_transfer_view_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_transfer_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
     """transfer_view raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1198,7 +1198,7 @@ async def test_transfer_view_unqualified_name_raises_tool_error(ctx_patch) -> No
 
 async def test_transfer_view_workspace_not_in_allowlist(ctx_patch) -> None:
     """transfer_view raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1221,7 +1221,7 @@ async def test_transfer_view_workspace_not_in_allowlist(ctx_patch) -> None:
 
 async def test_transfer_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """transfer_view converts FabricError to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1250,7 +1250,7 @@ async def test_transfer_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch
 
 async def test_transfer_view_value_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """transfer_view converts ValueError (e.g. reserved target schema) to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1310,7 +1310,7 @@ async def test_count_view_rows_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_count_view_rows_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """count_view_rows wraps FabricError into ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1334,7 +1334,7 @@ async def test_count_view_rows_fabric_error_becomes_tool_error(mock_ctx, ctx_pat
 
 async def test_count_view_rows_workspace_allowlist_blocks(ctx_patch) -> None:
     """count_view_rows raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1352,7 +1352,7 @@ async def test_count_view_rows_workspace_allowlist_blocks(ctx_patch) -> None:
 
 async def test_count_view_rows_bad_qualified_name_raises_tool_error(ctx_patch) -> None:
     """count_view_rows raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1426,7 +1426,7 @@ async def test_count_view_rows_without_as_of_passes_none(mock_ctx, ctx_patch) ->
 
 async def test_count_view_rows_invalid_as_of_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """count_view_rows raises ToolError when as_of is not a valid ISO-8601 string."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1477,7 +1477,7 @@ _VIEW_COLUMNS = [
 
 async def test_get_view_columns_happy_path(mock_ctx, ctx_patch) -> None:
     """get_view_columns resolves workspace/item, calls service, returns list."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: F401, PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: F401, PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1505,7 +1505,7 @@ async def test_get_view_columns_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_get_view_columns_not_found_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """get_view_columns raises ToolError when the view does not exist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 

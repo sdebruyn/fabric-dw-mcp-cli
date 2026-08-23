@@ -3,7 +3,7 @@
 Architecture note
 -----------------
 ``mcp.shared.memory.create_connected_server_and_client_session`` wires a
-real FastMCP server to a real :class:`~mcp.ClientSession` via in-memory
+real MCPServer server to a real :class:`~mcp.ClientSession` via in-memory
 anyio streams, exercising the full MCP JSON-RPC handshake without any TCP
 sockets.  This gives us a contract-level check that:
 
@@ -94,7 +94,7 @@ def contract_ctx():
 async def live_tools(contract_ctx):
     """Return the list of Tool objects enumerated via the MCP protocol.
 
-    Wires a real FastMCP server to a real ClientSession through in-memory
+    Wires a real MCPServer server to a real ClientSession through in-memory
     streams (no TCP), so this exercises the same JSON-RPC ``tools/list``
     handshake the production server uses.
     """
@@ -234,7 +234,7 @@ async def test_call_tool_list_workspaces_round_trips(contract_ctx) -> None:
         assert len(parsed) >= 1
         workspace_data = parsed[0]
     else:
-        # Some FastMCP versions embed the list inside a wrapper
+        # Some MCPServer versions embed the list inside a wrapper
         workspace_data = parsed
     assert str(WS_ID) in json.dumps(workspace_data)
 

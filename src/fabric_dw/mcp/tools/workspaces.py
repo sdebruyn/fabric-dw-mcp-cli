@@ -6,8 +6,8 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError
 from fabric_dw.mcp._context import get_context
@@ -26,7 +26,7 @@ def _workspace_in_allowlist(ws: Workspace, allowed: frozenset[str]) -> bool:
     return ws.name.strip().lower() in allowed or str(ws.id).strip().lower() in allowed
 
 
-def register(mcp: FastMCP) -> None:  # noqa: PLR0915
+def register(mcp: MCPServer) -> None:  # noqa: PLR0915
     """Register workspace tools against *mcp*."""
 
     @mutating_tool(mcp, "assign_workspace_to_capacity")

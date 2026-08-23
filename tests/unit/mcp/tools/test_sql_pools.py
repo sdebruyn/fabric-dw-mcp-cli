@@ -144,7 +144,7 @@ async def test_get_sql_pools_status_disabled(mock_ctx, ctx_patch) -> None:
 
 async def test_get_sql_pools_status_resolver_fabric_error(mock_ctx, ctx_patch) -> None:
     """get_sql_pools_status wraps FabricError from resolver as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -163,7 +163,7 @@ async def test_get_sql_pools_status_resolver_fabric_error(mock_ctx, ctx_patch) -
 
 async def test_get_sql_pools_status_workspace_not_allowed(ctx_patch) -> None:
     """get_sql_pools_status raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -183,7 +183,7 @@ async def test_get_sql_pools_status_workspace_not_allowed(ctx_patch) -> None:
 
 async def test_get_sql_pools_status_service_fabric_error(mock_ctx, ctx_patch) -> None:
     """get_sql_pools_status surfaces FabricError from service as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -279,7 +279,7 @@ async def test_list_sql_pools_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_list_sql_pools_fabric_error(mock_ctx, ctx_patch) -> None:
     """list_sql_pools wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -302,7 +302,7 @@ async def test_list_sql_pools_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_list_sql_pools_workspace_not_allowed(ctx_patch) -> None:
     """list_sql_pools raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -351,7 +351,7 @@ async def test_get_sql_pool_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_get_sql_pool_not_found_in_config(mock_ctx, ctx_patch) -> None:
     """get_sql_pool raises ToolError when the named pool is absent from config."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -377,7 +377,7 @@ async def test_get_sql_pool_not_found_in_config(mock_ctx, ctx_patch) -> None:
 
 async def test_get_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
     """get_sql_pool propagates FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -400,7 +400,7 @@ async def test_get_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_get_sql_pool_workspace_not_allowed(ctx_patch) -> None:
     """get_sql_pool raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -490,7 +490,7 @@ async def test_create_sql_pool_with_classifier(mock_ctx, ctx_patch) -> None:
 
 async def test_create_sql_pool_already_exists(mock_ctx, ctx_patch) -> None:
     """create_sql_pool raises ToolError (not AlreadyExistsError) when pool exists."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -515,7 +515,7 @@ async def test_create_sql_pool_already_exists(mock_ctx, ctx_patch) -> None:
 
 async def test_create_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
     """create_sql_pool wraps generic FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -538,7 +538,7 @@ async def test_create_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_create_sql_pool_pool_missing_after_create(mock_ctx, ctx_patch) -> None:
     """create_sql_pool raises ToolError when pool absent from response (eventual consistency)."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -565,7 +565,7 @@ async def test_create_sql_pool_pool_missing_after_create(mock_ctx, ctx_patch) ->
 
 async def test_create_sql_pool_readonly_blocked(ctx_patch) -> None:
     """create_sql_pool raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -585,7 +585,7 @@ async def test_create_sql_pool_readonly_blocked(ctx_patch) -> None:
 
 async def test_create_sql_pool_workspace_not_allowed(ctx_patch) -> None:
     """create_sql_pool raises ToolError when workspace is not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -634,7 +634,7 @@ async def test_update_sql_pool_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_update_sql_pool_not_found(mock_ctx, ctx_patch) -> None:
     """update_sql_pool raises ToolError when pool does not exist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -659,7 +659,7 @@ async def test_update_sql_pool_not_found(mock_ctx, ctx_patch) -> None:
 
 async def test_update_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
     """update_sql_pool wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -682,7 +682,7 @@ async def test_update_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_update_sql_pool_missing_after_update(mock_ctx, ctx_patch) -> None:
     """update_sql_pool raises ToolError when pool absent from response after update."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -708,7 +708,7 @@ async def test_update_sql_pool_missing_after_update(mock_ctx, ctx_patch) -> None
 
 async def test_update_sql_pool_readonly_blocked(ctx_patch) -> None:
     """update_sql_pool raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -754,7 +754,7 @@ async def test_delete_sql_pool_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_delete_sql_pool_not_found(mock_ctx, ctx_patch) -> None:
     """delete_sql_pool raises ToolError when pool does not exist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -780,7 +780,7 @@ async def test_delete_sql_pool_not_found(mock_ctx, ctx_patch) -> None:
 
 async def test_delete_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
     """delete_sql_pool wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -804,7 +804,7 @@ async def test_delete_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_delete_sql_pool_destructive_disabled(ctx_patch) -> None:
     """delete_sql_pool raises ToolError when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -826,7 +826,7 @@ async def test_delete_sql_pool_destructive_disabled(ctx_patch) -> None:
 
 async def test_delete_sql_pool_readonly_blocked(ctx_patch) -> None:
     """delete_sql_pool raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -873,7 +873,7 @@ async def test_enable_sql_pools_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_enable_sql_pools_fabric_error(mock_ctx, ctx_patch) -> None:
     """enable_sql_pools wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -902,7 +902,7 @@ async def test_enable_sql_pools_no_pools_defined_raises_tool_error(mock_ctx, ctx
     catches FabricError; BadRequestError is a subclass, so it must be caught and
     re-raised as ToolError — not escape as a raw exception.
     """
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -927,7 +927,7 @@ async def test_enable_sql_pools_no_pools_defined_raises_tool_error(mock_ctx, ctx
 
 async def test_enable_sql_pools_readonly_blocked(ctx_patch) -> None:
     """enable_sql_pools raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -945,7 +945,7 @@ async def test_enable_sql_pools_readonly_blocked(ctx_patch) -> None:
 
 async def test_enable_sql_pools_workspace_not_allowed(ctx_patch) -> None:
     """enable_sql_pools raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -992,7 +992,7 @@ async def test_disable_sql_pools_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_disable_sql_pools_fabric_error(mock_ctx, ctx_patch) -> None:
     """disable_sql_pools wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1015,7 +1015,7 @@ async def test_disable_sql_pools_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_disable_sql_pools_readonly_blocked(ctx_patch) -> None:
     """disable_sql_pools raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1033,7 +1033,7 @@ async def test_disable_sql_pools_readonly_blocked(ctx_patch) -> None:
 
 async def test_disable_sql_pools_workspace_not_allowed(ctx_patch) -> None:
     """disable_sql_pools raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1116,7 +1116,7 @@ async def test_list_sql_pool_insights_with_since_until(mock_ctx, ctx_patch) -> N
 
 async def test_list_sql_pool_insights_bad_since(ctx_patch) -> None:
     """list_sql_pool_insights raises ToolError on invalid ISO-8601 since."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1135,7 +1135,7 @@ async def test_list_sql_pool_insights_bad_since(ctx_patch) -> None:
 
 async def test_list_sql_pool_insights_bad_until(ctx_patch) -> None:
     """list_sql_pool_insights raises ToolError on invalid ISO-8601 until."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1154,7 +1154,7 @@ async def test_list_sql_pool_insights_bad_until(ctx_patch) -> None:
 
 async def test_list_sql_pool_insights_fabric_error(mock_ctx, ctx_patch) -> None:
     """list_sql_pool_insights wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1179,7 +1179,7 @@ async def test_list_sql_pool_insights_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_list_sql_pool_insights_workspace_not_allowed(ctx_patch) -> None:
     """list_sql_pool_insights raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 

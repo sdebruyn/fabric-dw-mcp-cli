@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from fabric_dw.exceptions import FabricError
@@ -30,7 +30,7 @@ __all__ = ["register"]
 _log = logging.getLogger(__name__)
 
 
-def register(mcp: FastMCP) -> None:  # noqa: PLR0915
+def register(mcp: MCPServer) -> None:  # noqa: PLR0915
     """Register view tools against *mcp*."""
 
     @mcp.tool(name="list_views")

@@ -678,7 +678,7 @@ class SelectBodyError(ValueError):
 
     Subclasses :class:`ValueError` so callers that catch ``ValueError`` still
     work.  The ``kind`` attribute lets the MCP layer translate this to a
-    :class:`~mcp.server.fastmcp.exceptions.ToolError` with a context-specific
+    :class:`~mcp.server.mcpserver.exceptions.ToolError` with a context-specific
     message without re-parsing the string.
 
     Attributes:

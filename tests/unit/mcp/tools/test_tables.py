@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.models import ClusterColumn, ResultSet, Table, TableRowCount, WarehouseKind
@@ -356,7 +356,7 @@ async def test_read_table_without_as_of_passes_none(mock_ctx, ctx_patch) -> None
 
 async def test_read_table_invalid_as_of_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """read_table raises ToolError when as_of is not a valid ISO-8601 string."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -833,7 +833,7 @@ async def test_count_table_rows_without_as_of_passes_none(mock_ctx, ctx_patch) -
 
 async def test_count_table_rows_invalid_as_of_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """count_table_rows raises ToolError when as_of is not a valid ISO-8601 string."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 

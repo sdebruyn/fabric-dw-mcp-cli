@@ -175,7 +175,7 @@ async def test_grant_permission_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_grant_permission_blocked_by_readonly(mock_ctx, ctx_patch) -> None:
     """grant_permission is blocked when FABRIC_MCP_READONLY is set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -234,7 +234,7 @@ async def test_grant_permission_not_destructive_gated(mock_ctx, ctx_patch) -> No
 
 async def test_grant_permission_invalid_permissions_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """grant_permission raises ToolError when the permissions string is invalid."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -302,7 +302,7 @@ async def test_deny_permission_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_deny_permission_blocked_by_readonly(mock_ctx, ctx_patch) -> None:
     """deny_permission is blocked when FABRIC_MCP_READONLY is set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -395,7 +395,7 @@ async def test_revoke_permission_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_revoke_permission_blocked_by_readonly(mock_ctx, ctx_patch) -> None:
     """revoke_permission is blocked when FABRIC_MCP_READONLY is set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -423,7 +423,7 @@ async def test_revoke_permission_blocked_by_readonly(mock_ctx, ctx_patch) -> Non
 
 async def test_revoke_permission_blocked_by_missing_destructive_env(mock_ctx, ctx_patch) -> None:
     """revoke_permission is blocked when FABRIC_MCP_ALLOW_DESTRUCTIVE is unset."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -727,7 +727,7 @@ async def test_create_security_policy_rejects_predicate_type_key(mock_ctx, ctx_p
     silently building a FILTER predicate -- exercises the real service validation (only
     run_query is mocked), since silently downgrading an intended BLOCK to FILTER would be
     a security-relevant footgun for an MCP caller."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -768,7 +768,7 @@ async def test_create_security_policy_rejects_predicate_type_key(mock_ctx, ctx_p
 
 async def test_drop_security_policy_blocked_without_destructive_env(mock_ctx, ctx_patch) -> None:
     """drop_security_policy is blocked when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
