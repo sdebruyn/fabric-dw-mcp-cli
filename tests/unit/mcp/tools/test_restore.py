@@ -25,7 +25,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import RestorePoint
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,

@@ -18,7 +18,7 @@ import pytest
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.models import StoredProcedure, WarehouseKind
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 
 # ---------------------------------------------------------------------------
 # Shared constants

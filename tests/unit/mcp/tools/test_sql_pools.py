@@ -33,7 +33,7 @@ from fabric_dw.models import (
     SqlPoolInsight,
     SqlPoolsConfiguration,
 )
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_ID,
     WH_NAME,

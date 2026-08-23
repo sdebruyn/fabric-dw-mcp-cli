@@ -10,7 +10,8 @@ Goals:
 
 Strategy
 --------
-- All calls routed via ``mcp._tool_manager.call_tool``.
+- All calls routed via the shared ``call_tool()`` helper (``tests/unit/_call.py``),
+  which wraps ``mcp._tool_manager.call_tool``.
 - ``ServerContext`` injected by patching ``fabric_dw.mcp._context._SERVER_CTX``
   with the shared ``mock_ctx`` fixture.
 - ``fabric_dw.services.sql_exec.get_plan`` / ``.execute`` are mocked per-test.
@@ -23,7 +24,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,

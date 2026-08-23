@@ -20,7 +20,7 @@ from uuid import UUID
 
 import pytest
 
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 
 # ---------------------------------------------------------------------------
 # Shared fixtures

@@ -5,7 +5,8 @@ Goal:   ≥95 % branch coverage.
 
 Strategy
 --------
-- All calls routed via ``mcp._tool_manager.call_tool``.
+- All calls routed via the shared ``call_tool()`` helper (``tests/unit/_call.py``),
+  which wraps ``mcp._tool_manager.call_tool``.
 - ``ServerContext`` injected by patching ``fabric_dw.mcp._context._SERVER_CTX``
   with the shared ``mock_ctx`` fixture.
 - Service layer fully mocked — no real network.
@@ -20,7 +21,7 @@ import pytest
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import AuditSettings
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,

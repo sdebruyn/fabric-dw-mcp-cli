@@ -13,8 +13,9 @@ sockets.  This gives us a contract-level check that:
 3. A destructive-guarded tool (``delete_restore_point``) raises an error
    when ``FABRIC_MCP_ALLOW_DESTRUCTIVE`` is unset.
 
-Unlike ``test_server.py`` (which calls ``_tool_manager.call_tool`` directly),
-these tests go through the MCP serialisation layer (JSON-RPC encoding/decoding,
+Unlike ``test_server.py`` (which goes through the shared ``call_tool()`` test
+helper, itself a thin wrapper around ``_tool_manager.call_tool``), these tests
+go through the MCP serialisation layer (JSON-RPC encoding/decoding,
 ``CallToolResult`` wrapping, etc.) so they would catch regressions in tool
 registration, schema export, and result serialisation.
 

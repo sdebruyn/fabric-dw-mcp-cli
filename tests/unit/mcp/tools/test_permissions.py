@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from fabric_dw.models import DatabasePermission, DatabasePrincipal
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import WH_NAME, WS_ID, WS_NAME, make_item_entry
 
 

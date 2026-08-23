@@ -9,7 +9,7 @@ import yaml
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.services.dbt_scaffold import DbtAuthMode
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import WH_NAME, WS_NAME, make_item_entry
 
 # ---------------------------------------------------------------------------

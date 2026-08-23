@@ -9,7 +9,7 @@ Coverage targets (lines from coverage report):
   143-153 takeover_warehouse happy path + FabricError funnel
 
 Testing strategy mirrors tests/unit/mcp/test_server.py: tools are invoked
-via ``call_tool(mcp,name, args)`` with the ServerContext
+via ``call_tool(mcp, name, args)`` with the ServerContext
 patched via ``ctx_patch``.
 """
 
@@ -23,7 +23,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import ItemAccess, Warehouse, WarehouseKind
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_ID,
     WH_NAME,

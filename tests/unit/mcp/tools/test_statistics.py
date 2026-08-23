@@ -11,7 +11,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.models import Statistic, StatisticDetails
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_NAME,

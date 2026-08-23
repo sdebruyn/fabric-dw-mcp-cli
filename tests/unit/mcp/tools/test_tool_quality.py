@@ -37,7 +37,7 @@ from fabric_dw.mcp._helpers import (
     tool_err,
 )
 from fabric_dw.models import WarehouseKind
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 
 # ---------------------------------------------------------------------------
 # Shared constants

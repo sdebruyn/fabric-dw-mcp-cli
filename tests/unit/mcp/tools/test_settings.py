@@ -12,7 +12,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import WarehouseSettings
 from fabric_dw.services.settings import RETENTION_MAX, RETENTION_MIN
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_NAME,

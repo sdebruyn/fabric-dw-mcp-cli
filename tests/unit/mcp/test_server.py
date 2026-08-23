@@ -6,7 +6,7 @@ FastMCP 1.x ships no in-process test transport in its public API, so we use
 unit-style mocking via the shared ``mock_ctx`` / ``ctx_patch`` fixtures defined
 in ``conftest.py``.
 
-Tools are called via ``call_tool(mcp,name, args)`` which is the
+Tools are called via ``call_tool(mcp, name, args)`` which is the
 same call path FastMCP uses at runtime, giving realistic coverage of the
 ``@mcp.tool`` decorator, Pydantic validation, and guard logic.
 
@@ -37,8 +37,8 @@ from fabric_dw.models import (
     WarehouseSnapshot,
     Workspace,
 )
+from tests.unit._call import call_tool
 from tests.unit._tool_introspection import SNAKE_CASE_RE, collect_live_mcp_tool_names
-from tests.unit.mcp._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_ID,
     WH_NAME,

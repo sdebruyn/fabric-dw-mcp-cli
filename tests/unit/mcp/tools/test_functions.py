@@ -5,8 +5,9 @@ Goal:   ≥90% branch coverage.
 
 Strategy
 --------
-- All calls routed via ``mcp._tool_manager.call_tool`` (same path FastMCP uses
-  at runtime) so the ``@mcp.tool`` decorator, Pydantic validation, and guards
+- All calls routed via the shared ``call_tool()`` helper (``tests/unit/_call.py``),
+  which wraps ``mcp._tool_manager.call_tool`` (same path FastMCP uses at
+  runtime) so the ``@mcp.tool`` decorator, Pydantic validation, and guards
   are all exercised.
 - ``ServerContext`` injected by patching ``fabric_dw.mcp._context._SERVER_CTX``
   with the shared ``mock_ctx`` fixture (defined in conftest).
@@ -24,7 +25,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import FunctionDetails, FunctionKind
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,

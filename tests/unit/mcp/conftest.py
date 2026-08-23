@@ -7,7 +7,7 @@ patching :data:`fabric_dw.mcp._context._SERVER_CTX` directly.
 Usage
 -----
 ```python
-from tests.unit.mcp._call import call_tool
+from tests.unit._call import call_tool
 
 
 async def test_something(mock_ctx):
@@ -26,7 +26,7 @@ async def test_something(mock_ctx, ctx_patch):
         result = await call_tool(mcp, "some_tool", {...})
 ```
 
-See :mod:`tests.unit.mcp._call` for why ``call_tool()`` wraps a private SDK
+See :mod:`tests.unit._call` for why ``call_tool()`` wraps a private SDK
 internal instead of the public, result-wrapping tool-call API.
 """
 
