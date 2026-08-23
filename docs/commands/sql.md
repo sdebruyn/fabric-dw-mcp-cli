@@ -28,6 +28,7 @@ fdw [-w WORKSPACE] sql exec [OPTIONS] [ITEM]
 | --- | --- |
 | `-q` / `--query TEXT` | SQL statement or batch to execute inline. |
 | `-f` / `--file PATH` | Path to a `.sql` file to execute. UTF-8 and UTF-8 BOM files are both supported. |
+| `--watch SECONDS` | Re-execute and redraw every positive number of seconds. Cannot be combined with `--json`. |
 
 Output defaults to a Rich table (rows/columns). Pass `--json` on the root command to emit machine-readable JSON (`{"columns": [...], "rows": [...], "rowcount": N}`).
 
@@ -39,11 +40,22 @@ fdw -w MyWorkspace sql exec SalesWH -q "SELECT TOP 5 * FROM dbo.Sales"
 
 # File input, JSON output
 fdw -w MyWorkspace --json sql exec SalesWH -f ./queries/report.sql
+
+# Live refresh: re-run the same query every 5 seconds
+fdw -w MyWorkspace sql exec SalesWH -q "SELECT COUNT(*) FROM dbo.Sales" --watch 5
 ```
 
 ```json
 {"columns": ["id", "name"], "rows": [[1, "Alice"], [2, "Bob"]], "rowcount": 2}
 ```
+
+!!! warning "--watch re-executes the statement as-is"
+
+    With `--watch`, the query text is read once (from `-q` or `-f`) and then re-executed unchanged on every tick. The CLI has no way to tell whether a statement is read-only, so `--watch` re-runs DDL and DML exactly as given, verbatim, on every interval. Only use `--watch` with statements that are safe to run repeatedly, such as a `SELECT COUNT(*)`.
+
+!!! note "Exit and non-TTY behaviour"
+
+    The `--watch` loop runs until interrupted with **Ctrl-C**; it never stops on its own. Clearing the terminal is a no-op when stdout is not a TTY, so redirecting to a file (`> out.log`) or running under CI appends every refresh to the output instead of redrawing in place - the file grows without bound until the process is killed.
 
 ### sql plan
 
