@@ -44,12 +44,12 @@ async def _watch_render(
     """Render once or continuously, in the familiar terminal-watch style.
 
     Thin adapter over the shared :func:`~fabric_dw.cli._watch.watch_loop`:
-    supplies the fetch-and-render tick, while clearing, the header, and the
-    sleep live in the shared helper.
+    supplies the fetch and render steps, while clearing, the header, and the
+    sleep live in the shared helper (which fetches before clearing, so a slow
+    fetch does not blank the terminal).
     """
 
-    async def _tick() -> None:
-        items = await fetch()
+    def _render(items: Sequence[_JsonModel]) -> None:
         render(
             [item.model_dump(by_alias=True, mode="json") for item in items],
             json_output=json_output,
@@ -57,7 +57,7 @@ async def _watch_render(
             prune_null_columns=True,
         )
 
-    await watch_loop(interval=interval, command=command, tick=_tick)
+    await watch_loop(interval=interval, command=command, fetch=fetch, render=_render)
 
 
 @click.group("queries")
@@ -74,7 +74,7 @@ def queries_group() -> None:
 @coro
 async def running_cmd(ctx: CliContext, item: str | None, watch: int | None) -> None:
     """List currently running queries on ITEM (warehouse or endpoint)."""
-    validate_watch(ctx, watch)
+    validate_watch(json_output=ctx.json_output, watch=watch)
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
@@ -100,7 +100,7 @@ async def running_cmd(ctx: CliContext, item: str | None, watch: int | None) -> N
 @coro
 async def connections_cmd(ctx: CliContext, item: str | None, watch: int | None) -> None:
     """List active SQL connections on ITEM (warehouse or endpoint)."""
-    validate_watch(ctx, watch)
+    validate_watch(json_output=ctx.json_output, watch=watch)
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
@@ -194,7 +194,7 @@ async def locks_cmd(
     watch: int | None,
 ) -> None:
     """List active locks from sys.dm_tran_locks on ITEM."""
-    validate_watch(ctx, watch)
+    validate_watch(json_output=ctx.json_output, watch=watch)
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:

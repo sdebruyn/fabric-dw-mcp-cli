@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -19,15 +19,12 @@ from fabric_dw.cli.commands import queries as _queries_cmd
 from fabric_dw.exceptions import FabricError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import ExecRequestHistory, QueryLock, RunningQuery, WarehouseKind
 from fabric_dw.sql import SqlTarget
+from tests.unit.cli.conftest import _StopWatchError
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 WH_GUID = "d4e5f6a7-b8c9-0123-def0-123456789abc"
 WS_UUID = UUID(WS_GUID)
 WH_UUID = UUID(WH_GUID)
-
-
-class _StopWatchError(Exception):
-    """Terminate a watch-loop test after the requested number of sleeps."""
 
 
 def _make_http_cm(http: object) -> object:
@@ -167,34 +164,47 @@ class TestQueriesList:
 
 @pytest.mark.anyio
 async def test_watch_render_fetches_immediately_clears_and_repeats() -> None:
-    """Watch renders immediately, redraws the terminal, then repeats after sleeping.
+    """Watch fetches immediately, then clears/redraws the terminal, then repeats.
 
     The clear/header/sleep mechanics now live in the shared
     ``fabric_dw.cli._watch.watch_loop`` helper (patched at their new home);
-    ``render`` is still called from ``queries.py``'s own tick closure.
+    ``render`` is still called from ``queries.py``'s own render closure.
+    Fetch must complete *before* the terminal is cleared on every cycle --
+    clearing first would blank the screen for the duration of a slow fetch
+    and sample the header timestamp before the data was actually read (PR
+    #1028 review round 1). A shared call-log manager pins that ordering,
+    since call counts alone cannot distinguish it from the reverse order.
     """
+    manager = MagicMock()
     fetch = AsyncMock(return_value=[_make_running_query()])
+    manager.attach_mock(fetch, "fetch")
     sleep = AsyncMock(side_effect=[None, _StopWatchError()])
     with (
         patch("fabric_dw.cli._watch.asyncio.sleep", new=sleep),
         patch("fabric_dw.cli._watch.click.clear") as clear,
         patch("fabric_dw.cli._watch.click.echo") as echo,
         patch("fabric_dw.cli.commands.queries.render") as render,
-        pytest.raises(_StopWatchError),
     ):
-        await _queries_cmd._watch_render(
-            interval=3,
-            command="fdw queries running SalesWarehouse",
-            title="Running Queries",
-            json_output=False,
-            fetch=fetch,
-        )
+        manager.attach_mock(clear, "clear")
+        manager.attach_mock(render, "render")
+        with pytest.raises(_StopWatchError):
+            await _queries_cmd._watch_render(
+                interval=3,
+                command="fdw queries running SalesWarehouse",
+                title="Running Queries",
+                json_output=False,
+                fetch=fetch,
+            )
 
     assert fetch.await_count == 2
     assert sleep.await_args_list == [((3,),), ((3,),)]
     assert clear.call_count == 2
     assert render.call_count == 2
     assert "Every 3s: fdw queries running SalesWarehouse" in echo.call_args_list[0].args[0]
+
+    relevant = {"fetch", "clear", "render"}
+    call_order = [name for name, _args, _kwargs in manager.mock_calls if name in relevant]
+    assert call_order == ["fetch", "clear", "render", "fetch", "clear", "render"]
 
 
 class TestQueriesKill:

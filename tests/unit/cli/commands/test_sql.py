@@ -22,19 +22,15 @@ from click.testing import CliRunner, Result
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
-from fabric_dw.cli._watch import watch_loop
 from fabric_dw.exceptions import FabricError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import SqlResult, WarehouseKind
 from fabric_dw.sql import SqlTarget
+from tests.unit.cli.conftest import _StopWatchError
 
 WS_GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 WH_GUID = "d4e5f6a7-b8c9-0123-def0-123456789abc"
 WS_UUID = UUID(WS_GUID)
 WH_UUID = UUID(WH_GUID)
-
-
-class _StopWatchError(Exception):
-    """Terminate a watch-loop test after the requested number of sleeps."""
 
 
 def _make_sql_target() -> SqlTarget:
@@ -519,10 +515,20 @@ class TestSqlExecWatch:
     def test_watch_renders_immediately_then_repeats_on_interval(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
-        """Rows render on the first tick with no delay, then the loop clears/redraws."""
+        """Rows render on the first tick with no delay, then the loop clears/redraws.
+
+        The tick must execute the query *before* clearing the terminal on
+        every cycle: clearing first would blank the screen while the query is
+        still running and would sample the header timestamp before the row
+        data was actually fetched (PR #1028 review round 1). A shared
+        call-log manager pins that ordering; plain call counts cannot
+        distinguish it from the reverse order.
+        """
         _ = cache_env
         mock_http = AsyncMock()
+        manager = MagicMock()
         execute = AsyncMock(return_value=_make_sql_result())
+        manager.attach_mock(execute, "execute")
         sleep = AsyncMock(side_effect=[None, _StopWatchError()])
         with (
             patch(
@@ -536,7 +542,10 @@ class TestSqlExecWatch:
             patch("fabric_dw.services.sql_exec.execute", new=execute),
             patch("fabric_dw.cli._watch.asyncio.sleep", new=sleep),
             patch("fabric_dw.cli._watch.click.clear") as clear,
+            patch("fabric_dw.cli.commands.sql.render_result_rows") as render_rows,
         ):
+            manager.attach_mock(clear, "clear")
+            manager.attach_mock(render_rows, "render")
             result = runner.invoke(
                 cli,
                 [
@@ -553,8 +562,12 @@ class TestSqlExecWatch:
             )
         assert execute.await_count == 2
         assert clear.call_count == 2
+        assert render_rows.call_count == 2
         assert "Every 3s: fdw sql exec" in result.output
-        assert result.output.count("foo") == 2
+
+        relevant = {"execute", "clear", "render"}
+        call_order = [name for name, _args, _kwargs in manager.mock_calls if name in relevant]
+        assert call_order == ["execute", "clear", "render", "execute", "clear", "render"]
 
     def test_watch_reads_query_once_not_per_tick(
         self, runner: CliRunner, cache_env: Path, tmp_path: Path
@@ -683,46 +696,6 @@ class TestSqlExecWatch:
             )
         assert result.exit_code != 0
         assert "server exploded" in result.output
-
-
-class TestWatchLoop:
-    """fabric_dw.cli._watch.watch_loop — the shared loop behind ``queries`` and ``sql exec``."""
-
-    @pytest.mark.anyio
-    async def test_runs_tick_once_without_clearing_when_interval_is_none(self) -> None:
-        tick = AsyncMock()
-        with (
-            patch("fabric_dw.cli._watch.click.clear") as clear,
-            patch("fabric_dw.cli._watch.asyncio.sleep") as sleep,
-        ):
-            await watch_loop(interval=None, command="fdw sql exec", tick=tick)
-        tick.assert_awaited_once()
-        clear.assert_not_called()
-        sleep.assert_not_called()
-
-    @pytest.mark.anyio
-    async def test_clears_prints_header_and_repeats_on_interval(self) -> None:
-        tick = AsyncMock()
-        sleep = AsyncMock(side_effect=[None, _StopWatchError()])
-        with (
-            patch("fabric_dw.cli._watch.click.clear") as clear,
-            patch("fabric_dw.cli._watch.click.echo") as echo,
-            patch("fabric_dw.cli._watch.asyncio.sleep", new=sleep),
-            pytest.raises(_StopWatchError),
-        ):
-            await watch_loop(interval=5, command="fdw sql exec", tick=tick)
-        assert tick.await_count == 2
-        assert clear.call_count == 2
-        assert sleep.await_args_list == [((5,),), ((5,),)]
-        assert "Every 5s: fdw sql exec" in echo.call_args_list[0].args[0]
-
-    @pytest.mark.anyio
-    async def test_tick_error_propagates_uncaught(self) -> None:
-        async def _boom() -> None:
-            raise ValueError("boom")
-
-        with pytest.raises(ValueError, match="boom"):
-            await watch_loop(interval=None, command="fdw sql exec", tick=_boom)
 
 
 class TestSqlPlan:

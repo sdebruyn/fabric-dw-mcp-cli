@@ -57,7 +57,14 @@ def sql_group() -> None:
     help="Path to a .sql file to execute.",
 )
 @click.option(
-    "--watch", type=click.IntRange(min=1), metavar="SECONDS", help="Refresh every SECONDS."
+    "--watch",
+    type=click.IntRange(min=1),
+    metavar="SECONDS",
+    help=(
+        "Refresh every SECONDS, until interrupted with Ctrl-C. "
+        "Terminal clearing is a no-op when stdout is not a TTY, so redirecting to a "
+        "file or running in CI appends every refresh instead of redrawing."
+    ),
 )
 @click.pass_obj
 @coro
@@ -80,10 +87,13 @@ async def sql_exec_cmd(
     With --watch SECONDS, the query text is read once and then re-executed and
     redrawn every SECONDS, the same way ``queries running``/``locks``/``connections``
     do.  There is no way for the CLI to tell whether a statement is read-only, so
-    --watch simply re-runs whatever it was given, DDL and DML included.  Only use
-    --watch with statements that are safe to run repeatedly.
+    --watch simply re-runs whatever it was given, verbatim, DDL and DML included, on
+    every tick.  Only use --watch with statements that are safe to run repeatedly.
+    The loop runs until interrupted with Ctrl-C; it never stops on its own.  When
+    stdout is not a TTY (e.g. redirected to a file, or running in CI), the terminal
+    clear is a no-op, so each refresh is appended rather than redrawn.
     """
-    validate_watch(ctx, watch)
+    validate_watch(json_output=ctx.json_output, watch=watch)
     query = load_sql_body(query_text, query_file, inline_opt="-q/--query", file_opt="-f/--file")
 
     ws = resolve_workspace(ctx)
@@ -92,11 +102,13 @@ async def sql_exec_cmd(
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
 
-            async def _tick() -> None:
-                result = await _sql_exec_svc.execute(target, query, mode=ctx.auth)
+            async def _fetch() -> SqlResult:
+                return await _sql_exec_svc.execute(target, query, mode=ctx.auth)
+
+            def _render(result: SqlResult) -> None:
                 _render_sql_result(ctx, result)
 
-            await watch_loop(interval=watch, command="fdw sql exec", tick=_tick)
+            await watch_loop(interval=watch, command="fdw sql exec", fetch=_fetch, render=_render)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
 
