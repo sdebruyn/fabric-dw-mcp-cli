@@ -96,7 +96,7 @@ dev = [
     "pytest-randomly",
     "pytest-cov",
     "ruff==0.16.4",
-    "ty==0.0.71",
+    "ty==0.0.73",
     "types-pyyaml>=6.0",
     "pytest-socket>=0.8.0",
 ]
