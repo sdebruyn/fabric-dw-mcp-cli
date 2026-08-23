@@ -12,7 +12,7 @@ name: Docs
 # Both conditions are required so a malformed-but-non-prerelease tag can never
 # reach production.
 #
-# Fork PRs: the deploy-preview job is skipped (secrets are absent on fork PRs).
+# Fork and dependabot PRs: the deploy-preview job is skipped (secrets are absent).
 
 on:
   push:
@@ -171,10 +171,15 @@ jobs:
   deploy-preview:
     name: Deploy PR preview
     needs: build
-    # Skip for fork PRs: secrets are not exposed, so the deploy would fail.
+    # Skip when secrets are not exposed, which would make the deploy fail:
+    #   - fork PRs
+    #   - dependabot PRs: the branch lives in this repo, so the fork check above
+    #     passes, but dependabot runs get a read-only token and the separate
+    #     Dependabot secrets store, so CLOUDFLARE_API_TOKEN is absent.
     if: >-
       github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     environment:
       name: staging
