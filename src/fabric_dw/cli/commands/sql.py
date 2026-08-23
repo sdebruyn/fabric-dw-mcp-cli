@@ -114,13 +114,20 @@ async def sql_exec_cmd(
 
 
 def _render_sql_result(ctx: CliContext, result: SqlResult) -> None:
-    """Render one ``sql exec`` result set, for a single run or one watch tick."""
+    """Render one ``sql exec`` result set, for a single run or one watch tick.
+
+    Branches on ``result.columns``, not ``result.rows``: a statement that
+    returned a column list is a query and gets the table, even with zero
+    rows (e.g. a ``SELECT`` that matched nothing).  Only a statement with no
+    columns at all — the genuine DDL/DML case — falls back to the
+    ``rowcount=`` banner.
+    """
     if ctx.json_output:
         render(
             result.model_dump(by_alias=True, mode="json"),
             json_output=True,
         )
-    elif result.rows:
+    elif result.columns:
         render_result_rows(
             result.columns,
             result.rows,

@@ -32,6 +32,8 @@ fdw [-w WORKSPACE] sql exec [OPTIONS] [ITEM]
 
 Output defaults to a Rich table (rows/columns). Pass `--json` on the root command to emit machine-readable JSON (`{"columns": [...], "rows": [...], "rowcount": N}`).
 
+Whether a `Query executed successfully. rowcount=N` message or a table is shown depends on whether the statement returned any columns, not on whether it returned any rows. A `SELECT` that matches nothing still returns its column list, so it renders an empty table with headers; only a true DDL/DML statement, which returns no columns at all, prints the `rowcount=N` message.
+
 **Example**
 
 ```shell

@@ -19,6 +19,7 @@ from fabric_dw.cli._render import (
     render,
     render_permissions_table,
     render_refresh_table,
+    render_result_rows,
     render_statistic_details,
     sanitise_json,
 )
@@ -2179,3 +2180,48 @@ class TestRenderStatisticDetails:
         parsed = json.loads(captured.out)
         assert "histogram" in parsed
         assert isinstance(parsed["histogram"], list)
+
+
+class TestRenderResultRowsEmptyRows:
+    """render_result_rows(columns, rows=[]) — issue #1030.
+
+    An empty result set still has a shape: the Rich table path must render
+    the column headers, not a bare headerless table.  Null-column pruning is
+    skipped when there are no rows, since every column would otherwise look
+    vacuously "all-None" and lose its header.
+    """
+
+    def _render_to_string(
+        self, columns: list[str], rows: list[list[object]], *, table_title: str | None = None
+    ) -> str:
+        sio = StringIO()
+        console = Console(file=sio, width=120, highlight=False, no_color=True)
+        render_result_rows(
+            columns,
+            rows,
+            json_output=False,
+            console=console,
+            table_title=table_title,
+        )
+        return sio.getvalue()
+
+    def test_empty_rows_renders_column_headers(self) -> None:
+        output = self._render_to_string(["id", "name"], [])
+        assert "id" in output
+        assert "name" in output
+
+    def test_empty_rows_with_title_prints_title(self) -> None:
+        output = self._render_to_string(["id", "name"], [], table_title="SQL Result")
+        assert "SQL Result" in output
+        assert "id" in output
+
+    def test_empty_rows_and_empty_columns_renders_without_error(self) -> None:
+        """The genuine DDL/DML shape (no columns either) still renders cleanly."""
+        output = self._render_to_string([], [])
+        assert output != ""
+
+    def test_empty_rows_json_output_is_empty_list(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """The JSON path is unaffected: zero rows still serialise to []."""
+        render_result_rows(["id", "name"], [], json_output=True)
+        captured = capsys.readouterr()
+        assert json.loads(captured.out) == []

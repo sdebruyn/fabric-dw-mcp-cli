@@ -626,13 +626,23 @@ def _render_positional_table(
     e.g. for raw SQL output where every column must appear regardless of
     nullability.
 
+    When *rows* is empty, *columns* are still rendered as table headers — an
+    empty result set has a shape, and that is not the same as a statement
+    that returned no columns at all.  Null-column pruning is skipped in this
+    case: with no rows, every column would vacuously look "all-None" and
+    pruning would drop every header, defeating the point of showing the
+    empty result's shape.
+
     The wide-table vertical fallback uses the same heuristic as
     :func:`_render_table`.
     """
     if not rows:
         if title:
             console.print(f"[bold]{_escape_markup(title)}[/bold]")
-        console.print(Table(show_header=True, header_style="bold"))
+        table = Table(show_header=True, header_style="bold")
+        for col in columns:
+            table.add_column(_escape_markup(col))
+        console.print(table)
         return
 
     n = len(columns)

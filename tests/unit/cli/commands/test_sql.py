@@ -67,6 +67,11 @@ def _make_empty_sql_result() -> SqlResult:
     return SqlResult(columns=[], rows=[], rowcount=3)
 
 
+def _make_zero_row_select_result() -> SqlResult:
+    """A ``SELECT`` that matched nothing: columns present, no rows (issue #1030)."""
+    return SqlResult(columns=["id", "name"], rows=[], rowcount=0)
+
+
 def _make_duplicate_col_result() -> SqlResult:
     return SqlResult(columns=["val", "val"], rows=[["alpha", "beta"]], rowcount=1)
 
@@ -470,6 +475,82 @@ class TestSqlExecDuplicateColumns:
         assert "bar" in result.output
 
 
+class TestSqlExecZeroRowSelect:
+    """sql exec — a SELECT that matches nothing (issue #1030).
+
+    Must render an empty table with column headers, not the DDL/DML
+    ``rowcount=`` banner: the columns list, not the rows list, distinguishes
+    a query from a statement.
+    """
+
+    def test_zero_row_select_renders_headers_not_rowcount_banner(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.execute",
+                new=AsyncMock(return_value=_make_zero_row_select_result()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "sql", "exec", WH_GUID, "-q", "SELECT id, name FROM t WHERE 1=0"],
+            )
+        assert result.exit_code == 0
+        assert "id" in result.output
+        assert "name" in result.output
+        assert "Query executed successfully" not in result.output
+
+    def test_zero_row_select_json_output_unchanged(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--json still reports the shape (columns, empty rows, rowcount=0)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch(
+                "fabric_dw.services.sql_exec.execute",
+                new=AsyncMock(return_value=_make_zero_row_select_result()),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "sql",
+                    "exec",
+                    WH_GUID,
+                    "-q",
+                    "SELECT id, name FROM t WHERE 1=0",
+                ],
+            )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["columns"] == ["id", "name"]
+        assert payload["rows"] == []
+        assert payload["rowcount"] == 0
+
+
 class TestSqlExecWatch:
     """sql exec --watch — interval validation, --json rejection, live refresh (issue #1027)."""
 
@@ -640,6 +721,49 @@ class TestSqlExecWatch:
             )
         assert execute.await_count == 2
         assert result.output.count("Query executed successfully. rowcount=3") == 2
+
+    def test_watch_zero_row_select_renders_headers_each_tick(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """A zero-row SELECT under --watch renders headers on every tick (issue #1030).
+
+        Before the fix this printed the DDL/DML rowcount banner on every tick,
+        which reads as if the watched query never runs.
+        """
+        _ = cache_env
+        mock_http = AsyncMock()
+        execute = AsyncMock(return_value=_make_zero_row_select_result())
+        sleep = AsyncMock(side_effect=[None, _StopWatchError()])
+        with (
+            patch(
+                "fabric_dw.cli.commands.sql.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.sql.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            patch("fabric_dw.services.sql_exec.execute", new=execute),
+            patch("fabric_dw.cli._watch.asyncio.sleep", new=sleep),
+            patch("fabric_dw.cli._watch.click.clear"),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "sql",
+                    "exec",
+                    WH_GUID,
+                    "-q",
+                    "SELECT id, name FROM t WHERE 1=0",
+                    "--watch",
+                    "2",
+                ],
+            )
+        assert execute.await_count == 2
+        assert result.output.count("id") == 2
+        assert "Query executed successfully" not in result.output
 
     def test_watch_without_flag_runs_once_unchanged(
         self, runner: CliRunner, cache_env: Path
