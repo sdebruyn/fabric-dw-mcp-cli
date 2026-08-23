@@ -1,6 +1,9 @@
 version: 2
 updates:
-  - package-ecosystem: pip
+  # `uv`, not `pip`: the pip ecosystem edits pyproject.toml without regenerating
+  # uv.lock, which makes `uv lock --check` (and every `uv sync --locked` job after
+  # it) fail on each dependency PR. The uv ecosystem moves both files together.
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
