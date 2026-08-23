@@ -467,6 +467,21 @@ async def test_list_warehouses_happy_path(mock_ctx, ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_server_reports_its_own_version() -> None:
+    """The server must advertise the fabric-dw version, not an empty string.
+
+    Under SDK v1 the constructor defaulted this to the SDK's own version, which
+    was wrong but at least non-empty.  v2 defaults it to ``""``, so it has to be
+    passed explicitly.  ``test_contract.py`` checks the same value as it appears
+    in ``serverInfo`` over the protocol.
+    """
+    from fabric_dw import __version__  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    assert mcp.version == __version__
+    assert mcp.version, "server version must not be empty"
+
+
 def test_run_uses_stdio_by_default() -> None:
     """run() with no args calls MCPServer.run(transport='stdio')."""
     from fabric_dw.mcp import run  # noqa: PLC0415
@@ -491,7 +506,41 @@ def test_run_accepts_http_transport() -> None:
     with patch.object(mcp, "run") as mock_run:
         run(["--transport", "http"])
 
-    mock_run.assert_called_once_with(transport="streamable-http")
+    mock_run.assert_called_once_with(transport="streamable-http", host="127.0.0.1", port=8000)
+
+
+def test_run_http_forwards_host_and_port_to_run() -> None:
+    """--host and --port reach MCPServer.run() as keyword arguments.
+
+    v2 removed the mutable settings object the previous implementation assigned
+    to (``mcp.settings.host`` / ``mcp.settings.port``); assigning to those now
+    raises.  Host and port are transport-specific ``run()`` kwargs instead, so
+    this pins that they are actually forwarded rather than silently dropped,
+    which would leave the server on the SDK's 127.0.0.1:8000 defaults.
+    """
+    from fabric_dw.mcp import run  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with patch.object(mcp, "run") as mock_run:
+        run(["--transport", "http", "--host", "127.0.0.1", "--port", "9123"])
+
+    mock_run.assert_called_once_with(transport="streamable-http", host="127.0.0.1", port=9123)
+
+
+def test_run_stdio_passes_no_transport_kwargs() -> None:
+    """The stdio branch must not forward host/port.
+
+    The v2 ``run()`` stdio overload accepts no keyword arguments, so passing
+    host or port there is a type error even though the runtime ``**kwargs``
+    signature would swallow them.
+    """
+    from fabric_dw.mcp import run  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with patch.object(mcp, "run") as mock_run:
+        run(["--host", "0.0.0.0", "--port", "9123"])  # noqa: S104
+
+    mock_run.assert_called_once_with(transport="stdio")
 
 
 # ---------------------------------------------------------------------------

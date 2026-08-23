@@ -212,7 +212,7 @@ def mutating_tool(
     return decorator
 
 
-class InstrumentedMCPServer(MCPServer):
+class InstrumentedMCPServer(MCPServer[None]):
     """A :class:`~mcp.server.mcpserver.MCPServer` subclass that wraps every
     ``@mcp.tool(name=...)`` call with a fire-and-forget ``command_invoked``
     telemetry event.
@@ -224,6 +224,11 @@ class InstrumentedMCPServer(MCPServer):
 
     No changes to any tool registration code are required: all existing
     ``@mcp.tool(name=...)`` calls automatically gain instrumentation.
+
+    The base is parameterised as ``MCPServer[None]`` because
+    :func:`~fabric_dw.mcp._context.fabric_lifespan` yields ``None``: the shared
+    :class:`~fabric_dw.mcp._context.ServerContext` is reached through a
+    module-level sentinel, not through the lifespan result.
     """
 
     def tool(  # noqa: PLR0913

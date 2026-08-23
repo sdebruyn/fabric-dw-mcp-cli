@@ -58,6 +58,7 @@ import sys
 from collections.abc import Sequence
 from typing import Literal
 
+from fabric_dw import __version__
 from fabric_dw.config import load_config
 from fabric_dw.logging import setup_logging
 from fabric_dw.mcp._context import fabric_lifespan
@@ -112,6 +113,10 @@ mcp: InstrumentedMCPServer = InstrumentedMCPServer(
     "fabric-dw",
     lifespan=fabric_lifespan,
     instructions=_SERVER_INSTRUCTIONS,
+    # Reported to clients as `serverInfo.version` in the initialize response.
+    # The SDK defaults it to the empty string, so without this the server has
+    # no version at all on the wire.
+    version=__version__,
 )
 
 # ---------------------------------------------------------------------------
@@ -180,6 +185,15 @@ def run(argv: Sequence[str] | None = None) -> None:
         a non-loopback address requires ``FABRIC_MCP_ALLOW_REMOTE=1``.
     ``--port PORT``
         TCP port for HTTP transport (default ``8000``).
+
+    Both are passed straight through to ``MCPServer.run()``, which is overloaded
+    per transport; the stdio overload takes no keyword arguments at all.
+
+    The HTTP transport caps request bodies at 4 MiB and answers anything larger
+    with HTTP 413.  The default is kept: for this server the only realistic way
+    to reach it is a single ``execute_sql`` script or a procedure or view
+    definition of several megabytes.  ``max_request_body_size`` on ``run()`` is
+    the escape hatch if that ever becomes a real constraint.
     """
     setup_logging(_resolve_log_level())
 
@@ -212,30 +226,29 @@ def run(argv: Sequence[str] | None = None) -> None:
         "streamable-http" if args.transport == "http" else "stdio"
     )
 
-    if transport == "streamable-http":
-        if args.host not in _LOOPBACK_HOSTS:
-            if not _guards_env_flag("FABRIC_MCP_ALLOW_REMOTE"):
-                logger.error(
-                    "refusing to bind HTTP transport on %s:%s — this would expose the server "
-                    "network-wide without authentication or TLS. "
-                    "Set FABRIC_MCP_ALLOW_REMOTE=1 to override (ensure a reverse proxy provides "
-                    "authentication and TLS termination).",
-                    args.host,
-                    args.port,
-                )
-                sys.exit(1)
-            logger.warning(
-                "WARNING: HTTP transport is bound on %s:%s (non-loopback). "
-                "The MCP protocol has NO built-in authentication or TLS. "
-                "Ensure an authenticating reverse proxy fronts this endpoint before "
-                "exposing it to untrusted networks.",
+    # Unchanged loopback guard.  It used to sit under a second `if transport ==
+    # "streamable-http"` block that also assigned mcp.settings.host/port; with
+    # that assignment gone the two conditions collapse into one `and`, which
+    # short-circuits identically.
+    if transport == "streamable-http" and args.host not in _LOOPBACK_HOSTS:
+        if not _guards_env_flag("FABRIC_MCP_ALLOW_REMOTE"):
+            logger.error(
+                "refusing to bind HTTP transport on %s:%s — this would expose the server "
+                "network-wide without authentication or TLS. "
+                "Set FABRIC_MCP_ALLOW_REMOTE=1 to override (ensure a reverse proxy provides "
+                "authentication and TLS termination).",
                 args.host,
                 args.port,
             )
-
-        # Update MCPServer settings before run so uvicorn picks them up.
-        mcp.settings.host = args.host
-        mcp.settings.port = args.port
+            sys.exit(1)
+        logger.warning(
+            "WARNING: HTTP transport is bound on %s:%s (non-loopback). "
+            "The MCP protocol has NO built-in authentication or TLS. "
+            "Ensure an authenticating reverse proxy fronts this endpoint before "
+            "exposing it to untrusted networks.",
+            args.host,
+            args.port,
+        )
 
     # A2: print first-run notice to stderr before stdio transport starts so
     # the notice never pollutes the MCP stdio protocol stream.
@@ -246,7 +259,15 @@ def run(argv: Sequence[str] | None = None) -> None:
     start_ms = now_ms()
     exc_seen: BaseException | None = None
     try:
-        mcp.run(transport=transport)
+        # Host and port are transport-specific run() kwargs.  There is no
+        # settings object to mutate: MCPServer exposes no `.settings.host` /
+        # `.settings.port` and assigning to them raises.  run() is overloaded
+        # per transport and the stdio overload accepts no kwargs at all, hence
+        # the two branches.
+        if transport == "streamable-http":
+            mcp.run(transport="streamable-http", host=args.host, port=args.port)
+        else:
+            mcp.run(transport="stdio")
     except BaseException as exc:
         exc_seen = exc
         raise

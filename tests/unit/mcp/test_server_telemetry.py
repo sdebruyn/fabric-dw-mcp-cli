@@ -103,7 +103,6 @@ def test_normal_return_emits_ok_and_shuts_down() -> None:
         ),
     ):
         mock_mcp.run.return_value = None
-        mock_mcp.settings = MagicMock()
         _run()
 
     assert len(calls) == 1
@@ -134,7 +133,6 @@ def test_keyboard_interrupt_emits_ok_and_shuts_down_and_reraises() -> None:
         ),
     ):
         mock_mcp.run.side_effect = KeyboardInterrupt()
-        mock_mcp.settings = MagicMock()
 
         with pytest.raises(KeyboardInterrupt):
             _run()
@@ -167,7 +165,6 @@ def test_unexpected_exception_emits_api_error_and_shuts_down_and_reraises() -> N
         ),
     ):
         mock_mcp.run.side_effect = RuntimeError("boom")
-        mock_mcp.settings = MagicMock()
 
         with pytest.raises(RuntimeError, match="boom"):
             _run()
@@ -197,7 +194,6 @@ def test_system_exit_zero_emits_ok(code: int | None) -> None:
         patch("fabric_dw.mcp.server.shutdown_telemetry"),
     ):
         mock_mcp.run.side_effect = SystemExit(code)
-        mock_mcp.settings = MagicMock()
 
         with pytest.raises(SystemExit):
             _run()
@@ -220,7 +216,6 @@ def test_system_exit_nonzero_emits_api_error() -> None:
         patch("fabric_dw.mcp.server.shutdown_telemetry"),
     ):
         mock_mcp.run.side_effect = SystemExit(1)
-        mock_mcp.settings = MagicMock()
 
         with pytest.raises(SystemExit):
             _run()
@@ -252,7 +247,6 @@ def test_shutdown_runs_even_if_record_app_exited_raises() -> None:
         ),
     ):
         mock_mcp.run.return_value = None
-        mock_mcp.settings = MagicMock()
         # The telemetry error must be swallowed; run() should not propagate it.
         _run()
 
@@ -282,7 +276,6 @@ def test_call_order_record_before_shutdown() -> None:
         patch("fabric_dw.mcp.server.shutdown_telemetry", new=manager.shutdown),
     ):
         mock_mcp.run.return_value = None
-        mock_mcp.settings = MagicMock()
         _run()
 
     call_names = [c[0] for c in manager.mock_calls]
@@ -314,6 +307,5 @@ def test_keyboard_interrupt_during_teardown_is_swallowed() -> None:
         patch("fabric_dw.mcp.server.shutdown_telemetry", side_effect=KeyboardInterrupt()),
     ):
         mock_mcp.run.return_value = None
-        mock_mcp.settings = MagicMock()
         # The KeyboardInterrupt from shutdown_telemetry must NOT escape run().
         _run()  # must return normally without raising
