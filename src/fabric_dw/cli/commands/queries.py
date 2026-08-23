@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Sequence
-from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import click
 
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._render import render
+from fabric_dw.cli._watch import validate_watch, watch_loop
 from fabric_dw.cli.commands._utils import (
     AGO_OPTION,
     LIMIT_OPTION,
@@ -34,12 +33,6 @@ class _JsonModel(Protocol):
     def model_dump(self, *, by_alias: bool, mode: str) -> dict[str, Any]: ...
 
 
-def _validate_watch(ctx: CliContext, watch: int | None) -> None:
-    """Reject streaming JSON before opening a network client."""
-    if watch is not None and ctx.json_output:
-        raise click.UsageError("--watch cannot be used with --json.")
-
-
 async def _watch_render(
     *,
     interval: int | None,
@@ -48,23 +41,23 @@ async def _watch_render(
     json_output: bool,
     fetch: Callable[[], Awaitable[Sequence[_JsonModel]]],
 ) -> None:
-    """Render once or continuously, in the familiar terminal-watch style."""
-    while True:
+    """Render once or continuously, in the familiar terminal-watch style.
+
+    Thin adapter over the shared :func:`~fabric_dw.cli._watch.watch_loop`:
+    supplies the fetch-and-render tick, while clearing, the header, and the
+    sleep live in the shared helper.
+    """
+
+    async def _tick() -> None:
         items = await fetch()
-        if interval is not None:
-            click.clear()
-            timestamp = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-            click.echo(f"Every {interval}s: {command}    {timestamp}")
-            click.echo()
         render(
             [item.model_dump(by_alias=True, mode="json") for item in items],
             json_output=json_output,
             table_title=title,
             prune_null_columns=True,
         )
-        if interval is None:
-            return
-        await asyncio.sleep(interval)
+
+    await watch_loop(interval=interval, command=command, tick=_tick)
 
 
 @click.group("queries")
@@ -81,7 +74,7 @@ def queries_group() -> None:
 @coro
 async def running_cmd(ctx: CliContext, item: str | None, watch: int | None) -> None:
     """List currently running queries on ITEM (warehouse or endpoint)."""
-    _validate_watch(ctx, watch)
+    validate_watch(ctx, watch)
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
@@ -107,7 +100,7 @@ async def running_cmd(ctx: CliContext, item: str | None, watch: int | None) -> N
 @coro
 async def connections_cmd(ctx: CliContext, item: str | None, watch: int | None) -> None:
     """List active SQL connections on ITEM (warehouse or endpoint)."""
-    _validate_watch(ctx, watch)
+    validate_watch(ctx, watch)
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:
@@ -201,7 +194,7 @@ async def locks_cmd(
     watch: int | None,
 ) -> None:
     """List active locks from sys.dm_tran_locks on ITEM."""
-    _validate_watch(ctx, watch)
+    validate_watch(ctx, watch)
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     try:

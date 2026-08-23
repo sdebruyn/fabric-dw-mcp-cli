@@ -167,13 +167,18 @@ class TestQueriesList:
 
 @pytest.mark.anyio
 async def test_watch_render_fetches_immediately_clears_and_repeats() -> None:
-    """Watch renders immediately, redraws the terminal, then repeats after sleeping."""
+    """Watch renders immediately, redraws the terminal, then repeats after sleeping.
+
+    The clear/header/sleep mechanics now live in the shared
+    ``fabric_dw.cli._watch.watch_loop`` helper (patched at their new home);
+    ``render`` is still called from ``queries.py``'s own tick closure.
+    """
     fetch = AsyncMock(return_value=[_make_running_query()])
     sleep = AsyncMock(side_effect=[None, _StopWatchError()])
     with (
-        patch("fabric_dw.cli.commands.queries.asyncio.sleep", new=sleep),
-        patch("fabric_dw.cli.commands.queries.click.clear") as clear,
-        patch("fabric_dw.cli.commands.queries.click.echo") as echo,
+        patch("fabric_dw.cli._watch.asyncio.sleep", new=sleep),
+        patch("fabric_dw.cli._watch.click.clear") as clear,
+        patch("fabric_dw.cli._watch.click.echo") as echo,
         patch("fabric_dw.cli.commands.queries.render") as render,
         pytest.raises(_StopWatchError),
     ):

@@ -20,6 +20,7 @@ from fabric_dw.cli._plan_parse import parse_showplan
 from fabric_dw.cli._plan_render import operator_to_dict, render_plan_tree
 from fabric_dw.cli._plan_svg import render_plan_svg
 from fabric_dw.cli._render import render, render_result_rows, sanitise_json
+from fabric_dw.cli._watch import validate_watch, watch_loop
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     build_sql_target,
@@ -29,6 +30,7 @@ from fabric_dw.cli.commands._utils import (
     resolve_workspace,
 )
 from fabric_dw.exceptions import FabricError
+from fabric_dw.models import SqlResult
 from fabric_dw.services import sql_exec as _sql_exec_svc
 
 
@@ -54,6 +56,9 @@ def sql_group() -> None:
     type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
     help="Path to a .sql file to execute.",
 )
+@click.option(
+    "--watch", type=click.IntRange(min=1), metavar="SECONDS", help="Refresh every SECONDS."
+)
 @click.pass_obj
 @coro
 async def sql_exec_cmd(
@@ -61,6 +66,7 @@ async def sql_exec_cmd(
     item: str | None,
     query_text: str | None,
     query_file: str | None,
+    watch: int | None,
 ) -> None:
     """Execute a SQL statement against ITEM (warehouse or SQL endpoint).
 
@@ -70,7 +76,14 @@ async def sql_exec_cmd(
 
     Output defaults to a Rich table (rows/columns).  Pass --json on the root command
     for machine-readable JSON ({columns: [...], rows: [...], rowcount: N}).
+
+    With --watch SECONDS, the query text is read once and then re-executed and
+    redrawn every SECONDS, the same way ``queries running``/``locks``/``connections``
+    do.  There is no way for the CLI to tell whether a statement is read-only, so
+    --watch simply re-runs whatever it was given, DDL and DML included.  Only use
+    --watch with statements that are safe to run repeatedly.
     """
+    validate_watch(ctx, watch)
     query = load_sql_body(query_text, query_file, inline_opt="-q/--query", file_opt="-f/--file")
 
     ws = resolve_workspace(ctx)
@@ -78,24 +91,32 @@ async def sql_exec_cmd(
     try:
         async with build_http_client(ctx) as http:
             target, _entry = await build_sql_target(http, ws, wh)
-            result = await _sql_exec_svc.execute(target, query, mode=ctx.auth)
 
-            if ctx.json_output:
-                render(
-                    result.model_dump(by_alias=True, mode="json"),
-                    json_output=True,
-                )
-            elif result.rows:
-                render_result_rows(
-                    result.columns,
-                    result.rows,
-                    json_output=False,
-                    table_title="SQL Result",
-                )
-            else:
-                click.echo(f"Query executed successfully. rowcount={result.rowcount}")
+            async def _tick() -> None:
+                result = await _sql_exec_svc.execute(target, query, mode=ctx.auth)
+                _render_sql_result(ctx, result)
+
+            await watch_loop(interval=watch, command="fdw sql exec", tick=_tick)
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+def _render_sql_result(ctx: CliContext, result: SqlResult) -> None:
+    """Render one ``sql exec`` result set, for a single run or one watch tick."""
+    if ctx.json_output:
+        render(
+            result.model_dump(by_alias=True, mode="json"),
+            json_output=True,
+        )
+    elif result.rows:
+        render_result_rows(
+            result.columns,
+            result.rows,
+            json_output=False,
+            table_title="SQL Result",
+        )
+    else:
+        click.echo(f"Query executed successfully. rowcount={result.rowcount}")
 
 
 @sql_group.command("plan")
