@@ -865,11 +865,11 @@ async def test_add_drop_security_predicate_schemas_omit_predicate_type() -> None
 
     tools = {t.name: t for t in await mcp.list_tools()}
 
-    add_props = tools["add_security_predicate"].inputSchema["properties"]
+    add_props = tools["add_security_predicate"].input_schema["properties"]
     assert "predicate_type" not in add_props
     assert "operation" not in add_props
 
-    drop_props = tools["drop_security_predicate"].inputSchema["properties"]
+    drop_props = tools["drop_security_predicate"].input_schema["properties"]
     assert "predicate_type" not in drop_props
     assert "operation" not in drop_props
 
