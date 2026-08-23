@@ -43,9 +43,11 @@ LABEL io.modelcontextprotocol.server.name="io.github.sdebruyn/fabric-dw-mcp"
 
 # Install system dependencies using BuildKit cache mount for faster rebuilds.
 # ca-certificates: required for TLS connections to Fabric REST APIs and Azure AD.
-# mssql-python (the SQL driver) bundles its own native driver (no separate ODBC
-# manager needed), so no unixodbc/libodbc system packages are required on top of
-# the glibc/OpenSSL already present in the Debian trixie-slim base image.
+# mssql-python resolves its native ODBC driver from the mssql-python-odbc
+# companion package (a locked dependency, installed into the same venv), not
+# from a system ODBC manager, so no unixodbc/libodbc system packages are
+# required on top of the glibc/OpenSSL already present in the Debian
+# trixie-slim base image.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends ca-certificates
