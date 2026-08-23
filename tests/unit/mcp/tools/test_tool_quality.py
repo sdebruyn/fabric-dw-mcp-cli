@@ -37,6 +37,7 @@ from fabric_dw.mcp._helpers import (
     tool_err,
 )
 from fabric_dw.models import WarehouseKind
+from tests.unit._call import call_tool
 
 # ---------------------------------------------------------------------------
 # Shared constants
@@ -309,7 +310,8 @@ async def test_read_table_count_bound_rejection() -> None:
         patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_table",
             {
                 "workspace": _WS_NAME,
@@ -329,7 +331,8 @@ async def test_read_view_count_bound_rejection() -> None:
         patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_view",
             {
                 "workspace": _WS_NAME,
@@ -349,7 +352,8 @@ async def test_execute_sql_max_rows_bound_rejection() -> None:
         patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "execute_sql",
             {
                 "workspace": _WS_NAME,
@@ -369,7 +373,8 @@ async def test_list_request_history_limit_bound_rejection() -> None:
         patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_request_history",
             {
                 "workspace": _WS_NAME,
@@ -388,7 +393,8 @@ async def test_create_sql_pool_max_percent_bound_rejection() -> None:
         patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_sql_pool",
             {
                 "workspace": _WS_NAME,
@@ -420,7 +426,8 @@ async def test_create_sql_pool_next_fallback() -> None:
         patch.dict("os.environ", {}, clear=False),
         pytest.raises(ToolError, match="eventual consistency"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_sql_pool",
             {
                 "workspace": _WS_NAME,
@@ -445,7 +452,8 @@ async def test_update_sql_pool_next_fallback() -> None:
         patch.dict("os.environ", {}, clear=False),
         pytest.raises(ToolError, match="eventual consistency"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_sql_pool",
             {
                 "workspace": _WS_NAME,
@@ -488,7 +496,7 @@ async def test_clear_cache_all_returns_stats(tmp_path: Any) -> None:
     ctx = _make_ctx_with_real_cache(tmp_path)
 
     with patch("fabric_dw.mcp._context._SERVER_CTX", ctx):
-        result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "all"})
+        result = await call_tool(mcp, "clear_cache", {"scope": "all"})
 
     assert result["scope"] == "all"
     assert result["workspaces_cleared"] == 0
@@ -519,7 +527,7 @@ async def test_clear_cache_workspaces_scope(tmp_path: Any) -> None:
     )
 
     with patch("fabric_dw.mcp._context._SERVER_CTX", ctx):
-        result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "workspaces"})
+        result = await call_tool(mcp, "clear_cache", {"scope": "workspaces"})
 
     assert result["scope"] == "workspaces"
     assert result["workspaces_cleared"] == 2
@@ -564,7 +572,7 @@ async def test_clear_cache_items_scope(tmp_path: Any) -> None:
     )
 
     with patch("fabric_dw.mcp._context._SERVER_CTX", ctx):
-        result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "items"})
+        result = await call_tool(mcp, "clear_cache", {"scope": "items"})
 
     assert result["scope"] == "items"
     assert result["workspaces_cleared"] == 0
@@ -594,7 +602,8 @@ async def test_list_tables_raises_tool_error_on_no_connection() -> None:
         patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         pytest.raises(ToolError, match="has no connection string"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_tables",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -613,7 +622,8 @@ async def test_list_running_queries_raises_tool_error_on_no_connection() -> None
         patch("fabric_dw.mcp._context._SERVER_CTX", ctx),
         pytest.raises(ToolError, match="has no connection string"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -634,7 +644,8 @@ async def test_mutating_tool_blocks_in_readonly_mode() -> None:
         patch.dict("os.environ", {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_warehouse",
             {"workspace": _WS_NAME, "name": "new-wh"},
         )
@@ -653,7 +664,8 @@ async def test_mutating_tool_create_view_blocked_in_readonly() -> None:
         patch.dict("os.environ", {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_view",
             {
                 "workspace": _WS_NAME,
@@ -676,7 +688,8 @@ async def test_mutating_tool_create_sql_pool_blocked_in_readonly() -> None:
         patch.dict("os.environ", {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_sql_pool",
             {"workspace": _WS_NAME, "name": "pool1", "max_percent": 10},
         )
@@ -780,7 +793,7 @@ async def test_all_mutating_tools_blocked_in_readonly(tool_name: str) -> None:
     ):
         # Call with minimal / empty args — the write guard fires before any
         # argument validation, so the exact args don't matter.
-        await mcp._tool_manager.call_tool(tool_name, {"workspace": _WS_NAME})
+        await call_tool(mcp, tool_name, {"workspace": _WS_NAME})
 
     error_text = str(exc_info.value)
     assert tool_name in error_text, (

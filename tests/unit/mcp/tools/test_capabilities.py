@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from tests.unit._call import call_tool
+
 
 async def test_list_capabilities_returns_grouped_dict() -> None:
     """list_capabilities returns a dict[str, list[str]]."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    result = await mcp._tool_manager.call_tool("list_capabilities", {})
+    result = await call_tool(mcp, "list_capabilities", {})
 
     assert isinstance(result, dict)
     for domain, tools in result.items():
@@ -21,7 +23,7 @@ async def test_list_capabilities_server_domain_contains_itself() -> None:
     """result['server'] must contain 'list_capabilities'."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    result = await mcp._tool_manager.call_tool("list_capabilities", {})
+    result = await call_tool(mcp, "list_capabilities", {})
 
     assert "server" in result
     assert "list_capabilities" in result["server"]
@@ -32,7 +34,7 @@ async def test_list_capabilities_all_registered_tools_are_present() -> None:
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     live_tools = {tool.name for tool in await mcp.list_tools()}
-    result = await mcp._tool_manager.call_tool("list_capabilities", {})
+    result = await call_tool(mcp, "list_capabilities", {})
     found_tools = {name for tools in result.values() for name in tools}
 
     assert live_tools == found_tools
@@ -42,7 +44,7 @@ async def test_list_capabilities_values_are_sorted() -> None:
     """Each domain's tool list and the dict keys must be in sorted order."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    result = await mcp._tool_manager.call_tool("list_capabilities", {})
+    result = await call_tool(mcp, "list_capabilities", {})
 
     assert list(result.keys()) == sorted(result.keys())
     for domain, tools in result.items():

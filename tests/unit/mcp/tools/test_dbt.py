@@ -9,6 +9,7 @@ import yaml
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.services.dbt_scaffold import DbtAuthMode
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import WH_NAME, WS_NAME, make_item_entry
 
 # ---------------------------------------------------------------------------
@@ -24,7 +25,8 @@ async def test_generate_dbt_profile_returns_dict(
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "generate_dbt_profile",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -45,7 +47,8 @@ async def test_generate_dbt_profile_profiles_yml_is_valid_yaml(
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "generate_dbt_profile",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -62,7 +65,8 @@ async def test_generate_dbt_profile_dbt_project_yml_is_valid_yaml(
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "generate_dbt_profile",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -79,7 +83,8 @@ async def test_generate_dbt_profile_contains_host(mock_ctx, ctx_patch) -> None:
     mock_ctx.resolver.item = AsyncMock(return_value=entry)
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "generate_dbt_profile",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -95,7 +100,8 @@ async def test_generate_dbt_profile_contains_database(mock_ctx, ctx_patch) -> No
     mock_ctx.resolver.item = AsyncMock(return_value=entry)
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "generate_dbt_profile",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -111,7 +117,8 @@ async def test_generate_dbt_profile_sp_emits_env_var_placeholders(
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "generate_dbt_profile",
             {
                 "workspace": WS_NAME,
@@ -138,7 +145,8 @@ async def test_generate_dbt_profile_requirements_contains_dbt_core(
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "generate_dbt_profile",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -155,7 +163,8 @@ async def test_generate_dbt_profile_gitignore_contains_target(
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "generate_dbt_profile",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -190,7 +199,8 @@ async def test_generate_dbt_profile_with_sources_calls_list_schemas(
             new=AsyncMock(return_value={}),
         ) as mock_columns,
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "generate_dbt_profile",
             {"workspace": WS_NAME, "item": WH_NAME, "with_sources": True},
         )
@@ -219,7 +229,8 @@ async def test_generate_dbt_profile_no_connection_string_raises_tool_error(
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "generate_dbt_profile",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -239,7 +250,8 @@ async def test_generate_dbt_profile_workspace_guard(
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "generate_dbt_profile",
             {"workspace": WS_NAME, "item": WH_NAME},
         )

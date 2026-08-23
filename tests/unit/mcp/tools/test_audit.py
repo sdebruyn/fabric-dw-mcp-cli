@@ -5,7 +5,8 @@ Goal:   ≥95 % branch coverage.
 
 Strategy
 --------
-- All calls routed via ``mcp._tool_manager.call_tool``.
+- All calls routed via the shared ``call_tool()`` helper (``tests/unit/_call.py``),
+  which wraps ``mcp._tool_manager.call_tool``.
 - ``ServerContext`` injected by patching ``fabric_dw.mcp._context._SERVER_CTX``
   with the shared ``mock_ctx`` fixture.
 - Service layer fully mocked — no real network.
@@ -20,6 +21,7 @@ import pytest
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import AuditSettings
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,
@@ -74,7 +76,8 @@ async def test_get_audit_settings_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.audit.get_settings", new=AsyncMock(return_value=settings)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_audit_settings",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -98,7 +101,8 @@ async def test_get_audit_settings_disabled_state(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.audit.get_settings", new=AsyncMock(return_value=settings)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_audit_settings",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -128,7 +132,8 @@ async def test_get_audit_settings_fabric_error_becomes_tool_error(mock_ctx, ctx_
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_audit_settings",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -145,7 +150,8 @@ async def test_get_audit_settings_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_audit_settings",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -170,7 +176,8 @@ async def test_enable_audit_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.audit.enable", new=AsyncMock(return_value=settings)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "enable_audit",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -192,7 +199,8 @@ async def test_enable_audit_with_retention_days(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.audit.enable", new=mock_svc),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "enable_audit",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "retention_days": 90},
         )
@@ -218,7 +226,8 @@ async def test_enable_audit_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "enable_audit",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -237,7 +246,8 @@ async def test_enable_audit_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "enable_audit",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -260,7 +270,8 @@ async def test_enable_audit_fabric_error_becomes_tool_error(mock_ctx, ctx_patch)
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "enable_audit",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -283,7 +294,8 @@ async def test_disable_audit_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.audit.disable", new=AsyncMock(return_value=settings)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "disable_audit",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -308,7 +320,8 @@ async def test_disable_audit_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "disable_audit",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -327,7 +340,8 @@ async def test_disable_audit_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "disable_audit",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -350,7 +364,8 @@ async def test_disable_audit_fabric_error_becomes_tool_error(mock_ctx, ctx_patch
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "disable_audit",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -375,7 +390,8 @@ async def test_set_audit_action_groups_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.audit.set_action_groups", new=mock_svc),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_audit_action_groups",
             {
                 "workspace": WS_NAME,
@@ -407,7 +423,8 @@ async def test_set_audit_action_groups_passes_ensure_enabled_false(mock_ctx, ctx
         ctx_patch,
         patch("fabric_dw.services.audit.set_action_groups", new=mock_svc),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_audit_action_groups",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "action_groups": groups},
         )
@@ -436,7 +453,8 @@ async def test_set_audit_action_groups_disabled_warehouse_state_unchanged(
         ctx_patch,
         patch("fabric_dw.services.audit.set_action_groups", new=AsyncMock(return_value=settings)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_audit_action_groups",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "action_groups": groups},
         )
@@ -464,7 +482,8 @@ async def test_set_audit_action_groups_enabled_warehouse_state_unchanged(
         ctx_patch,
         patch("fabric_dw.services.audit.set_action_groups", new=AsyncMock(return_value=settings)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_audit_action_groups",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "action_groups": groups},
         )
@@ -489,7 +508,8 @@ async def test_set_audit_action_groups_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_audit_action_groups",
             {
                 "workspace": WS_NAME,
@@ -512,7 +532,8 @@ async def test_set_audit_action_groups_workspace_not_in_allowlist(ctx_patch) -> 
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_audit_action_groups",
             {
                 "workspace": WS_NAME,
@@ -539,7 +560,8 @@ async def test_set_audit_action_groups_fabric_error_becomes_tool_error(mock_ctx,
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_audit_action_groups",
             {
                 "workspace": WS_NAME,
@@ -566,7 +588,8 @@ async def test_add_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.audit.add_action_group", new=AsyncMock(return_value=settings)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "add_audit_group",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -591,7 +614,8 @@ async def test_add_audit_group_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "add_audit_group",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -610,7 +634,8 @@ async def test_add_audit_group_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "add_audit_group",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -633,7 +658,8 @@ async def test_add_audit_group_value_error_becomes_tool_error(mock_ctx, ctx_patc
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "add_audit_group",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -658,7 +684,8 @@ async def test_add_audit_group_fabric_error_becomes_tool_error(mock_ctx, ctx_pat
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "add_audit_group",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -682,7 +709,8 @@ async def test_remove_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.audit.remove_action_group", new=mock_svc),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "remove_audit_group",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -709,7 +737,8 @@ async def test_remove_audit_group_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "remove_audit_group",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -728,7 +757,8 @@ async def test_remove_audit_group_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "remove_audit_group",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -751,7 +781,8 @@ async def test_remove_audit_group_value_error_becomes_tool_error(mock_ctx, ctx_p
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "remove_audit_group",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -776,7 +807,8 @@ async def test_remove_audit_group_fabric_error_becomes_tool_error(mock_ctx, ctx_
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "remove_audit_group",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -799,7 +831,8 @@ async def test_set_audit_retention_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.audit.set_retention", new=AsyncMock(return_value=settings)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_audit_retention",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "days": 90},
         )
@@ -825,7 +858,8 @@ async def test_set_audit_retention_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_audit_retention",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "days": 30},
         )
@@ -844,7 +878,8 @@ async def test_set_audit_retention_workspace_not_in_allowlist(ctx_patch) -> None
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_audit_retention",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "days": 30},
         )
@@ -867,7 +902,8 @@ async def test_set_audit_retention_value_error_becomes_tool_error(mock_ctx, ctx_
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_audit_retention",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "days": 30},
         )
@@ -892,7 +928,8 @@ async def test_set_audit_retention_fabric_error_becomes_tool_error(mock_ctx, ctx
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_audit_retention",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "days": 30},
         )

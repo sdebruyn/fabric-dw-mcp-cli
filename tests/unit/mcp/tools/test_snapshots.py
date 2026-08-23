@@ -26,6 +26,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import WarehouseSnapshot
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     SNAP_ID,
     WH_ID,
@@ -80,7 +81,8 @@ async def test_list_snapshots_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[snap]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_snapshots",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -107,7 +109,8 @@ async def test_list_snapshots_fabric_error_becomes_tool_error(mock_ctx, ctx_patc
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_snapshots",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -122,7 +125,8 @@ async def test_list_snapshots_workspace_guard(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_snapshots",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -145,7 +149,8 @@ async def test_list_snapshots_empty(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_snapshots",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -174,7 +179,8 @@ async def test_create_snapshot_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=snap),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_snapshot",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "name": _SNAP_NAME},
         )
@@ -198,7 +204,8 @@ async def test_create_snapshot_with_datetime(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.snapshots.create", new=mock_create),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_snapshot",
             {
                 "workspace": WS_NAME,
@@ -222,7 +229,8 @@ async def test_create_snapshot_bad_datetime_becomes_tool_error(ctx_patch) -> Non
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_snapshot",
             {
                 "workspace": WS_NAME,
@@ -244,7 +252,8 @@ async def test_create_snapshot_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_snapshot",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "name": _SNAP_NAME},
         )
@@ -268,7 +277,8 @@ async def test_create_snapshot_fabric_error_becomes_tool_error(mock_ctx, ctx_pat
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_snapshot",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "name": _SNAP_NAME},
         )
@@ -290,7 +300,8 @@ async def test_create_snapshot_value_error_becomes_tool_error(mock_ctx, ctx_patc
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_snapshot",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "name": ""},
         )
@@ -307,7 +318,8 @@ async def test_create_snapshot_workspace_guard(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_snapshot",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "name": _SNAP_NAME},
         )
@@ -336,7 +348,8 @@ async def test_rename_snapshot_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=snap),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "rename_snapshot",
             {"workspace": WS_NAME, "snapshot": _SNAP_NAME, "new_name": "snap-renamed"},
         )
@@ -354,7 +367,8 @@ async def test_rename_snapshot_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_snapshot",
             {"workspace": WS_NAME, "snapshot": _SNAP_NAME, "new_name": "snap-renamed"},
         )
@@ -378,7 +392,8 @@ async def test_rename_snapshot_fabric_error_becomes_tool_error(mock_ctx, ctx_pat
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_snapshot",
             {"workspace": WS_NAME, "snapshot": _SNAP_NAME, "new_name": "snap-renamed"},
         )
@@ -400,7 +415,8 @@ async def test_rename_snapshot_value_error_becomes_tool_error(mock_ctx, ctx_patc
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_snapshot",
             {"workspace": WS_NAME, "snapshot": _SNAP_NAME, "new_name": ""},
         )
@@ -417,7 +433,8 @@ async def test_rename_snapshot_workspace_guard(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_snapshot",
             {"workspace": WS_NAME, "snapshot": _SNAP_NAME, "new_name": "snap-renamed"},
         )
@@ -446,7 +463,8 @@ async def test_delete_snapshot_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "delete_snapshot",
             {"workspace": WS_NAME, "snapshot": _SNAP_NAME},
         )
@@ -464,7 +482,8 @@ async def test_delete_snapshot_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1", "FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_snapshot",
             {"workspace": WS_NAME, "snapshot": _SNAP_NAME},
         )
@@ -480,7 +499,8 @@ async def test_delete_snapshot_destructive_guard(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_snapshot",
             {"workspace": WS_NAME, "snapshot": _SNAP_NAME},
         )
@@ -505,7 +525,8 @@ async def test_delete_snapshot_fabric_error_becomes_tool_error(mock_ctx, ctx_pat
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_snapshot",
             {"workspace": WS_NAME, "snapshot": _SNAP_NAME},
         )
@@ -523,7 +544,8 @@ async def test_delete_snapshot_workspace_guard(ctx_patch) -> None:
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_snapshot",
             {"workspace": WS_NAME, "snapshot": _SNAP_NAME},
         )
@@ -556,7 +578,8 @@ async def test_roll_snapshot_timestamp_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=_applied),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "roll_snapshot_timestamp",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "snapshot_name": _SNAP_NAME},
         )
@@ -586,7 +609,8 @@ async def test_roll_snapshot_timestamp_with_datetime(mock_ctx, ctx_patch) -> Non
         ctx_patch,
         patch("fabric_dw.services.snapshots.roll_timestamp", new=mock_roll),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "roll_snapshot_timestamp",
             {
                 "workspace": WS_NAME,
@@ -614,7 +638,8 @@ async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error(ctx_patch
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "roll_snapshot_timestamp",
             {
                 "workspace": WS_NAME,
@@ -636,7 +661,8 @@ async def test_roll_snapshot_timestamp_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "roll_snapshot_timestamp",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "snapshot_name": _SNAP_NAME},
         )
@@ -660,7 +686,8 @@ async def test_roll_snapshot_timestamp_fabric_error_becomes_tool_error(mock_ctx,
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "roll_snapshot_timestamp",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "snapshot_name": _SNAP_NAME},
         )
@@ -685,7 +712,8 @@ async def test_roll_snapshot_timestamp_naive_input_normalised_to_utc(mock_ctx, c
         ctx_patch,
         patch("fabric_dw.services.snapshots.roll_timestamp", new=mock_roll),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "roll_snapshot_timestamp",
             {
                 "workspace": WS_NAME,
@@ -725,7 +753,8 @@ async def test_roll_snapshot_timestamp_non_utc_aware_input_converted_to_utc(
         ctx_patch,
         patch("fabric_dw.services.snapshots.roll_timestamp", new=mock_roll),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "roll_snapshot_timestamp",
             {
                 "workspace": WS_NAME,
@@ -751,7 +780,8 @@ async def test_roll_snapshot_timestamp_workspace_guard(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "roll_snapshot_timestamp",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "snapshot_name": _SNAP_NAME},
         )

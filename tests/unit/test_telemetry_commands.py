@@ -21,6 +21,7 @@ from fabric_dw.telemetry_commands import (
     now_ms,
     resolve_domain,
 )
+from tests.unit._call import call_tool
 from tests.unit._tool_introspection import collect_live_mcp_tool_names
 
 # Telemetry patch targets (lazily imported inside emit_command_invoked).
@@ -727,9 +728,7 @@ class TestMcpCommandInvokedInstrumentation:
             return {"name": name}
 
         with patch(_TELEMETRY_ENABLED, return_value=True), patch(_EMIT_EVENT) as mock_emit:
-            asyncio.run(
-                instrumented_mcp._tool_manager.call_tool("create_warehouse", {"name": "wh1"})
-            )
+            asyncio.run(call_tool(instrumented_mcp, "create_warehouse", {"name": "wh1"}))
 
         command_invoked_calls = [
             c for c in mock_emit.call_args_list if c[0][0] == "command_invoked"
@@ -752,9 +751,7 @@ class TestMcpCommandInvokedInstrumentation:
             return []
 
         with patch(_TELEMETRY_ENABLED, return_value=True), patch(_EMIT_EVENT) as mock_emit:
-            asyncio.run(
-                instrumented_mcp._tool_manager.call_tool("list_warehouses", {"workspace": "ws1"})
-            )
+            asyncio.run(call_tool(instrumented_mcp, "list_warehouses", {"workspace": "ws1"}))
 
         command_invoked_calls = [
             c for c in mock_emit.call_args_list if c[0][0] == "command_invoked"

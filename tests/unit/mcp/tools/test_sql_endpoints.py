@@ -18,6 +18,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import Warehouse, WarehouseKind
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WS_ID,
     WS_NAME,
@@ -63,7 +64,8 @@ async def test_list_sql_endpoints_all_workspaces_true_no_workspace_succeeds(
             new=AsyncMock(return_value=[ep]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_sql_endpoints",
             {"all_workspaces": True},
         )
@@ -82,7 +84,8 @@ async def test_list_sql_endpoints_no_workspace_no_all_workspaces_raises_clear_er
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_sql_endpoints",
             {},
         )
@@ -105,7 +108,8 @@ async def test_list_sql_endpoints_workspace_provided_succeeds(mock_ctx, ctx_patc
             new=AsyncMock(return_value=[ep]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_sql_endpoints",
             {"workspace": WS_NAME},
         )
@@ -128,7 +132,8 @@ async def test_list_sql_endpoints_fabric_error_becomes_tool_error(mock_ctx, ctx_
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_sql_endpoints",
             {"workspace": WS_NAME},
         )
@@ -145,7 +150,8 @@ async def test_list_sql_endpoints_all_workspaces_with_allowlist_raises(ctx_patch
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": WS_NAME}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_sql_endpoints",
             {"all_workspaces": True},
         )

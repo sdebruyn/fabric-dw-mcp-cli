@@ -10,7 +10,8 @@ Goals:
 
 Strategy
 --------
-- All calls routed via ``mcp._tool_manager.call_tool``.
+- All calls routed via the shared ``call_tool()`` helper (``tests/unit/_call.py``),
+  which wraps ``mcp._tool_manager.call_tool``.
 - ``ServerContext`` injected by patching ``fabric_dw.mcp._context._SERVER_CTX``
   with the shared ``mock_ctx`` fixture.
 - ``fabric_dw.services.sql_exec.get_plan`` / ``.execute`` are mocked per-test.
@@ -23,6 +24,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,
@@ -97,7 +99,7 @@ async def _call_get_query_plan(mock_ctx, ctx_patch, **kwargs) -> dict:  # type: 
             new=AsyncMock(return_value=_FIXTURE_XML),
         ),
     ):
-        return await mcp._tool_manager.call_tool("get_query_plan", params)
+        return await call_tool(mcp, "get_query_plan", params)
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +289,8 @@ async def test_get_query_plan_invalid_format_raises_tool_error(mock_ctx, ctx_pat
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_query_plan",
             {"workspace": WS_NAME, "item": WH_NAME, "query": "SELECT 1", "format": "svg"},
         )
@@ -334,7 +337,8 @@ async def test_execute_sql_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch)
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "execute_sql",
             {"workspace": WS_NAME, "item": WH_NAME, "query": _SENSITIVE_QUERY},
         )
@@ -359,7 +363,8 @@ async def test_execute_sql_raw_driver_exc_does_not_leak_internal_detail(
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "execute_sql",
             {"workspace": WS_NAME, "item": WH_NAME, "query": _SENSITIVE_QUERY},
         )
@@ -388,7 +393,8 @@ async def test_get_query_plan_raw_driver_exc_raises_tool_error(mock_ctx, ctx_pat
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_query_plan",
             {"workspace": WS_NAME, "item": WH_NAME, "query": _SENSITIVE_QUERY},
         )
@@ -413,7 +419,8 @@ async def test_get_query_plan_raw_driver_exc_does_not_leak_internal_detail(
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_query_plan",
             {"workspace": WS_NAME, "item": WH_NAME, "query": _SENSITIVE_QUERY},
         )

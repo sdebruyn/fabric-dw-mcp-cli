@@ -5,8 +5,9 @@ Goal:   ≥90% branch coverage.
 
 Strategy
 --------
-- All calls routed via ``mcp._tool_manager.call_tool`` (same path FastMCP uses
-  at runtime) so the ``@mcp.tool`` decorator, Pydantic validation, and guards
+- All calls routed via the shared ``call_tool()`` helper (``tests/unit/_call.py``),
+  which wraps ``mcp._tool_manager.call_tool`` (same path FastMCP uses at
+  runtime) so the ``@mcp.tool`` decorator, Pydantic validation, and guards
   are all exercised.
 - ``ServerContext`` injected by patching ``fabric_dw.mcp._context._SERVER_CTX``
   with the shared ``mock_ctx`` fixture (defined in conftest).
@@ -24,6 +25,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import FunctionDetails, FunctionKind
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,
@@ -79,7 +81,8 @@ async def test_list_functions_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.functions.list_functions", new=AsyncMock(return_value=[fn])),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_functions",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -105,7 +108,8 @@ async def test_list_functions_with_schema_filter(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.functions.list_functions", new=mock_svc),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_functions",
             {"workspace": WS_NAME, "item": WH_NAME, "schema": "sales"},
         )
@@ -126,7 +130,8 @@ async def test_list_functions_empty_result(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.functions.list_functions", new=AsyncMock(return_value=[])),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_functions",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -145,7 +150,8 @@ async def test_list_functions_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.functions.list_functions", new=AsyncMock(return_value=[])),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_functions",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -168,7 +174,8 @@ async def test_list_functions_fabric_error_raises(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_functions",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -191,7 +198,8 @@ async def test_get_function_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.functions.get_function", new=AsyncMock(return_value=fn)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_function",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.fn_clean"},
         )
@@ -218,7 +226,8 @@ async def test_get_function_not_found_raises(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_function",
             {
                 "workspace": WS_NAME,
@@ -236,7 +245,8 @@ async def test_get_function_invalid_qualified_name_raises(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_function",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "nodot"},
         )
@@ -259,7 +269,8 @@ async def test_create_function_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.functions.create_function", new=AsyncMock(return_value=fn)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_function",
             {
                 "workspace": WS_NAME,
@@ -285,7 +296,8 @@ async def test_create_function_on_sql_endpoint_succeeds(mock_ctx, ctx_patch) -> 
         ctx_patch,
         patch("fabric_dw.services.functions.create_function", new=AsyncMock(return_value=fn)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_function",
             {
                 "workspace": WS_NAME,
@@ -315,7 +327,8 @@ async def test_update_function_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.functions.update_function", new=AsyncMock(return_value=fn)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "update_function",
             {
                 "workspace": WS_NAME,
@@ -347,7 +360,8 @@ async def test_transfer_function_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.functions.transfer_function", new=mock_transfer),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "transfer_function",
             {
                 "workspace": WS_NAME,
@@ -379,7 +393,8 @@ async def test_transfer_function_on_sql_endpoint_succeeds(mock_ctx, ctx_patch) -
         ctx_patch,
         patch("fabric_dw.services.functions.transfer_function", new=mock_transfer),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "transfer_function",
             {
                 "workspace": WS_NAME,
@@ -406,7 +421,8 @@ async def test_transfer_function_readonly_blocked(mock_ctx, ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "transfer_function",
             {
                 "workspace": WS_NAME,
@@ -428,7 +444,8 @@ async def test_transfer_function_undotted_qualified_name_raises_tool_error(
         ctx_patch,
         pytest.raises(ToolError, match="qualified name"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "transfer_function",
             {
                 "workspace": WS_NAME,
@@ -448,7 +465,8 @@ async def test_transfer_function_workspace_allowlist_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "transfer_function",
             {
                 "workspace": WS_NAME,
@@ -479,7 +497,8 @@ async def test_drop_function_happy_path(mock_ctx, ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch("fabric_dw.services.functions.drop_function", new=AsyncMock(return_value=True)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "drop_function",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.fn_clean"},
         )
@@ -503,7 +522,8 @@ async def test_drop_function_not_found_raises(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "drop_function",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.nonexistent"},
         )
@@ -521,7 +541,8 @@ async def test_drop_function_if_exists_missing_returns_not_dropped(mock_ctx, ctx
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch("fabric_dw.services.functions.drop_function", new=AsyncMock(return_value=False)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "drop_function",
             {
                 "workspace": WS_NAME,
@@ -554,7 +575,8 @@ async def test_list_functions_invalid_kind_raises_tool_error(mock_ctx, ctx_patch
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_functions",
             {"workspace": WS_NAME, "item": WH_NAME, "kind": "multistatement-tvf"},
         )
@@ -574,7 +596,8 @@ async def test_list_functions_various_invalid_kinds_raise(
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_functions",
             {"workspace": WS_NAME, "item": WH_NAME, "kind": bad_kind},
         )
@@ -592,7 +615,8 @@ async def test_list_functions_valid_kinds_accepted(valid_kind: str, mock_ctx, ct
         ctx_patch,
         patch("fabric_dw.services.functions.list_functions", new=AsyncMock(return_value=[])),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_functions",
             {"workspace": WS_NAME, "item": WH_NAME, "kind": valid_kind},
         )

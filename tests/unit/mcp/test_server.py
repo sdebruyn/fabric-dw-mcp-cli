@@ -6,7 +6,7 @@ FastMCP 1.x ships no in-process test transport in its public API, so we use
 unit-style mocking via the shared ``mock_ctx`` / ``ctx_patch`` fixtures defined
 in ``conftest.py``.
 
-Tools are called via ``mcp._tool_manager.call_tool(name, args)`` which is the
+Tools are called via ``call_tool(mcp, name, args)`` which is the
 same call path FastMCP uses at runtime, giving realistic coverage of the
 ``@mcp.tool`` decorator, Pydantic validation, and guard logic.
 
@@ -37,6 +37,7 @@ from fabric_dw.models import (
     WarehouseSnapshot,
     Workspace,
 )
+from tests.unit._call import call_tool
 from tests.unit._tool_introspection import SNAKE_CASE_RE, collect_live_mcp_tool_names
 from tests.unit.mcp.conftest import (
     WH_ID,
@@ -307,7 +308,7 @@ async def test_list_workspaces_happy_path(ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.workspaces.list_all", new=AsyncMock(return_value=[ws])),
     ):
-        result = await mcp._tool_manager.call_tool("list_workspaces", {})
+        result = await call_tool(mcp, "list_workspaces", {})
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -330,7 +331,7 @@ async def test_clear_cache_side_effect(mock_ctx, ctx_patch) -> None:
     mock_ctx.cache.async_clear = AsyncMock()
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool("clear_cache", {})
+        result = await call_tool(mcp, "clear_cache", {})
 
     mock_ctx.cache.async_counts.assert_called_once()
     mock_ctx.cache.async_clear.assert_called_once()
@@ -351,7 +352,7 @@ async def test_clear_cache_scope_workspaces(mock_ctx, ctx_patch) -> None:
     mock_ctx.cache.async_clear = AsyncMock()
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "workspaces"})
+        result = await call_tool(mcp, "clear_cache", {"scope": "workspaces"})
 
     mock_ctx.cache.async_counts.assert_called_once()
     mock_ctx.cache.async_clear_scope.assert_called_once_with("workspaces")
@@ -373,7 +374,7 @@ async def test_clear_cache_scope_items(mock_ctx, ctx_patch) -> None:
     mock_ctx.cache.async_clear = AsyncMock()
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool("clear_cache", {"scope": "items"})
+        result = await call_tool(mcp, "clear_cache", {"scope": "items"})
 
     mock_ctx.cache.async_counts.assert_called_once()
     mock_ctx.cache.async_clear_scope.assert_called_once_with("items")
@@ -405,7 +406,7 @@ async def test_fabric_error_becomes_tool_error(ctx_patch) -> None:
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool("list_workspaces", {})
+        await call_tool(mcp, "list_workspaces", {})
 
     err = exc_info.value
     assert "NotFoundError" in str(err) or "not found" in str(err).lower()
@@ -427,7 +428,7 @@ async def test_get_workspace_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.workspaces.get", new=AsyncMock(return_value=ws)),
     ):
-        result = await mcp._tool_manager.call_tool("get_workspace", {"workspace": _WS_NAME})
+        result = await call_tool(mcp, "get_workspace", {"workspace": _WS_NAME})
 
     assert isinstance(result, dict)
     assert result["id"] == str(_WS_ID)
@@ -453,7 +454,7 @@ async def test_list_warehouses_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[wh]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool("list_warehouses", {"workspace": _WS_NAME})
+        result = await call_tool(mcp, "list_warehouses", {"workspace": _WS_NAME})
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -513,7 +514,8 @@ async def test_get_audit_settings_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=settings),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_audit_settings",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME},
         )
@@ -545,7 +547,8 @@ async def test_list_running_queries_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[query]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -573,7 +576,7 @@ async def test_not_found_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool("get_workspace", {"workspace": "boom"})
+        await call_tool(mcp, "get_workspace", {"workspace": "boom"})
 
 
 # ---------------------------------------------------------------------------
@@ -591,7 +594,8 @@ async def test_create_snapshot_bad_datetime_becomes_tool_error(ctx_patch) -> Non
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_snapshot",
             {
                 "workspace": _WS_NAME,
@@ -616,7 +620,8 @@ async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error(
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "roll_snapshot_timestamp",
             {
                 "workspace": _WS_NAME,
@@ -657,7 +662,7 @@ async def test_list_sql_endpoints_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[ep]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool("list_sql_endpoints", {"workspace": _WS_NAME})
+        result = await call_tool(mcp, "list_sql_endpoints", {"workspace": _WS_NAME})
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -690,7 +695,8 @@ async def test_get_sql_endpoint_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=ep),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_sql_endpoint",
             {"workspace": _WS_NAME, "endpoint": "SalesLakehouse"},
         )
@@ -716,7 +722,8 @@ async def test_refresh_sql_endpoint_metadata_happy_path(mock_ctx, ctx_patch) -> 
             new=AsyncMock(return_value=_make_table_sync_statuses()),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "refresh_sql_endpoint_metadata",
             {"workspace": _WS_NAME, "endpoint": "SalesLakehouse"},
         )
@@ -749,7 +756,8 @@ async def test_refresh_sql_endpoint_metadata_recreate_tables(mock_ctx, ctx_patch
             new=mock_refresh,
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "refresh_sql_endpoint_metadata",
             {"workspace": _WS_NAME, "endpoint": "SalesLakehouse", "recreate_tables": True},
         )
@@ -778,7 +786,8 @@ async def test_list_warehouses_all_workspaces(ctx_patch) -> None:
             new=AsyncMock(return_value=[wh]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_warehouses",
             {"workspace": "", "all_workspaces": True},
         )
@@ -815,7 +824,8 @@ async def test_list_sql_endpoints_all_workspaces(ctx_patch) -> None:
             new=AsyncMock(return_value=[ep]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_sql_endpoints",
             {"workspace": "", "all_workspaces": True},
         )
@@ -842,9 +852,7 @@ async def test_list_warehouses_all_workspaces_blocked_by_allowlist(ctx_patch) ->
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "my-ws"}),
         pytest.raises(ToolError, match="not permitted"),
     ):
-        await mcp._tool_manager.call_tool(
-            "list_warehouses", {"workspace": "", "all_workspaces": True}
-        )
+        await call_tool(mcp, "list_warehouses", {"workspace": "", "all_workspaces": True})
 
 
 async def test_list_sql_endpoints_all_workspaces_blocked_by_allowlist(ctx_patch) -> None:
@@ -858,9 +866,7 @@ async def test_list_sql_endpoints_all_workspaces_blocked_by_allowlist(ctx_patch)
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "my-ws"}),
         pytest.raises(ToolError, match="not permitted"),
     ):
-        await mcp._tool_manager.call_tool(
-            "list_sql_endpoints", {"workspace": "", "all_workspaces": True}
-        )
+        await call_tool(mcp, "list_sql_endpoints", {"workspace": "", "all_workspaces": True})
 
 
 # ---------------------------------------------------------------------------
@@ -884,7 +890,8 @@ async def test_add_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=settings),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "add_audit_group",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -910,7 +917,8 @@ async def test_remove_audit_group_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=settings),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "remove_audit_group",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME, "group": "BATCH_COMPLETED_GROUP"},
         )
@@ -947,7 +955,8 @@ async def test_set_audit_retention_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=updated),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_audit_retention",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME, "days": 90},
         )
@@ -975,7 +984,8 @@ async def test_set_audit_retention_value_error_becomes_tool_error(mock_ctx, ctx_
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_audit_retention",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME, "days": 30},
         )
@@ -1005,7 +1015,8 @@ async def test_execute_sql_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=sql_result),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "execute_sql",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT id, name FROM t"},
         )
@@ -1030,7 +1041,8 @@ async def test_execute_sql_no_connection_string_raises_tool_error(mock_ctx, ctx_
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "execute_sql",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
         )
@@ -1057,7 +1069,8 @@ async def test_list_item_permissions_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[access]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_item_permissions",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1087,7 +1100,8 @@ async def test_list_item_permissions_permission_denied_becomes_tool_error(
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_item_permissions",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1116,7 +1130,8 @@ async def test_create_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) 
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_table",
             {
                 "workspace": _WS_NAME,
@@ -1149,7 +1164,8 @@ async def test_delete_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) 
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_table",
             {"workspace": _WS_NAME, "item": _SE_NAME, "qualified_name": "dbo.sales"},
         )
@@ -1177,7 +1193,8 @@ async def test_clear_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "clear_table",
             {"workspace": _WS_NAME, "item": _SE_NAME, "qualified_name": "dbo.sales"},
         )
@@ -1208,7 +1225,8 @@ async def test_clone_table_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.tables.clone_table", new=mock_clone),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "clone_table",
             {
                 "workspace": _WS_NAME,
@@ -1237,7 +1255,8 @@ async def test_clone_table_with_at_timestamp(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.tables.clone_table", new=mock_clone),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "clone_table",
             {
                 "workspace": _WS_NAME,
@@ -1265,7 +1284,8 @@ async def test_clone_table_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "clone_table",
             {
                 "workspace": _WS_NAME,
@@ -1289,7 +1309,8 @@ async def test_clone_table_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "clone_table",
             {
                 "workspace": _WS_NAME,
@@ -1317,7 +1338,8 @@ async def test_clone_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "clone_table",
             {
                 "workspace": _WS_NAME,
@@ -1356,7 +1378,8 @@ async def test_create_schema_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=Schema(name="newschema", principal_id=5)),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_schema",
             {"workspace": _WS_NAME, "item": "MySqlEndpoint", "name": "newschema"},
         )
@@ -1387,7 +1410,8 @@ async def test_delete_schema_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "delete_schema",
             {"workspace": _WS_NAME, "item": "MySqlEndpoint", "name": "oldschema"},
         )
@@ -1412,7 +1436,8 @@ async def test_list_schemas_works_on_sql_endpoint(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=schemas_result),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_schemas",
             {"workspace": _WS_NAME, "item": "MySqlEndpoint"},
         )
@@ -1441,7 +1466,8 @@ async def test_delete_schema_cascade_sql_endpoint_succeeds(mock_ctx, ctx_patch) 
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "delete_schema",
             {"workspace": _WS_NAME, "item": "MySqlEndpoint", "name": "oldschema", "cascade": True},
         )
@@ -1468,7 +1494,8 @@ async def test_delete_schema_no_cascade_sql_endpoint_succeeds(mock_ctx, ctx_patc
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "delete_schema",
             {
                 "workspace": _WS_NAME,
@@ -1495,7 +1522,8 @@ async def test_delete_schema_passes_kind_to_service(mock_ctx, ctx_patch) -> None
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch("fabric_dw.services.schemas.delete_schema", new=mock_delete),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_schema",
             {"workspace": _WS_NAME, "item": _WH_NAME, "name": "myschema"},
         )
@@ -1522,7 +1550,8 @@ async def test_delete_schema_passes_sql_endpoint_kind_to_service(mock_ctx, ctx_p
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch("fabric_dw.services.schemas.delete_schema", new=mock_delete),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_schema",
             {"workspace": _WS_NAME, "item": "MySqlEndpoint", "name": "myschema"},
         )
@@ -1546,7 +1575,8 @@ async def test_read_view_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=(["id", "amount"], [(1, 100), (2, 200)])),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "read_view",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -1570,7 +1600,8 @@ async def test_read_view_no_connection_string_raises_tool_error(mock_ctx, ctx_pa
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_view",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -1590,7 +1621,8 @@ async def test_read_view_bad_qualified_name_raises_tool_error(mock_ctx, ctx_patc
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_view",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "nodot"},
         )
@@ -1626,7 +1658,8 @@ async def test_rename_table_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=renamed),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "rename_table",
             {
                 "workspace": _WS_NAME,
@@ -1654,7 +1687,8 @@ async def test_rename_table_readonly_blocked(mock_ctx, ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_table",
             {
                 "workspace": _WS_NAME,
@@ -1681,7 +1715,8 @@ async def test_rename_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) 
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_table",
             {
                 "workspace": _WS_NAME,
@@ -1708,7 +1743,8 @@ async def test_rename_table_workspace_allowlist_blocks(mock_ctx, ctx_patch) -> N
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_table",
             {
                 "workspace": _WS_NAME,
@@ -1732,7 +1768,8 @@ async def test_rename_table_undotted_qualified_name_raises_tool_error(
         ctx_patch,
         pytest.raises(ToolError, match="qualified name"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_table",
             {
                 "workspace": _WS_NAME,
@@ -1774,7 +1811,8 @@ async def test_rename_view_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=renamed_view),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": _WS_NAME,
@@ -1802,7 +1840,8 @@ async def test_rename_view_blocked_by_readonly(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only mode"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": _WS_NAME,
@@ -1826,7 +1865,8 @@ async def test_rename_view_blocked_by_workspace_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "allowed-ws"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": "forbidden-ws",
@@ -1863,7 +1903,8 @@ async def test_rename_view_accepts_sql_endpoint_item(mock_ctx, ctx_patch) -> Non
             new=AsyncMock(return_value=renamed_view),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": _WS_NAME,
@@ -1886,7 +1927,8 @@ async def test_rename_view_bad_qualified_name_raises_tool_error(ctx_patch) -> No
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": _WS_NAME,
@@ -1922,7 +1964,8 @@ async def test_get_query_plan_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=_PLAN_XML),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_query_plan",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
         )
@@ -1950,7 +1993,8 @@ async def test_get_query_plan_allowed_under_readonly(
             new=AsyncMock(return_value=_PLAN_XML),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_query_plan",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
         )
@@ -1974,7 +2018,8 @@ async def test_get_query_plan_no_connection_string_raises_tool_error(mock_ctx, c
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_query_plan",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
         )
@@ -2007,7 +2052,8 @@ async def test_set_cluster_columns_requires_destructive_flag() -> None:
         patch.dict(os.environ, env_copy, clear=True),
         pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_cluster_columns",
             {
                 "workspace": _WS_NAME,
@@ -2031,7 +2077,8 @@ async def test_set_cluster_columns_happy_path(mock_ctx, ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch("fabric_dw.services.tables.recluster_table", new=mock_recluster),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_cluster_columns",
             {
                 "workspace": _WS_NAME,
@@ -2071,7 +2118,8 @@ async def test_set_cluster_columns_sql_endpoint_raises_tool_error(mock_ctx, ctx_
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_cluster_columns",
             {
                 "workspace": _WS_NAME,

@@ -11,6 +11,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import ItemKindError, NotFoundError
 from fabric_dw.models import Statistic, StatisticDetails
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_NAME,
@@ -61,7 +62,8 @@ async def test_list_statistics_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[stat]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_statistics",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -83,7 +85,8 @@ async def test_list_statistics_with_filters(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.statistics.list_statistics", new=mock_list),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_statistics",
             {
                 "workspace": WS_NAME,
@@ -113,7 +116,8 @@ async def test_list_statistics_fabric_error_becomes_tool_error(mock_ctx, ctx_pat
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_statistics",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -128,7 +132,8 @@ async def test_list_statistics_workspace_allowlist_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_statistics",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -153,7 +158,8 @@ async def test_show_statistics_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=details),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "show_statistics",
             {
                 "workspace": WS_NAME,
@@ -178,7 +184,8 @@ async def test_show_statistics_histogram_only(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.statistics.show_statistics", new=mock_show),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "show_statistics",
             {
                 "workspace": WS_NAME,
@@ -201,7 +208,8 @@ async def test_show_statistics_bad_qualified_table_raises_tool_error(ctx_patch) 
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "show_statistics",
             {
                 "workspace": WS_NAME,
@@ -231,7 +239,8 @@ async def test_create_statistics_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=stat),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_statistics",
             {
                 "workspace": WS_NAME,
@@ -254,7 +263,8 @@ async def test_create_statistics_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_statistics",
             {
                 "workspace": WS_NAME,
@@ -280,7 +290,8 @@ async def test_create_statistics_sql_endpoint_rejected(mock_ctx, ctx_patch) -> N
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_statistics",
             {
                 "workspace": WS_NAME,
@@ -310,7 +321,8 @@ async def test_update_statistics_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "update_statistics",
             {
                 "workspace": WS_NAME,
@@ -332,7 +344,8 @@ async def test_update_statistics_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_statistics",
             {
                 "workspace": WS_NAME,
@@ -357,7 +370,8 @@ async def test_update_statistics_sql_endpoint_rejected(mock_ctx, ctx_patch) -> N
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_statistics",
             {
                 "workspace": WS_NAME,
@@ -387,7 +401,8 @@ async def test_delete_statistics_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "delete_statistics",
             {
                 "workspace": WS_NAME,
@@ -409,7 +424,8 @@ async def test_delete_statistics_destructive_guard_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {}, clear=True),  # ensure ALLOW_DESTRUCTIVE is absent
         pytest.raises(ToolError, match="destructive"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_statistics",
             {
                 "workspace": WS_NAME,
@@ -429,7 +445,8 @@ async def test_delete_statistics_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_statistics",
             {
                 "workspace": WS_NAME,
@@ -455,7 +472,8 @@ async def test_delete_statistics_sql_endpoint_rejected(mock_ctx, ctx_patch) -> N
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_statistics",
             {
                 "workspace": WS_NAME,
@@ -475,7 +493,8 @@ async def test_delete_statistics_bad_qualified_table_raises_tool_error(ctx_patch
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_statistics",
             {
                 "workspace": WS_NAME,

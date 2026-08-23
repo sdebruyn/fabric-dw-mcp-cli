@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from fabric_dw.models import DatabasePermission, DatabasePrincipal
+from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import WH_NAME, WS_ID, WS_NAME, make_item_entry
 
 
@@ -62,7 +63,8 @@ async def test_list_sql_permissions_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[_make_db_permission()]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_sql_permissions",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -93,7 +95,8 @@ async def test_list_database_principals_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[_make_db_principal()]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_database_principals",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -123,7 +126,8 @@ async def test_my_permissions_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[{"permission_name": "SELECT", "entity_name": ""}]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "my_permissions",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -153,7 +157,8 @@ async def test_grant_permission_happy_path(mock_ctx, ctx_patch) -> None:
         # Must NOT raise even without FABRIC_MCP_ALLOW_DESTRUCTIVE
         os.environ.pop("FABRIC_MCP_READONLY", None)
         os.environ.pop("FABRIC_MCP_ALLOW_DESTRUCTIVE", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "grant_permission",
             {
                 "workspace": WS_NAME,
@@ -183,7 +188,8 @@ async def test_grant_permission_blocked_by_readonly(mock_ctx, ctx_patch) -> None
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only mode"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "grant_permission",
             {
                 "workspace": WS_NAME,
@@ -211,7 +217,8 @@ async def test_grant_permission_not_destructive_gated(mock_ctx, ctx_patch) -> No
         os.environ.pop("FABRIC_MCP_READONLY", None)
         os.environ.pop("FABRIC_MCP_ALLOW_DESTRUCTIVE", None)
         # Must NOT raise a ToolError about FABRIC_MCP_ALLOW_DESTRUCTIVE
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "grant_permission",
             {
                 "workspace": WS_NAME,
@@ -245,7 +252,8 @@ async def test_grant_permission_invalid_permissions_raises_tool_error(mock_ctx, 
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
         with pytest.raises(ToolError):
-            await mcp._tool_manager.call_tool(
+            await call_tool(
+                mcp,
                 "grant_permission",
                 {
                     "workspace": WS_NAME,
@@ -276,7 +284,8 @@ async def test_deny_permission_happy_path(mock_ctx, ctx_patch) -> None:
         patch("fabric_dw.services.permissions.deny_permission", new=AsyncMock(return_value=None)),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "deny_permission",
             {
                 "workspace": WS_NAME,
@@ -306,7 +315,8 @@ async def test_deny_permission_blocked_by_readonly(mock_ctx, ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "true"}),
         pytest.raises(ToolError, match="read-only mode"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "deny_permission",
             {
                 "workspace": WS_NAME,
@@ -333,7 +343,8 @@ async def test_deny_permission_not_destructive_gated(mock_ctx, ctx_patch) -> Non
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
         os.environ.pop("FABRIC_MCP_ALLOW_DESTRUCTIVE", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "deny_permission",
             {
                 "workspace": WS_NAME,
@@ -366,7 +377,8 @@ async def test_revoke_permission_happy_path(mock_ctx, ctx_patch) -> None:
         patch("fabric_dw.services.permissions.revoke_permission", new=AsyncMock(return_value=None)),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "revoke_permission",
             {
                 "workspace": WS_NAME,
@@ -396,7 +408,8 @@ async def test_revoke_permission_blocked_by_readonly(mock_ctx, ctx_patch) -> Non
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "yes"}),
         pytest.raises(ToolError, match="read-only mode"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "revoke_permission",
             {
                 "workspace": WS_NAME,
@@ -421,7 +434,8 @@ async def test_revoke_permission_blocked_by_missing_destructive_env(mock_ctx, ct
     os.environ.pop("FABRIC_MCP_READONLY", None)
     os.environ.pop("FABRIC_MCP_ALLOW_DESTRUCTIVE", None)
     with ctx_patch, patch.dict(os.environ, {}), pytest.raises(ToolError, match="destructive"):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "revoke_permission",
             {
                 "workspace": WS_NAME,
@@ -447,7 +461,8 @@ async def test_revoke_permission_allowed_when_destructive_env_set(mock_ctx, ctx_
         patch("fabric_dw.services.permissions.revoke_permission", new=AsyncMock(return_value=None)),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "revoke_permission",
             {
                 "workspace": WS_NAME,
@@ -480,7 +495,8 @@ async def test_grant_permission_scope_uppercased_in_result(mock_ctx, ctx_patch) 
         patch("fabric_dw.services.permissions.grant_permission", new=AsyncMock(return_value=None)),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "grant_permission",
             {
                 "workspace": WS_NAME,
@@ -540,7 +556,8 @@ async def test_grant_permission_with_columns_happy_path(mock_ctx, ctx_patch) -> 
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
         os.environ.pop("FABRIC_MCP_ALLOW_DESTRUCTIVE", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "grant_permission",
             {
                 "workspace": WS_NAME,
@@ -573,7 +590,8 @@ async def test_deny_permission_with_columns_happy_path(mock_ctx, ctx_patch) -> N
         patch("fabric_dw.services.permissions.deny_permission", new=mock_svc),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "deny_permission",
             {
                 "workspace": WS_NAME,
@@ -606,7 +624,8 @@ async def test_revoke_permission_with_columns_happy_path(mock_ctx, ctx_patch) ->
         patch("fabric_dw.services.permissions.revoke_permission", new=mock_svc),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "revoke_permission",
             {
                 "workspace": WS_NAME,
@@ -650,7 +669,8 @@ async def test_list_security_policies_returns_correct_structure(mock_ctx, ctx_pa
         ctx_patch,
         patch("fabric_dw.services.rls.list_security_policies", new=mock_list),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_security_policies",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -685,7 +705,8 @@ async def test_create_security_policy_calls_service_with_correct_args(mock_ctx, 
         patch("fabric_dw.services.rls.create_security_policy", new=mock_svc),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_security_policy",
             {
                 "workspace": WS_NAME,
@@ -730,7 +751,8 @@ async def test_create_security_policy_rejects_predicate_type_key(mock_ctx, ctx_p
         patch("fabric_dw.services.rls.run_query") as mock_run_query,
         pytest.raises(ToolError, match="unknown key"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_security_policy",
             {
                 "workspace": WS_NAME,
@@ -757,7 +779,8 @@ async def test_drop_security_policy_blocked_without_destructive_env(mock_ctx, ct
     os.environ.pop("FABRIC_MCP_READONLY", None)
     os.environ.pop("FABRIC_MCP_ALLOW_DESTRUCTIVE", None)
     with ctx_patch, patch.dict(os.environ, {}), pytest.raises(ToolError, match="destructive"):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "drop_security_policy",
             {
                 "workspace": WS_NAME,
@@ -782,7 +805,8 @@ async def test_drop_security_policy_succeeds_with_destructive_env(mock_ctx, ctx_
         patch("fabric_dw.services.rls.drop_security_policy", new=mock_svc),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "drop_security_policy",
             {
                 "workspace": WS_NAME,
@@ -810,7 +834,8 @@ async def test_add_security_predicate_fn_schema_optional(mock_ctx, ctx_patch) ->
         patch("fabric_dw.services.rls.add_predicate", new=mock_svc),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "add_security_predicate",
             {
                 "workspace": WS_NAME,
@@ -864,7 +889,8 @@ async def test_drop_security_predicate_dispatches_correct_args(mock_ctx, ctx_pat
         patch("fabric_dw.services.rls.drop_predicate", new=mock_svc),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "drop_security_predicate",
             {
                 "workspace": WS_NAME,
@@ -901,7 +927,8 @@ async def test_set_security_policy_state_returns_correct_dict(mock_ctx, ctx_patc
         patch("fabric_dw.services.rls.set_policy_state", new=mock_svc),
     ):
         os.environ.pop("FABRIC_MCP_READONLY", None)
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_security_policy_state",
             {
                 "workspace": WS_NAME,
