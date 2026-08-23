@@ -305,7 +305,7 @@ _install_method_cache: str | None = None
 
 _TENANT_ID_FILE = "tenant_id"
 _UNSET: object = object()  # sentinel — distinguishes "not yet read" from None/"no value"
-_tenant_id_cache: str | None | object = _UNSET  # _UNSET → not yet loaded; None → loaded, absent
+_tenant_id_cache: str | object | None = _UNSET  # _UNSET → not yet loaded; None → loaded, absent
 
 
 def _get_cached_tenant_id() -> str | None:

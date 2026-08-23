@@ -95,7 +95,7 @@ dev = [
     "freezegun>=1.5",
     "pytest-randomly",
     "pytest-cov",
-    "ruff>=0.15,<0.17",
+    "ruff==0.16.4",
     "ty==0.0.71",
     "types-pyyaml>=6.0",
     "pytest-socket>=0.8.0",
@@ -152,11 +152,15 @@ ignore = [
 #   (retention_days=14, page_size=10, etc.) — these are not magic numbers in the
 #   refactoring sense. HTTP status codes in src/ use http.HTTPStatus instead.
 "tests/**" = ["ANN", "S101", "PLR2004"]
-# PLR0913: service functions have many parameters by design (workspace_id, client, etc.).
-"src/fabric_dw/services/**" = ["PLR0913"]
+# PLR0913/PLR0917: service functions have many parameters by design (workspace_id, client, etc.).
+"src/fabric_dw/services/**" = ["PLR0913", "PLR0917"]
 # FBT001: Click injects bool flags via decorators; positional-bool check is a false-positive.
-# PLR0913: CLI commands grow many options (--limit/--since/--until/etc.); suppress at CLI layer.
-"src/fabric_dw/cli/**" = ["FBT001", "PLR0913"]
+# PLR0913/PLR0917: CLI commands grow many options (--limit/--since/--until/etc.); suppress at CLI layer.
+"src/fabric_dw/cli/**" = ["FBT001", "PLR0913", "PLR0917"]
+# PLR0917: MCP tool functions mirror the service signatures they wrap; the framework
+#   supplies every argument by name, so the positional-argument count is not a call-site
+#   readability concern.
+"src/fabric_dw/mcp/**" = ["PLR0917"]
 
 [tool.ruff.format]
 docstring-code-format = true
