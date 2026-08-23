@@ -183,6 +183,12 @@ fabric-dw-mcp --transport http [--host 127.0.0.1] [--port 8000]
 
 Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP transport has **no built-in authentication or TLS**. Always front it with an authenticating reverse proxy.
 
+Request bodies are capped at 4 MiB; anything larger is rejected with HTTP 413. In practice only a multi-megabyte `execute_sql` script or object definition can reach that. The stdio transport has no such limit.
+
+#### Protocol versions
+
+The server speaks MCP revision `2026-07-28` and continues to serve `2025-11-25` clients from the same process, so no client change is needed. Two protocol-level notes for anyone driving the server directly: `ping` is no longer part of the protocol, and unknown methods return `-32601` (method not found) rather than `-32602`.
+
 ## Develop in a container
 
 Open the repo in [GitHub Codespaces](https://github.com/codespaces) or VS Code's Remote-Containers extension. The devcontainer pre-installs Python 3.14, uv, Azure CLI, and the GitHub CLI.

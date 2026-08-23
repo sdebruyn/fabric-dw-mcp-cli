@@ -478,6 +478,12 @@ fabric-dw-mcp --transport http [--host 127.0.0.1] [--port 8000]
 
 Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP transport has **no built-in authentication or TLS** - always front it with an authenticating reverse proxy.
 
+Request bodies are capped at 4 MiB; anything larger is rejected with HTTP 413. In practice only a multi-megabyte `execute_sql` script or object definition can reach that. The stdio transport has no such limit.
+
+### Protocol versions
+
+The server speaks MCP revision `2026-07-28` and continues to serve `2025-11-25` clients from the same process, so no client change is needed. Two protocol-level notes for anyone driving the server directly: `ping` is no longer part of the protocol, and unknown methods return `-32601` (method not found) rather than `-32602`.
+
 ### Verify the MCP server
 
 After configuring your client, restart it and ask the assistant to list its available tools. You should see entries like `list_workspaces`, `get_warehouse`, `kill_session`, `clear_cache`, and 23 others (27 tools total).
