@@ -2,7 +2,7 @@
 
 Every test that asserts on a tool's raw Python return value invokes it
 through ``mcp._tool_manager.call_tool(name, arguments)`` rather than the
-public ``MCPServer.call_tool()`` / ``MCPServer.call_tool()`` API. That is
+public ``MCPServer.call_tool()`` API. That is
 deliberate: the public API always runs with ``convert_result=True`` and
 wraps the return value in a ``CallToolResult``, which would force every
 such assertion to be rewritten against ``.structured_content`` /

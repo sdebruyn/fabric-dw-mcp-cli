@@ -6,7 +6,7 @@ This module provides utilities imported by every domain tool module:
   to a :class:`~mcp.server.mcpserver.exceptions.ToolError` with structured data.
 - :func:`tool_err` — uniform error funnel mapping FabricError / ValueError /
   Exception to ToolError without inline ternaries.
-- :func:`mutating_tool` — decorator factory that registers a tool with MCPServer
+- :func:`mutating_tool` — decorator factory that registers a tool with the MCP server
   **and** injects :func:`~fabric_dw.mcp._guards.assert_writes_allowed` using
   the same name string, eliminating the duplication flagged by M21.
 - :func:`parse_iso8601` — parse an ISO-8601 string to :class:`~datetime.datetime`,

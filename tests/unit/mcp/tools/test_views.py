@@ -6,7 +6,7 @@ Goal:   ≥95 % branch coverage.
 Strategy
 --------
 - All calls routed via the shared ``call_tool()`` helper (``tests/unit/_call.py``),
-  which wraps ``mcp._tool_manager.call_tool`` (same path MCPServer uses at
+  which wraps ``mcp._tool_manager.call_tool`` (same path the MCP server uses at
   runtime) so the ``@mcp.tool`` decorator, Pydantic validation, and guards
   are all exercised.
 - ``ServerContext`` injected by patching ``fabric_dw.mcp._context._SERVER_CTX``

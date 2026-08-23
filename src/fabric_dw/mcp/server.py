@@ -1,4 +1,4 @@
-"""MCPServer server exposing all fabric-dw service functions as MCP tools.
+"""MCP server exposing all fabric-dw service functions as MCP tools.
 
 Architecture
 ------------
@@ -21,7 +21,7 @@ Context access
 Every tool function calls :func:`~fabric_dw.mcp._context.get_context` to
 obtain the shared :class:`~fabric_dw.mcp._context.ServerContext`.  The sentinel
 pattern (module-level ``ServerContext | None``) was chosen over injecting a
-``Context`` parameter into every tool because MCPServer's lifespan context is
+``Context`` parameter into every tool because the SDK's lifespan context is
 not ergonomically accessible from tool functions without either adding a
 ``Context`` import to every tool or using fragile ``request_context``
 internals.  The sentinel is safe for streamable-HTTP concurrency because it is
@@ -105,7 +105,7 @@ _SERVER_INSTRUCTIONS: str = (
 )
 
 # ---------------------------------------------------------------------------
-# MCPServer server instance (instrumented subclass emits command_invoked events)
+# MCP server instance (instrumented subclass emits command_invoked events)
 # ---------------------------------------------------------------------------
 
 mcp: InstrumentedMCPServer = InstrumentedMCPServer(
@@ -161,7 +161,7 @@ def _resolve_log_level() -> int:
 
 
 def run(argv: Sequence[str] | None = None) -> None:
-    """Parse CLI arguments and start the MCPServer server.
+    """Parse CLI arguments and start the MCP server.
 
     Args:
         argv: Argument list (defaults to ``sys.argv[1:]`` when ``None``).

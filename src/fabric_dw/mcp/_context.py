@@ -7,7 +7,7 @@ and cleared on shutdown.
 
 Design note
 -----------
-MCPServer's lifespan mechanism stores the yielded object inside the low-level
+The SDK's lifespan mechanism stores the yielded object inside the low-level
 request context (``request_context.lifespan_context``), but retrieving it
 requires injecting a ``Context`` parameter into every tool function.  Instead,
 we store the single ``ServerContext`` instance in a module-level sentinel
@@ -193,13 +193,13 @@ def build_context(
 
 
 # ---------------------------------------------------------------------------
-# MCPServer lifespan
+# MCP server lifespan
 # ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
 async def fabric_lifespan(app: MCPServer) -> AsyncIterator[None]:  # noqa: ARG001
-    """MCPServer lifespan that initialises and tears down the :class:`ServerContext`.
+    """MCP server lifespan that initialises and tears down the :class:`ServerContext`.
 
     Usage::
 

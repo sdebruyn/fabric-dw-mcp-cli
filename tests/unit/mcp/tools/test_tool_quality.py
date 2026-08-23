@@ -8,7 +8,7 @@ Coverage
 4. ``resolve_item`` — returns (ws_id, entry) in one call.
 5. ``safe_rows`` — applies json_safe to all cells.
 6. ``parse_qualified_name`` — consistent ToolError on bad input.
-7. Int param bounds — MCPServer rejects out-of-range values.
+7. Int param bounds — the MCP server rejects out-of-range values.
 8. ``next()`` fallback in create_sql_pool / update_sql_pool.
 9. ``clear_cache`` scope + stats.
 """
@@ -302,7 +302,7 @@ class TestParseQualifiedName:
 
 
 async def test_read_table_count_bound_rejection() -> None:
-    """read_table must reject count > 10000 at the MCPServer schema layer."""
+    """read_table must reject count > 10000 at the MCP schema layer."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ctx = _make_ctx()
@@ -323,7 +323,7 @@ async def test_read_table_count_bound_rejection() -> None:
 
 
 async def test_read_view_count_bound_rejection() -> None:
-    """read_view must reject count > 10000 at the MCPServer schema layer."""
+    """read_view must reject count > 10000 at the MCP schema layer."""
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     ctx = _make_ctx()

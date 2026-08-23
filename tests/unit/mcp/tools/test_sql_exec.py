@@ -270,7 +270,7 @@ async def test_get_query_plan_mermaid_no_xml_key(mock_ctx, ctx_patch) -> None:
 async def test_get_query_plan_invalid_format_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """An unsupported format value raises ToolError.
 
-    This exercises MCPServer's *schema-validation* layer (Pydantic rejects the
+    This exercises the MCP server's *schema-validation* layer (Pydantic rejects the
     Literal before the function body runs), not the in-body ``assert_never``.
     Removing the ``assert_never`` would not make this test pass through the body.
     """

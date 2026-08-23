@@ -2,12 +2,13 @@
 
 Testing strategy
 ----------------
-MCPServer 1.x ships no in-process test transport in its public API, so we use
-unit-style mocking via the shared ``mock_ctx`` / ``ctx_patch`` fixtures defined
-in ``conftest.py``.
+These are unit-style tests: the ``ServerContext`` is mocked via the shared
+``mock_ctx`` / ``ctx_patch`` fixtures defined in ``conftest.py``, and tools are
+invoked directly rather than over the protocol.  ``test_contract.py`` covers the
+protocol round-trip through the SDK's in-process ``mcp.client.Client``.
 
 Tools are called via ``call_tool(mcp, name, args)`` which is the
-same call path MCPServer uses at runtime, giving realistic coverage of the
+same call path the MCP server uses at runtime, giving realistic coverage of the
 ``@mcp.tool`` decorator, Pydantic validation, and guard logic.
 
 The ``ServerContext`` (http / cache / resolver) is injected by patching
@@ -232,7 +233,7 @@ def _make_item_access() -> ItemAccess:
 
 
 def test_core_tools_registered() -> None:
-    """Every core tool must be registered in the MCPServer server.
+    """Every core tool must be registered in the MCP server.
 
     ``CORE_TOOLS`` is a stable subset of fundamental tools spanning all major
     domains.  A registration regression (e.g. a broken ``register_all`` call)
