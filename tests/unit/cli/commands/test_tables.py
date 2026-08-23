@@ -3984,6 +3984,42 @@ class TestTablesHealthCheck:
         parsed = json.loads(result.output)
         assert parsed == []
 
+    def test_health_check_zero_rows_renders_table_headers(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Columns present but zero rows (issue #1030): table path, not --json.
+
+        The only prior empty-result coverage used --json with columns=[], which
+        exercises neither the Rich table path nor the has-columns-no-rows shape.
+        This is also the only production caller of render_result_rows that
+        passes prune_null_columns=True, so it is the one place that would
+        silently lose every header if pruning were not skipped for zero rows.
+        """
+        _ = cache_env
+        mock_http = AsyncMock()
+        fake_cols = ["issue", "severity"]
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.get_table_health_metrics",
+                new=AsyncMock(return_value=ResultSet(columns=fake_cols, rows=[])),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "health-check", SE_GUID, "dbo.FactSales"]
+            )
+        assert result.exit_code == 0, result.output
+        assert "issue" in result.output
+        assert "severity" in result.output
+        assert "(0 rows)" in result.output
+
 
 class TestTablesHealthCheckDuplicateColumns:
     """tables health-check — duplicate column name handling (issue #833)."""

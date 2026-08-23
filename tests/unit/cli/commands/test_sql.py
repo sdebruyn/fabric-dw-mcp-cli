@@ -507,8 +507,8 @@ class TestSqlExecZeroRowSelect:
                 ["-w", WS_GUID, "sql", "exec", WH_GUID, "-q", "SELECT id, name FROM t WHERE 1=0"],
             )
         assert result.exit_code == 0
-        assert "id" in result.output
-        assert "name" in result.output
+        assert "┃ id ┃ name ┃" in result.output
+        assert "(0 rows)" in result.output
         assert "Query executed successfully" not in result.output
 
     def test_zero_row_select_json_output_unchanged(
@@ -762,7 +762,10 @@ class TestSqlExecWatch:
                 ],
             )
         assert execute.await_count == 2
-        assert result.output.count("id") == 2
+        # Exact header row, not a loose substring count: "id" also matches part
+        # of the watch header's %Z timezone abbreviation on some platforms.
+        assert result.output.count("┃ id ┃ name ┃") == 2
+        assert result.output.count("(0 rows)") == 2
         assert "Query executed successfully" not in result.output
 
     def test_watch_without_flag_runs_once_unchanged(

@@ -2207,18 +2207,23 @@ class TestRenderResultRowsEmptyRows:
 
     def test_empty_rows_renders_column_headers(self) -> None:
         output = self._render_to_string(["id", "name"], [])
-        assert "id" in output
-        assert "name" in output
+        assert "┃ id ┃ name ┃" in output
+        assert "(0 rows)" in output
 
     def test_empty_rows_with_title_prints_title(self) -> None:
         output = self._render_to_string(["id", "name"], [], table_title="SQL Result")
         assert "SQL Result" in output
-        assert "id" in output
+        assert "┃ id ┃ name ┃" in output
 
     def test_empty_rows_and_empty_columns_renders_without_error(self) -> None:
-        """The genuine DDL/DML shape (no columns either) still renders cleanly."""
+        """The genuine DDL/DML shape (no columns either) still renders cleanly.
+
+        No headers to show, but the ``(0 rows)`` marker must still appear —
+        a bare ``"\\n"`` (the pre-fix output) would pass a weaker
+        ``output != ""`` check and hide a regression.
+        """
         output = self._render_to_string([], [])
-        assert output != ""
+        assert "(0 rows)" in output
 
     def test_empty_rows_json_output_is_empty_list(self, capsys: pytest.CaptureFixture[str]) -> None:
         """The JSON path is unaffected: zero rows still serialise to []."""

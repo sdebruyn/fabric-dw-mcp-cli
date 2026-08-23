@@ -12,7 +12,7 @@ SQL execution and query-plan capture against a Fabric Data Warehouse or SQL Anal
 
 ### sql exec
 
-Execute a SQL statement or file against a warehouse or SQL Analytics Endpoint. Provide the query via `-q`/`--query` or `-f`/`--file` (not both). Multi-statement batches are supported; only the last result set is returned. DDL/DML statements return empty columns and rows.
+Execute a SQL statement or file against a warehouse or SQL Analytics Endpoint. Provide the query via `-q`/`--query` or `-f`/`--file` (not both). Multi-statement batches are supported; the CLI keeps the last result set that has a column list (i.e. the last query), not the last statement. A batch that ends with DDL/DML after a query, such as `SELECT id FROM t; UPDATE t SET x = 1;`, shows the `SELECT` result and does not separately report that the `UPDATE` ran. A statement with no result set at all (DDL/DML with nothing else in the batch) returns empty columns and rows.
 
 !!! warning
 
@@ -32,7 +32,7 @@ fdw [-w WORKSPACE] sql exec [OPTIONS] [ITEM]
 
 Output defaults to a Rich table (rows/columns). Pass `--json` on the root command to emit machine-readable JSON (`{"columns": [...], "rows": [...], "rowcount": N}`).
 
-Whether a `Query executed successfully. rowcount=N` message or a table is shown depends on whether the statement returned any columns, not on whether it returned any rows. A `SELECT` that matches nothing still returns its column list, so it renders an empty table with headers; only a true DDL/DML statement, which returns no columns at all, prints the `rowcount=N` message.
+Whether a `Query executed successfully. rowcount=N` message or a table is shown depends on the returned result set (see above), not on whether it has any rows. A `SELECT` that matches nothing still returns its column list, so it renders as a table with headers and a `(0 rows)` line underneath; the `rowcount=N` message only appears when no result set with columns was returned at all. When the columns are too wide to fit the terminal, the empty table is replaced by a wrapped `Columns: ...` list, still followed by `(0 rows)`, so the column names stay readable instead of being truncated inside a table cell.
 
 **Example**
 

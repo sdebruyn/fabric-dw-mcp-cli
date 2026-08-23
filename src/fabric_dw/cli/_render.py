@@ -593,6 +593,10 @@ def _render_positional_vertical(
     Extracted from :func:`_render_positional_table` so that the parent
     function stays within the branch-count budget.  Duplicate column names
     are preserved because cell values are looked up by position, not by key.
+
+    Only called with a non-empty *rows*; the zero-row, too-wide-to-fit case
+    is handled by :func:`_render_wide_empty_result` instead, since there are
+    no rows to build panels from.
     """
     if title:
         console.print(f"[bold]{_escape_markup(title)}[/bold]")
@@ -604,6 +608,29 @@ def _render_positional_vertical(
             for i in visible
         )
         console.print(Panel(lines))
+
+
+def _render_wide_empty_result(
+    columns: list[str],
+    visible: list[int],
+    *,
+    console: Console,
+    title: str | None,
+) -> None:
+    """Render a zero-row result whose headers would not fit as a horizontal table.
+
+    :func:`_render_positional_vertical` renders one panel per row, which has
+    nothing to show when there are no rows.  This prints the visible column
+    names as a wrapped, comma-separated list instead, plus a ``(0 rows)``
+    marker, so the caller still learns the query's shape (its columns) and
+    that it matched nothing, even when neither the horizontal table nor the
+    per-row panel layout would fit the terminal.
+    """
+    if title:
+        console.print(f"[bold]{_escape_markup(title)}[/bold]")
+    names = ", ".join(_escape_markup(columns[i]) for i in visible)
+    console.print(f"Columns: {names}")
+    console.print("(0 rows)")
 
 
 def _render_positional_table(
@@ -624,27 +651,18 @@ def _render_positional_table(
     When *prune_null_columns* is *True* (default), columns whose value is
     ``None`` in every row are omitted.  Pass *False* to keep all columns,
     e.g. for raw SQL output where every column must appear regardless of
-    nullability.
+    nullability.  Pruning is always skipped when *rows* is empty: with no
+    rows, every column would vacuously look "all-None" and pruning would
+    drop every header, defeating the point of showing the empty result's
+    shape.
 
-    When *rows* is empty, *columns* are still rendered as table headers — an
-    empty result set has a shape, and that is not the same as a statement
-    that returned no columns at all.  Null-column pruning is skipped in this
-    case: with no rows, every column would vacuously look "all-None" and
-    pruning would drop every header, defeating the point of showing the
-    empty result's shape.
-
-    The wide-table vertical fallback uses the same heuristic as
-    :func:`_render_table`.
+    When *rows* is empty, *columns* still go through the same horizontal-fit
+    check as a non-empty result: if the headers fit, an empty table with
+    headers is printed followed by a ``(0 rows)`` marker; if they do not fit,
+    :func:`_render_wide_empty_result` prints the column names as a wrapped
+    list instead (there are no rows to build per-row panels from, so the
+    non-empty wide-table vertical fallback does not apply here).
     """
-    if not rows:
-        if title:
-            console.print(f"[bold]{_escape_markup(title)}[/bold]")
-        table = Table(show_header=True, header_style="bold")
-        for col in columns:
-            table.add_column(_escape_markup(col))
-        console.print(table)
-        return
-
     n = len(columns)
 
     # Pre-collect values per column position for GUID detection and null pruning.
@@ -653,9 +671,11 @@ def _render_positional_table(
     ]
 
     # Drop positions where every row has None, unless the caller opts out.
+    # Never prune when there are no rows — see docstring.
+    effective_prune = prune_null_columns and bool(rows)
     all_null_idx: set[int] = (
         {i for i, vals in enumerate(col_values) if all(v is None for v in vals)}
-        if prune_null_columns
+        if effective_prune
         else set()
     )
     visible: list[int] = [i for i in range(n) if i not in all_null_idx]
@@ -673,7 +693,10 @@ def _render_positional_table(
     border_chars = 3 * len(visible) + 1
 
     if content_width + border_chars > console.width:
-        _render_positional_vertical(rows, columns, visible, console=console, title=title)
+        if not rows:
+            _render_wide_empty_result(columns, visible, console=console, title=title)
+        else:
+            _render_positional_vertical(rows, columns, visible, console=console, title=title)
         return
 
     if title:
@@ -693,6 +716,8 @@ def _render_positional_table(
         table.add_row(*[_cell(row[i] if i < len(row) else None) for i in visible])
 
     console.print(table)
+    if not rows:
+        console.print("(0 rows)")
 
 
 def render_result_rows(
@@ -728,7 +753,10 @@ def render_result_rows(
         prune_null_columns: When *True*, columns whose value is ``None`` in
             every row are omitted from the human-readable table.  Defaults to
             *False* so raw SQL output retains every column regardless of
-            nullability.  Ignored when *json_output=True*.
+            nullability.  Ignored when *json_output=True*, and also ignored
+            (never prunes) when *rows* is empty: with no rows every column
+            would vacuously look "all-None", and pruning would drop every
+            header instead of showing the empty result's shape.
     """
     if json_output:
         click.echo(
