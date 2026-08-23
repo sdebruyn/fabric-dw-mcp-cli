@@ -24,6 +24,10 @@ Architecture notes
   ``cache_tenant_id_from_token()`` (#366).
 - Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
   request URLs (containing tenant IDs) from leaking as span attributes.
+- ``disable_tracing=True`` means no span exporter is ever installed, so spans
+  emitted by code this project does not own are never exported.  This is not
+  hypothetical: MCP Python SDK v2 installs an OpenTelemetry middleware on every
+  server unconditionally, and it records exception text on failure.
 - ``shutdown_on_exit`` is disabled; a bounded ``force_flush`` + ``provider.shutdown()``
   (≤8 s total) is performed at app exit in a daemon thread so the CLI never hangs.
   The explicit ``force_flush`` call before ``shutdown()`` is required to reliably
@@ -72,8 +76,8 @@ release — re-check when upgrading azure-monitor-opentelemetry-exporter.
 
 The logs pipeline must be active for customEvents to flow, so
 ``disable_logging=False`` is passed to ``configure_azure_monitor``.  All other
-safeguards (no auto-instrumentation, no metrics, no live metrics, no statsbeat,
-no atexit hang) are kept exactly as before.
+safeguards (no tracing, no auto-instrumentation, no metrics, no live metrics,
+no statsbeat, no atexit hang) are kept exactly as before.
 """
 
 from __future__ import annotations
@@ -705,6 +709,12 @@ def _get_tracer() -> object | None:
       ``EventData`` (``customEvents`` table) — the reason this function now sets
       up a logger instead of a tracer.
     - ``disable_metrics=True`` prevents generic metric exporters from starting.
+    - ``disable_tracing=True`` prevents a span exporter from being installed at
+      all.  This project emits no spans of its own, but MCP Python SDK v2 puts
+      an OpenTelemetry middleware on every server unconditionally, and that
+      middleware records exception text (Fabric API errors, SQL error messages)
+      and identifiers (workspace and warehouse names) onto SERVER spans.  With a
+      TracerProvider installed those would be exported to Application Insights.
     - ``enable_performance_counters=False`` disables the PerformanceCounters
       subsystem (CPU / memory poller) which is NOT covered by ``disable_metrics``
       in azure-monitor-opentelemetry 1.8+.  On short-lived processes its
@@ -768,6 +778,23 @@ def _get_tracer() -> object | None:
                 # appear in the App Insights "Usage → Events" or "Usage → Users" blades.
                 "disable_logging": False,
                 "disable_metrics": True,
+                # PRIVACY, load-bearing: never install a span exporter.  We emit
+                # customEvents as log records, so nothing in this project needs the
+                # trace pipeline; leaving it on would silently export spans we do
+                # not author.  MCP Python SDK v2 installs an OpenTelemetry
+                # middleware on every server unconditionally
+                # (mcp.server.lowlevel.Server.__init__), and it emits one SERVER
+                # span per inbound message carrying mcp.method.name,
+                # jsonrpc.request.id, gen_ai.tool.name, plus span.record_exception()
+                # and set_status(ERROR, str(e)) on failure.  With a TracerProvider
+                # installed here, that puts Fabric API error text, SQL error
+                # messages, workspace names, and warehouse names on the wire to
+                # Application Insights.  Disabling the pipeline at the source is
+                # preferable to the SDK's own recipe of mutating
+                # mcp._lowlevel_server.middleware, which its docs flag as a
+                # provisional private import.  Pinned by
+                # test_get_tracer_passes_disable_tracing_true.
+                "disable_tracing": True,
                 # A1: disable PerformanceCounters — not covered by disable_metrics in
                 # azure-monitor-opentelemetry 1.8+; its _get_processor_time callback
                 # divides by zero on short-lived processes and logs a traceback (#399).
@@ -815,8 +842,8 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
     exporter is slow or unreachable.  The thread is daemon so the OS kills it
     when the main thread exits (no hang possible).
 
-    Both the tracer provider (spans, if any) and the logger provider (customEvents
-    log pipeline) are flushed so no records are lost.
+    Both the tracer provider (a no-op while ``disable_tracing=True``) and the
+    logger provider (customEvents log pipeline) are flushed so no records are lost.
 
     Args:
         timeout_ms: Maximum milliseconds to wait for the flush.  Defaults to
@@ -829,8 +856,11 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
         # Each pipeline is flushed independently so a failure in one does
         # not prevent the other from running.
 
-        # Tracer provider — belt-and-suspenders; no spans are emitted in the
-        # new path, but kept here in case the SDK creates internal spans.
+        # Tracer provider — belt-and-suspenders.  Spans ARE created in-process
+        # (the MCP SDK middleware makes one per inbound message), but with
+        # disable_tracing=True no exporter is attached, so the global provider is
+        # the no-op default and has no force_flush.  The getattr guard handles
+        # that; the branch stays so a future opt-in to tracing still flushes.
         with contextlib.suppress(Exception):
             from opentelemetry import trace as _trace  # noqa: PLC0415
 
@@ -945,8 +975,10 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
             if callable(log_shutdown):
                 log_shutdown()
 
-        # Tracer provider — belt-and-suspenders; no spans are emitted in the
-        # new path, but kept so any SDK-internal spans are flushed.
+        # Tracer provider — belt-and-suspenders.  With disable_tracing=True the
+        # global provider is the no-op default and has no shutdown; the getattr
+        # guard handles that.  The branch stays so a future opt-in still tears
+        # the trace pipeline down.
         with contextlib.suppress(Exception):
             from opentelemetry import trace as _trace  # noqa: PLC0415
 

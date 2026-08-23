@@ -1121,6 +1121,93 @@ def test_get_tracer_passes_enable_performance_counters_false(
 
 
 # ---------------------------------------------------------------------------
+# Privacy: no span exporter is ever installed (#1043)
+# ---------------------------------------------------------------------------
+
+
+def test_get_tracer_passes_disable_tracing_true(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """_get_tracer must pass disable_tracing=True to configure_azure_monitor.
+
+    This project emits customEvents as OTel *log records* and authors no spans
+    of its own, so the trace pipeline has no legitimate producer here.  It does
+    have an illegitimate one: MCP Python SDK v2 installs an OpenTelemetry
+    middleware on every server unconditionally, and that middleware emits a
+    SERVER span per inbound message carrying ``mcp.method.name``,
+    ``jsonrpc.request.id`` and ``gen_ai.tool.name``, then calls
+    ``span.record_exception(e)`` and ``set_status(ERROR, str(e))`` on failure.
+
+    If a TracerProvider with an Application Insights exporter were installed,
+    Fabric API error text, SQL error messages, workspace names and warehouse
+    names would be exported on every failed tool call.  Passing
+    ``disable_tracing=True`` means no exporter exists to carry them.
+
+    Do not relax this without a deliberate privacy review: the SDK middleware is
+    on by default and the leak is silent.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+
+    mod = _reload_telemetry()
+
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_configure(**kwargs: object) -> None:
+        captured_kwargs.update(kwargs)
+
+    fake_otel_logger = object()
+
+    fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
+    fake_azure_mod.configure_azure_monitor = fake_configure
+
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs")
+    fake_logs_mod.get_logger = lambda *_a, **_kw: fake_otel_logger
+    fake_logs_mod.LogRecord = object
+    fake_logs_mod.SeverityNumber = object
+
+    mod._sdk_initialised = False
+    mod._tracer = None
+    mod._otel_logger = None
+
+    monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
+
+    mod._get_tracer()
+
+    assert captured_kwargs.get("disable_tracing") is True, (
+        "configure_azure_monitor must receive disable_tracing=True. Without it the "
+        "MCP SDK v2 OpenTelemetry middleware exports protocol spans, including "
+        "exception text (Fabric API errors, SQL error messages) and identifiers "
+        "(workspace and warehouse names), to Application Insights (#1043)."
+    )
+
+    # Reset SDK state so the module is clean for any subsequent tests.
+    mod._sdk_initialised = False
+    mod._tracer = None
+    mod._otel_logger = None
+
+
+def test_mcp_server_otel_middleware_is_installed_by_the_sdk() -> None:
+    """Pin the upstream fact that makes disable_tracing=True load-bearing.
+
+    MCP Python SDK v2 appends an ``OpenTelemetryMiddleware`` to every low-level
+    ``Server`` in ``__init__``, with no opt-out short of mutating the private
+    ``middleware`` list.  If a future SDK release makes that opt-in instead,
+    this test fails and the ``disable_tracing=True`` rationale in
+    ``telemetry.py`` can be revisited.  Until then it must stay.
+    """
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    middleware_types = {type(m).__name__ for m in mcp._lowlevel_server.middleware}
+    assert "OpenTelemetryMiddleware" in middleware_types, (
+        "The MCP SDK no longer installs OpenTelemetryMiddleware unconditionally. "
+        "Re-read the disable_tracing=True rationale in fabric_dw/telemetry.py "
+        f"before changing anything. Installed middleware: {sorted(middleware_types)}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Concurrency: logger assigned before init flag, under a lock (#846)
 # ---------------------------------------------------------------------------
 

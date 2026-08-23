@@ -73,6 +73,22 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 - Connection strings or any credentials
 - File paths or environment variable values
 - Any other personally-identifiable information
+- Distributed traces of any kind, including MCP protocol spans and the exception
+  text they carry
+
+### No spans are ever exported
+
+`fabric-dw` emits telemetry as OpenTelemetry **log records**, never as spans, and
+it configures Application Insights with `disable_tracing=True` so no span
+exporter is installed at all.
+
+This matters because the MCP Python SDK installs an OpenTelemetry middleware on
+every server it creates, and that middleware records the method name, the tool
+name, and, when a call fails, the full exception text on a span. For this project
+that exception text would include Fabric API errors, SQL error messages, and the
+workspace and warehouse names embedded in them, all of which the list above
+promises not to collect. With no span exporter installed, those spans are created
+in-process and go nowhere.
 
 ## Where telemetry data goes
 
