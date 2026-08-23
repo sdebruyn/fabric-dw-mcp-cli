@@ -25,6 +25,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import RestorePoint
+from tests.unit.mcp._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,
@@ -77,7 +78,8 @@ async def test_list_restore_points_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[rp]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_restore_points",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -104,7 +106,8 @@ async def test_list_restore_points_fabric_error_becomes_tool_error(mock_ctx, ctx
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_restore_points",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -119,7 +122,8 @@ async def test_list_restore_points_workspace_guard(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_restore_points",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -144,7 +148,8 @@ async def test_list_restore_points_multiple(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[rp1, rp2]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_restore_points",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -175,7 +180,8 @@ async def test_get_restore_point_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=rp),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -201,7 +207,8 @@ async def test_get_restore_point_fabric_error_becomes_tool_error(mock_ctx, ctx_p
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -216,7 +223,8 @@ async def test_get_restore_point_workspace_guard(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -245,7 +253,8 @@ async def test_create_restore_point_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=rp),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -268,7 +277,8 @@ async def test_create_restore_point_with_name_and_description(mock_ctx, ctx_patc
         ctx_patch,
         patch("fabric_dw.services.restore.create_point", new=mock_create),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_restore_point",
             {
                 "workspace": WS_NAME,
@@ -293,7 +303,8 @@ async def test_create_restore_point_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -317,7 +328,8 @@ async def test_create_restore_point_fabric_error_becomes_tool_error(mock_ctx, ct
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -332,7 +344,8 @@ async def test_create_restore_point_workspace_guard(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -361,7 +374,8 @@ async def test_update_restore_point_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=rp),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "update_restore_point",
             {
                 "workspace": WS_NAME,
@@ -394,7 +408,8 @@ async def test_update_restore_point_value_error_becomes_tool_error(mock_ctx, ctx
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_restore_point",
             {
                 "workspace": WS_NAME,
@@ -422,7 +437,8 @@ async def test_update_restore_point_fabric_error_becomes_tool_error(mock_ctx, ct
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_restore_point",
             {
                 "workspace": WS_NAME,
@@ -442,7 +458,8 @@ async def test_update_restore_point_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_restore_point",
             {
                 "workspace": WS_NAME,
@@ -464,7 +481,8 @@ async def test_update_restore_point_workspace_guard(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_restore_point",
             {
                 "workspace": WS_NAME,
@@ -498,7 +516,8 @@ async def test_delete_restore_point_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "delete_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -515,7 +534,8 @@ async def test_delete_restore_point_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1", "FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -532,7 +552,8 @@ async def test_delete_restore_point_destructive_guard(ctx_patch) -> None:
         patch.dict(os.environ, {}, clear=False),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -557,7 +578,8 @@ async def test_delete_restore_point_fabric_error_becomes_tool_error(mock_ctx, ct
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -575,7 +597,8 @@ async def test_delete_restore_point_workspace_guard(ctx_patch) -> None:
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_restore_point",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -604,7 +627,8 @@ async def test_restore_warehouse_in_place_happy_path(mock_ctx, ctx_patch) -> Non
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "restore_warehouse_in_place",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -621,7 +645,8 @@ async def test_restore_warehouse_in_place_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1", "FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "restore_warehouse_in_place",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -637,7 +662,8 @@ async def test_restore_warehouse_in_place_destructive_guard(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "restore_warehouse_in_place",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -664,7 +690,8 @@ async def test_restore_warehouse_in_place_fabric_error_becomes_tool_error(
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "restore_warehouse_in_place",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -689,7 +716,8 @@ async def test_restore_warehouse_in_place_value_error_becomes_tool_error(
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "restore_warehouse_in_place",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )
@@ -709,7 +737,8 @@ async def test_restore_warehouse_in_place_workspace_guard(ctx_patch) -> None:
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "restore_warehouse_in_place",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "restore_point_id": _RP_ID},
         )

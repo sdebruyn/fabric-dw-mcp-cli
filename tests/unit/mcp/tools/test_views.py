@@ -23,6 +23,7 @@ import pytest
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import View
+from tests.unit.mcp._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,
@@ -75,7 +76,8 @@ async def test_list_views_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.list_views", new=AsyncMock(return_value=[view])),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_views",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -100,7 +102,8 @@ async def test_list_views_with_schema_filter(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.list_views", new=mock_svc),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_views",
             {"workspace": WS_NAME, "item": WH_NAME, "schema": "sales"},
         )
@@ -122,7 +125,8 @@ async def test_list_views_empty_result(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.list_views", new=AsyncMock(return_value=[])),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_views",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -152,7 +156,8 @@ async def test_list_views_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_views",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -171,7 +176,8 @@ async def test_list_views_no_connection_string_tool_error(mock_ctx, ctx_patch) -
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_views",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -188,7 +194,8 @@ async def test_list_views_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_views",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -213,7 +220,8 @@ async def test_list_views_sql_endpoint_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.list_views", new=AsyncMock(return_value=[view])),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_views",
             {"workspace": WS_NAME, "item": "MySqlEndpoint"},
         )
@@ -243,7 +251,8 @@ async def test_read_view_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=(columns, rows)),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "read_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -264,7 +273,8 @@ async def test_read_view_with_count(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.read_view", new=mock_svc),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales", "count": 50},
         )
@@ -288,7 +298,8 @@ async def test_read_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "vw_nodot"},
         )
@@ -313,7 +324,8 @@ async def test_read_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) ->
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -330,7 +342,8 @@ async def test_read_view_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -355,7 +368,8 @@ async def test_read_view_with_as_of_passes_to_service(mock_ctx, ctx_patch) -> No
         ctx_patch,
         patch("fabric_dw.services.views.read_view", new=mock_svc),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_view",
             {
                 "workspace": WS_NAME,
@@ -382,7 +396,8 @@ async def test_read_view_without_as_of_passes_none(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.read_view", new=mock_svc),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -404,7 +419,8 @@ async def test_read_view_invalid_as_of_raises_tool_error(mock_ctx, ctx_patch) ->
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "read_view",
             {
                 "workspace": WS_NAME,
@@ -432,7 +448,8 @@ async def test_get_view_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.get_view", new=AsyncMock(return_value=view)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -458,7 +475,8 @@ async def test_get_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "nodot"},
         )
@@ -481,7 +499,8 @@ async def test_get_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) -> 
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -498,7 +517,8 @@ async def test_get_view_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -521,7 +541,8 @@ async def test_create_view_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.create_view", new=AsyncMock(return_value=view)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_view",
             {
                 "workspace": WS_NAME,
@@ -551,7 +572,8 @@ async def test_create_view_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_view",
             {
                 "workspace": WS_NAME,
@@ -574,7 +596,8 @@ async def test_create_view_unqualified_name_raises_tool_error(ctx_patch) -> None
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_view",
             {
                 "workspace": WS_NAME,
@@ -596,7 +619,8 @@ async def test_create_view_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_view",
             {
                 "workspace": WS_NAME,
@@ -624,7 +648,8 @@ async def test_create_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) 
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_view",
             {
                 "workspace": WS_NAME,
@@ -652,7 +677,8 @@ async def test_update_view_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.update_view", new=AsyncMock(return_value=view)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "update_view",
             {
                 "workspace": WS_NAME,
@@ -682,7 +708,8 @@ async def test_update_view_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_view",
             {
                 "workspace": WS_NAME,
@@ -705,7 +732,8 @@ async def test_update_view_unqualified_name_raises_tool_error(ctx_patch) -> None
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_view",
             {
                 "workspace": WS_NAME,
@@ -727,7 +755,8 @@ async def test_update_view_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_view",
             {
                 "workspace": WS_NAME,
@@ -755,7 +784,8 @@ async def test_update_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) 
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_view",
             {
                 "workspace": WS_NAME,
@@ -786,7 +816,8 @@ async def test_drop_view_happy_path(mock_ctx, ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch("fabric_dw.services.views.drop_view", new=AsyncMock(return_value=None)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "drop_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -810,7 +841,8 @@ async def test_drop_view_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "drop_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -828,7 +860,8 @@ async def test_drop_view_unqualified_name_raises_tool_error(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "drop_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "nodot"},
         )
@@ -848,7 +881,8 @@ async def test_drop_view_workspace_not_in_allowlist(ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "drop_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -872,7 +906,8 @@ async def test_drop_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) ->
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "drop_view",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -895,7 +930,8 @@ async def test_rename_view_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.rename_view", new=AsyncMock(return_value=renamed_view)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": WS_NAME,
@@ -925,7 +961,8 @@ async def test_rename_view_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": WS_NAME,
@@ -948,7 +985,8 @@ async def test_rename_view_unqualified_name_raises_tool_error(ctx_patch) -> None
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": WS_NAME,
@@ -970,7 +1008,8 @@ async def test_rename_view_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": WS_NAME,
@@ -998,7 +1037,8 @@ async def test_rename_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch) 
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": WS_NAME,
@@ -1026,7 +1066,8 @@ async def test_rename_view_value_error_becomes_tool_error(mock_ctx, ctx_patch) -
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_view",
             {
                 "workspace": WS_NAME,
@@ -1055,7 +1096,8 @@ async def test_transfer_view_happy_path(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.views.transfer_view", new=mock_transfer),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "transfer_view",
             {
                 "workspace": WS_NAME,
@@ -1087,7 +1129,8 @@ async def test_transfer_view_does_not_reject_sql_endpoint(mock_ctx, ctx_patch) -
         ctx_patch,
         patch("fabric_dw.services.views.transfer_view", new=AsyncMock(return_value=moved_view)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "transfer_view",
             {
                 "workspace": WS_NAME,
@@ -1116,7 +1159,8 @@ async def test_transfer_view_readonly_mode_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "transfer_view",
             {
                 "workspace": WS_NAME,
@@ -1139,7 +1183,8 @@ async def test_transfer_view_unqualified_name_raises_tool_error(ctx_patch) -> No
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "transfer_view",
             {
                 "workspace": WS_NAME,
@@ -1161,7 +1206,8 @@ async def test_transfer_view_workspace_not_in_allowlist(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "transfer_view",
             {
                 "workspace": WS_NAME,
@@ -1189,7 +1235,8 @@ async def test_transfer_view_fabric_error_becomes_tool_error(mock_ctx, ctx_patch
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "transfer_view",
             {
                 "workspace": WS_NAME,
@@ -1217,7 +1264,8 @@ async def test_transfer_view_value_error_becomes_tool_error(mock_ctx, ctx_patch)
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "transfer_view",
             {
                 "workspace": WS_NAME,
@@ -1247,7 +1295,8 @@ async def test_count_view_rows_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=7),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "count_view_rows",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -1275,7 +1324,8 @@ async def test_count_view_rows_fabric_error_becomes_tool_error(mock_ctx, ctx_pat
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "count_view_rows",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -1292,7 +1342,8 @@ async def test_count_view_rows_workspace_allowlist_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "count_view_rows",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -1308,7 +1359,8 @@ async def test_count_view_rows_bad_qualified_name_raises_tool_error(ctx_patch) -
         ctx_patch,
         pytest.raises(ToolError, match="qualified name"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "count_view_rows",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "nodot"},
         )
@@ -1333,7 +1385,8 @@ async def test_count_view_rows_with_as_of_passes_to_service(mock_ctx, ctx_patch)
         ctx_patch,
         patch("fabric_dw.services.views.count_view_rows", new=mock_count),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "count_view_rows",
             {
                 "workspace": WS_NAME,
@@ -1360,7 +1413,8 @@ async def test_count_view_rows_without_as_of_passes_none(mock_ctx, ctx_patch) ->
         ctx_patch,
         patch("fabric_dw.services.views.count_view_rows", new=mock_count),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "count_view_rows",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -1382,7 +1436,8 @@ async def test_count_view_rows_invalid_as_of_raises_tool_error(mock_ctx, ctx_pat
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "count_view_rows",
             {
                 "workspace": WS_NAME,
@@ -1435,7 +1490,8 @@ async def test_get_view_columns_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=_VIEW_COLUMNS),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_view_columns",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -1463,7 +1519,8 @@ async def test_get_view_columns_not_found_raises_tool_error(mock_ctx, ctx_patch)
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_view_columns",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.ghost"},
         )
@@ -1483,7 +1540,8 @@ async def test_get_view_columns_works_on_sql_endpoint(mock_ctx, ctx_patch) -> No
             new=AsyncMock(return_value=_VIEW_COLUMNS),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_view_columns",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.vw_sales"},
         )

@@ -18,6 +18,7 @@ import pytest
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.models import StoredProcedure, WarehouseKind
+from tests.unit.mcp._call import call_tool
 
 # ---------------------------------------------------------------------------
 # Shared constants
@@ -75,7 +76,8 @@ async def test_list_procedures_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[_make_proc()]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_procedures",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -98,7 +100,8 @@ async def test_list_procedures_with_schema_filter(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.procedures.list_procedures", new=mock_list),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_procedures",
             {"workspace": _WS_NAME, "item": _WH_NAME, "schema": "dbo"},
         )
@@ -128,7 +131,8 @@ async def test_list_procedures_on_sql_endpoint_no_error(mock_ctx, ctx_patch) -> 
             new=AsyncMock(return_value=[]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_procedures",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -150,7 +154,8 @@ async def test_list_procedures_workspace_allowlist_blocks(
     mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with ctx_patch, pytest.raises(ToolError):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_procedures",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -176,7 +181,8 @@ async def test_get_procedure_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=_make_proc()),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_procedure",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.usp_load"},
         )
@@ -197,7 +203,8 @@ async def test_get_procedure_bad_qualified_name_raises_tool_error(mock_ctx, ctx_
     mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with ctx_patch, pytest.raises(ToolError):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_procedure",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "nodot"},
         )
@@ -223,7 +230,8 @@ async def test_create_procedure_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=_make_proc()),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_procedure",
             {
                 "workspace": _WS_NAME,
@@ -251,7 +259,8 @@ async def test_create_procedure_blocked_in_readonly(
     mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with ctx_patch, pytest.raises(ToolError, match="read-only"):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_procedure",
             {
                 "workspace": _WS_NAME,
@@ -277,7 +286,8 @@ async def test_create_procedure_on_sql_endpoint_no_error(mock_ctx, ctx_patch) ->
             new=AsyncMock(return_value=_make_proc()),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_procedure",
             {
                 "workspace": _WS_NAME,
@@ -310,7 +320,8 @@ async def test_update_procedure_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=_make_proc()),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "update_procedure",
             {
                 "workspace": _WS_NAME,
@@ -338,7 +349,8 @@ async def test_update_procedure_blocked_in_readonly(
     mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with ctx_patch, pytest.raises(ToolError, match="read-only"):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_procedure",
             {
                 "workspace": _WS_NAME,
@@ -372,7 +384,8 @@ async def test_drop_procedure_happy_path(
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "drop_procedure",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.usp_load"},
         )
@@ -394,7 +407,8 @@ async def test_drop_procedure_blocked_without_destructive_flag(
     mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with ctx_patch, pytest.raises(ToolError, match="destructive"):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "drop_procedure",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.usp_load"},
         )
@@ -414,7 +428,8 @@ async def test_drop_procedure_blocked_in_readonly(
     mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with ctx_patch, pytest.raises(ToolError, match="read-only"):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "drop_procedure",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.usp_load"},
         )
@@ -438,7 +453,8 @@ async def test_drop_procedure_on_sql_endpoint_no_error(
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "drop_procedure",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.usp_load"},
         )
@@ -474,7 +490,8 @@ async def test_transfer_procedure_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=moved),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "transfer_procedure",
             {
                 "workspace": _WS_NAME,
@@ -502,7 +519,8 @@ async def test_transfer_procedure_forwards_args(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.procedures.transfer_procedure", new=mock_transfer),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "transfer_procedure",
             {
                 "workspace": _WS_NAME,
@@ -533,7 +551,8 @@ async def test_transfer_procedure_blocked_in_readonly(
     mock_ctx.resolver.item = AsyncMock(return_value=item)
 
     with ctx_patch, pytest.raises(ToolError, match="read-only"):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "transfer_procedure",
             {
                 "workspace": _WS_NAME,
@@ -559,7 +578,8 @@ async def test_transfer_procedure_on_sql_endpoint_no_error(mock_ctx, ctx_patch) 
             new=AsyncMock(return_value=_make_proc()),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "transfer_procedure",
             {
                 "workspace": _WS_NAME,

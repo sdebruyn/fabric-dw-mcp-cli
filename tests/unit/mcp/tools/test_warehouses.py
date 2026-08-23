@@ -9,7 +9,7 @@ Coverage targets (lines from coverage report):
   143-153 takeover_warehouse happy path + FabricError funnel
 
 Testing strategy mirrors tests/unit/mcp/test_server.py: tools are invoked
-via ``mcp._tool_manager.call_tool(name, args)`` with the ServerContext
+via ``call_tool(mcp,name, args)`` with the ServerContext
 patched via ``ctx_patch``.
 """
 
@@ -23,6 +23,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import ItemAccess, Warehouse, WarehouseKind
+from tests.unit.mcp._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_ID,
     WH_NAME,
@@ -80,7 +81,8 @@ async def test_list_warehouses_all_workspaces_with_allowlist_raises(ctx_patch) -
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "my-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_warehouses",
             {"all_workspaces": True},
         )
@@ -102,7 +104,8 @@ async def test_list_warehouses_fabric_error_becomes_tool_error(mock_ctx, ctx_pat
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_warehouses",
             {"workspace": WS_NAME},
         )
@@ -124,7 +127,8 @@ async def test_list_warehouses_all_workspaces_true_no_workspace_succeeds(
             new=AsyncMock(return_value=[wh]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_warehouses",
             {"all_workspaces": True},
         )
@@ -143,7 +147,8 @@ async def test_list_warehouses_no_workspace_no_all_workspaces_raises_clear_error
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_warehouses",
             {},
         )
@@ -168,7 +173,8 @@ async def test_list_warehouses_workspace_provided_all_workspaces_false_succeeds(
             new=AsyncMock(return_value=[wh]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_warehouses",
             {"workspace": WS_NAME},
         )
@@ -198,7 +204,8 @@ async def test_get_warehouse_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=wh),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -225,7 +232,8 @@ async def test_get_warehouse_fabric_error_becomes_tool_error(mock_ctx, ctx_patch
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -242,7 +250,8 @@ async def test_get_warehouse_workspace_allowlist_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -269,7 +278,8 @@ async def test_create_warehouse_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=wh),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_warehouse",
             {"workspace": WS_NAME, "name": WH_NAME},
         )
@@ -292,7 +302,8 @@ async def test_create_warehouse_value_error_becomes_tool_error(mock_ctx, ctx_pat
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_warehouse",
             {"workspace": WS_NAME, "name": WH_NAME, "collation": "bad_collation"},
         )
@@ -314,7 +325,8 @@ async def test_create_warehouse_fabric_error_becomes_tool_error(mock_ctx, ctx_pa
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_warehouse",
             {"workspace": WS_NAME, "name": WH_NAME},
         )
@@ -329,7 +341,8 @@ async def test_create_warehouse_readonly_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_warehouse",
             {"workspace": WS_NAME, "name": WH_NAME},
         )
@@ -356,7 +369,8 @@ async def test_rename_warehouse_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=renamed),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "rename_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "new_name": "wh-v2"},
         )
@@ -381,7 +395,8 @@ async def test_rename_warehouse_fabric_error_becomes_tool_error(mock_ctx, ctx_pa
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "new_name": "wh-v2"},
         )
@@ -396,7 +411,8 @@ async def test_rename_warehouse_readonly_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "new_name": "wh-v2"},
         )
@@ -411,7 +427,8 @@ async def test_rename_warehouse_workspace_allowlist_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "rename_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME, "new_name": "wh-v2"},
         )
@@ -438,7 +455,8 @@ async def test_delete_warehouse_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "delete_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -464,7 +482,8 @@ async def test_delete_warehouse_fabric_error_becomes_tool_error(mock_ctx, ctx_pa
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -481,7 +500,8 @@ async def test_delete_warehouse_destructive_guard_blocks(ctx_patch) -> None:
         patch.dict(os.environ, env_without, clear=True),
         pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -496,7 +516,8 @@ async def test_delete_warehouse_readonly_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -522,7 +543,8 @@ async def test_takeover_warehouse_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "takeover_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -547,7 +569,8 @@ async def test_takeover_warehouse_fabric_error_becomes_tool_error(mock_ctx, ctx_
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "takeover_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -562,7 +585,8 @@ async def test_takeover_warehouse_readonly_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "takeover_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )
@@ -577,7 +601,8 @@ async def test_takeover_warehouse_workspace_allowlist_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "takeover_warehouse",
             {"workspace": WS_NAME, "warehouse": WH_NAME},
         )

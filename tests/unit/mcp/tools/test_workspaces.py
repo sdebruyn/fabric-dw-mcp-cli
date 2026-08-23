@@ -4,7 +4,7 @@ Coverage targets (lines from coverage report):
   53-65  set_workspace_collation: happy path, ValueError → ToolError, FabricError → ToolError
 
 Testing strategy mirrors tests/unit/mcp/test_server.py: tools are invoked
-via ``mcp._tool_manager.call_tool(name, args)`` with the ServerContext
+via ``call_tool(mcp,name, args)`` with the ServerContext
 patched via ``ctx_patch``.
 """
 
@@ -17,6 +17,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.exceptions import NotFoundError
+from tests.unit.mcp._call import call_tool
 from tests.unit.mcp.conftest import (
     WS_ID,
     WS_NAME,
@@ -40,7 +41,8 @@ async def test_set_workspace_collation_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_workspace_collation",
             {"workspace": WS_NAME, "collation": "Latin1_General_100_BIN2_UTF8"},
         )
@@ -64,7 +66,8 @@ async def test_set_workspace_collation_value_error_becomes_tool_error(mock_ctx, 
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_workspace_collation",
             {"workspace": WS_NAME, "collation": "bad_collation"},
         )
@@ -86,7 +89,8 @@ async def test_set_workspace_collation_fabric_error_becomes_tool_error(mock_ctx,
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_workspace_collation",
             {"workspace": WS_NAME, "collation": "Latin1_General_100_BIN2_UTF8"},
         )
@@ -103,7 +107,8 @@ async def test_set_workspace_collation_readonly_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_workspace_collation",
             {"workspace": WS_NAME, "collation": "Latin1_General_100_BIN2_UTF8"},
         )
@@ -118,7 +123,8 @@ async def test_set_workspace_collation_workspace_allowlist_blocks(ctx_patch) -> 
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_workspace_collation",
             {"workspace": WS_NAME, "collation": "Latin1_General_100_BIN2_UTF8"},
         )
@@ -139,7 +145,8 @@ async def test_set_workspace_collation_resolved_id_allowlist_check(mock_ctx, ctx
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_workspace_collation",
             {"workspace": WS_NAME, "collation": "Latin1_General_100_BIN2_UTF8"},
         )
@@ -176,7 +183,7 @@ async def test_list_capacities_happy_path(ctx_patch) -> None:
             new=AsyncMock(return_value=[cap]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool("list_capacities", {})
+        result = await call_tool(mcp, "list_capacities", {})
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -202,7 +209,7 @@ async def test_list_capacities_fabric_error_becomes_tool_error(ctx_patch) -> Non
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool("list_capacities", {})
+        await call_tool(mcp, "list_capacities", {})
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +232,8 @@ async def test_assign_workspace_to_capacity_happy_path(mock_ctx, ctx_patch) -> N
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "assign_workspace_to_capacity",
             {"workspace": WS_NAME, "capacity_id": _VALID_CAP_UUID},
         )
@@ -246,7 +254,8 @@ async def test_assign_workspace_to_capacity_invalid_uuid_raises_tool_error(
         ctx_patch,
         pytest.raises(ToolError, match="UUID"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "assign_workspace_to_capacity",
             {"workspace": WS_NAME, "capacity_id": "not-a-uuid"},
         )
@@ -263,7 +272,8 @@ async def test_assign_workspace_to_capacity_readonly_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "assign_workspace_to_capacity",
             {"workspace": WS_NAME, "capacity_id": _VALID_CAP_UUID},
         )
@@ -280,7 +290,8 @@ async def test_assign_workspace_to_capacity_allowlist_blocks(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "assign_workspace_to_capacity",
             {"workspace": WS_NAME, "capacity_id": _VALID_CAP_UUID},
         )
@@ -305,7 +316,8 @@ async def test_assign_workspace_to_capacity_fabric_error_becomes_tool_error(
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "assign_workspace_to_capacity",
             {"workspace": WS_NAME, "capacity_id": _VALID_CAP_UUID},
         )

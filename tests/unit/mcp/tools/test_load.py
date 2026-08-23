@@ -8,6 +8,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fabric_dw.models import CopyIntoResult
+from tests.unit.mcp._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_ID,
@@ -36,7 +37,8 @@ async def test_import_table_from_url_blocked_in_readonly(
     monkeypatch.setenv("FABRIC_MCP_READONLY", "1")
 
     with ctx_patch, pytest.raises(ToolError, match="mutating tool"):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -65,7 +67,8 @@ async def test_import_table_from_url_rejects_sql_endpoint(
     mock_ctx.resolver.item = AsyncMock(return_value=endpoint_entry)
 
     with ctx_patch, pytest.raises(ToolError, match="read-only"):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -102,7 +105,8 @@ async def test_import_table_from_url_truncate_blocked_without_destructive_flag(
         ),
         pytest.raises(ToolError, match="destructive"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -135,7 +139,8 @@ async def test_import_table_from_url_replace_raises_tool_error(
         ),
         pytest.raises(ToolError, match=r"replace.*remote"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -173,7 +178,8 @@ async def test_import_table_from_url_fail_when_table_exists(
         ),
         pytest.raises(ToolError, match="already exists"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -210,7 +216,8 @@ async def test_import_table_from_url_append_absent_table_raises(
         ),
         pytest.raises(ToolError, match="does not exist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -242,7 +249,8 @@ async def test_import_table_from_url_fail_absent_table_raises(
         ),
         pytest.raises(ToolError, match="does not exist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -282,7 +290,8 @@ async def test_import_table_from_url_append_table_exists_happy_path(
             new=AsyncMock(return_value=_make_result()),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -334,7 +343,8 @@ async def test_import_table_from_url_truncate_with_flag_succeeds(
             new=AsyncMock(return_value=_make_result()),
         ) as mock_copy,
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -388,7 +398,8 @@ async def test_import_table_from_url_truncate_failed_copy_leaves_table_intact(
         ) as mock_copy,
         pytest.raises(ToolError, match="failed"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -421,7 +432,8 @@ async def test_import_table_from_url_rejects_json_file_type(
     mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
 
     with ctx_patch, pytest.raises(ToolError):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -458,7 +470,8 @@ async def test_import_table_from_url_truncate_absent_table_raises(
         ),
         pytest.raises(ToolError, match="does not exist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -491,7 +504,8 @@ async def test_import_table_from_url_replace_absent_table_raises(
         ),
         pytest.raises(ToolError, match="does not exist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "import_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -531,7 +545,8 @@ async def test_load_table_from_url_rejects_sql_endpoint(
         ),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "load_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -567,7 +582,8 @@ async def test_load_table_from_url_absent_table_raises(
         ),
         pytest.raises(ToolError, match="does not exist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "load_table_from_url",
             {
                 "workspace": WS_NAME,
@@ -606,7 +622,8 @@ async def test_load_table_from_url_table_exists_happy_path(
             new=AsyncMock(return_value=_make_result()),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "load_table_from_url",
             {
                 "workspace": WS_NAME,

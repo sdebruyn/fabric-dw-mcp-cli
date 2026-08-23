@@ -7,10 +7,13 @@ patching :data:`fabric_dw.mcp._context._SERVER_CTX` directly.
 Usage
 -----
 ```python
+from tests.unit.mcp._call import call_tool
+
+
 async def test_something(mock_ctx):
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=UUID("..."))
     with patch("fabric_dw.mcp._context._SERVER_CTX", mock_ctx):
-        result = await mcp._tool_manager.call_tool("some_tool", {...})
+        result = await call_tool(mcp, "some_tool", {...})
     ...
 ```
 
@@ -20,8 +23,11 @@ Or use the ``ctx_patch`` fixture for the patch context manager directly::
 async def test_something(mock_ctx, ctx_patch):
     mock_ctx.resolver.workspace_id = AsyncMock(return_value=_WS_ID)
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool("some_tool", {...})
+        result = await call_tool(mcp, "some_tool", {...})
 ```
+
+See :mod:`tests.unit.mcp._call` for why ``call_tool()`` wraps a private SDK
+internal instead of the public, result-wrapping tool-call API.
 """
 
 from __future__ import annotations

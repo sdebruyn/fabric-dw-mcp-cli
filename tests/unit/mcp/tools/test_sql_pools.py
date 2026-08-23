@@ -33,6 +33,7 @@ from fabric_dw.models import (
     SqlPoolInsight,
     SqlPoolsConfiguration,
 )
+from tests.unit.mcp._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_ID,
     WH_NAME,
@@ -110,7 +111,8 @@ async def test_get_sql_pools_status_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=True),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
@@ -131,7 +133,8 @@ async def test_get_sql_pools_status_disabled(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=False),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
@@ -151,7 +154,8 @@ async def test_get_sql_pools_status_resolver_fabric_error(mock_ctx, ctx_patch) -
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
@@ -168,7 +172,8 @@ async def test_get_sql_pools_status_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
@@ -192,7 +197,8 @@ async def test_get_sql_pools_status_service_fabric_error(mock_ctx, ctx_patch) ->
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
@@ -229,7 +235,8 @@ async def test_get_sql_pools_status_broken_pool_schema_does_not_crash(mock_ctx, 
     mock_ctx.http.request = AsyncMock(return_value=mock_response)
 
     with ctx_patch:
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_sql_pools_status",
             {"workspace": _WS_NAME},
         )
@@ -258,7 +265,8 @@ async def test_list_sql_pools_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=config),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -285,7 +293,8 @@ async def test_list_sql_pools_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -302,7 +311,8 @@ async def test_list_sql_pools_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -328,7 +338,8 @@ async def test_get_sql_pool_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=config),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_sql_pool",
             {"workspace": _WS_NAME, "pool_name": "pool-x"},
         )
@@ -355,7 +366,8 @@ async def test_get_sql_pool_not_found_in_config(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_sql_pool",
             {"workspace": _WS_NAME, "pool_name": "missing-pool"},
         )
@@ -379,7 +391,8 @@ async def test_get_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_sql_pool",
             {"workspace": _WS_NAME, "pool_name": "pool-x"},
         )
@@ -396,7 +409,8 @@ async def test_get_sql_pool_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_sql_pool",
             {"workspace": _WS_NAME, "pool_name": "pool-x"},
         )
@@ -422,7 +436,8 @@ async def test_create_sql_pool_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=config),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_sql_pool",
             {"workspace": _WS_NAME, "name": "new-pool", "max_percent": 20},
         )
@@ -453,7 +468,8 @@ async def test_create_sql_pool_with_classifier(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.sql_pools.create_pool", new=mock_create),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "create_sql_pool",
             {
                 "workspace": _WS_NAME,
@@ -488,7 +504,8 @@ async def test_create_sql_pool_already_exists(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_sql_pool",
             {"workspace": _WS_NAME, "name": "dupe", "max_percent": 10},
         )
@@ -512,7 +529,8 @@ async def test_create_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_sql_pool",
             {"workspace": _WS_NAME, "name": "p", "max_percent": 10},
         )
@@ -536,7 +554,8 @@ async def test_create_sql_pool_pool_missing_after_create(mock_ctx, ctx_patch) ->
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_sql_pool",
             {"workspace": _WS_NAME, "name": "new-pool", "max_percent": 10},
         )
@@ -555,7 +574,8 @@ async def test_create_sql_pool_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_sql_pool",
             {"workspace": _WS_NAME, "name": "p", "max_percent": 10},
         )
@@ -574,7 +594,8 @@ async def test_create_sql_pool_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "create_sql_pool",
             {"workspace": _WS_NAME, "name": "p", "max_percent": 10},
         )
@@ -600,7 +621,8 @@ async def test_update_sql_pool_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=config),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "update_sql_pool",
             {"workspace": _WS_NAME, "name": "pool-1", "max_percent": 60},
         )
@@ -626,7 +648,8 @@ async def test_update_sql_pool_not_found(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_sql_pool",
             {"workspace": _WS_NAME, "name": "ghost", "max_percent": 10},
         )
@@ -650,7 +673,8 @@ async def test_update_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_sql_pool",
             {"workspace": _WS_NAME, "name": "pool-1", "max_percent": 10},
         )
@@ -673,7 +697,8 @@ async def test_update_sql_pool_missing_after_update(mock_ctx, ctx_patch) -> None
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_sql_pool",
             {"workspace": _WS_NAME, "name": "pool-1", "max_percent": 10},
         )
@@ -692,7 +717,8 @@ async def test_update_sql_pool_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "update_sql_pool",
             {"workspace": _WS_NAME, "name": "pool-1", "max_percent": 50},
         )
@@ -717,7 +743,8 @@ async def test_delete_sql_pool_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "delete_sql_pool",
             {"workspace": _WS_NAME, "pool_name": "old-pool"},
         )
@@ -742,7 +769,8 @@ async def test_delete_sql_pool_not_found(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_sql_pool",
             {"workspace": _WS_NAME, "pool_name": "ghost"},
         )
@@ -767,7 +795,8 @@ async def test_delete_sql_pool_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_sql_pool",
             {"workspace": _WS_NAME, "pool_name": "p"},
         )
@@ -786,7 +815,8 @@ async def test_delete_sql_pool_destructive_disabled(ctx_patch) -> None:
         patch.dict(os.environ, env, clear=True),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_sql_pool",
             {"workspace": _WS_NAME, "pool_name": "p"},
         )
@@ -805,7 +835,8 @@ async def test_delete_sql_pool_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1", "FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_sql_pool",
             {"workspace": _WS_NAME, "pool_name": "p"},
         )
@@ -830,7 +861,8 @@ async def test_enable_sql_pools_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=config),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "enable_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -855,7 +887,8 @@ async def test_enable_sql_pools_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "enable_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -883,7 +916,8 @@ async def test_enable_sql_pools_no_pools_defined_raises_tool_error(mock_ctx, ctx
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "enable_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -902,7 +936,8 @@ async def test_enable_sql_pools_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "enable_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -919,7 +954,8 @@ async def test_enable_sql_pools_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "enable_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -944,7 +980,8 @@ async def test_disable_sql_pools_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=config),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "disable_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -969,7 +1006,8 @@ async def test_disable_sql_pools_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "disable_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -986,7 +1024,8 @@ async def test_disable_sql_pools_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "disable_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -1003,7 +1042,8 @@ async def test_disable_sql_pools_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "disable_sql_pools",
             {"workspace": _WS_NAME},
         )
@@ -1030,7 +1070,8 @@ async def test_list_sql_pool_insights_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[insight]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_sql_pool_insights",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME},
         )
@@ -1053,7 +1094,8 @@ async def test_list_sql_pool_insights_with_since_until(mock_ctx, ctx_patch) -> N
         ctx_patch,
         patch("fabric_dw.services.query_insights.list_sql_pool_insights", new=mock_svc),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_sql_pool_insights",
             {
                 "workspace": _WS_NAME,
@@ -1082,7 +1124,8 @@ async def test_list_sql_pool_insights_bad_since(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_sql_pool_insights",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME, "since": "not-a-date"},
         )
@@ -1100,7 +1143,8 @@ async def test_list_sql_pool_insights_bad_until(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_sql_pool_insights",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME, "until": "bad-date"},
         )
@@ -1126,7 +1170,8 @@ async def test_list_sql_pool_insights_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_sql_pool_insights",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME},
         )
@@ -1143,7 +1188,8 @@ async def test_list_sql_pool_insights_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_sql_pool_insights",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME},
         )

@@ -36,6 +36,7 @@ from fabric_dw.models import (
     QueryLock,
     RunningQuery,
 )
+from tests.unit.mcp._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_ID,
     WH_NAME,
@@ -165,7 +166,8 @@ async def test_list_running_queries_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[query]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -194,7 +196,8 @@ async def test_list_running_queries_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -211,7 +214,8 @@ async def test_list_running_queries_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -232,7 +236,8 @@ async def test_list_running_queries_empty(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -261,7 +266,8 @@ async def test_list_connections_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[conn]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_connections",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -290,7 +296,8 @@ async def test_list_connections_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_connections",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -307,7 +314,8 @@ async def test_list_connections_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_connections",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -333,7 +341,8 @@ async def test_kill_session_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "kill_session",
             {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 42},
         )
@@ -359,7 +368,8 @@ async def test_kill_session_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "kill_session",
             {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 42},
         )
@@ -383,7 +393,8 @@ async def test_kill_session_value_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "kill_session",
             {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 99},
         )
@@ -402,7 +413,8 @@ async def test_kill_session_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "kill_session",
             {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 5},
         )
@@ -421,7 +433,8 @@ async def test_kill_session_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "kill_session",
             {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 5},
         )
@@ -438,7 +451,8 @@ async def test_kill_session_rejects_non_positive_session_id(ctx_patch, bad_sessi
         ctx_patch,
         pytest.raises(ToolError, match="greater than or equal to 1"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "kill_session",
             {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": bad_session_id},
         )
@@ -459,7 +473,8 @@ async def test_kill_session_accepts_positive_session_id(mock_ctx, ctx_patch) -> 
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "kill_session",
             {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 1},
         )
@@ -488,7 +503,8 @@ async def test_list_request_history_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[hist]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_request_history",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -512,7 +528,8 @@ async def test_list_request_history_with_since_until(mock_ctx, ctx_patch) -> Non
         ctx_patch,
         patch("fabric_dw.services.query_insights.list_request_history", new=mock_svc),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_request_history",
             {
                 "workspace": _WS_NAME,
@@ -540,7 +557,8 @@ async def test_list_request_history_bad_since(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_request_history",
             {"workspace": _WS_NAME, "item": _WH_NAME, "since": "not-a-date"},
         )
@@ -558,7 +576,8 @@ async def test_list_request_history_bad_until(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_request_history",
             {"workspace": _WS_NAME, "item": _WH_NAME, "until": "bad-ts"},
         )
@@ -584,7 +603,8 @@ async def test_list_request_history_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_request_history",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -601,7 +621,8 @@ async def test_list_request_history_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_request_history",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -628,7 +649,8 @@ async def test_list_session_history_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[sess]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_session_history",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -652,7 +674,8 @@ async def test_list_session_history_with_since_until(mock_ctx, ctx_patch) -> Non
         ctx_patch,
         patch("fabric_dw.services.query_insights.list_session_history", new=mock_svc),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_session_history",
             {
                 "workspace": _WS_NAME,
@@ -678,7 +701,8 @@ async def test_list_session_history_bad_since(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_session_history",
             {"workspace": _WS_NAME, "item": _WH_NAME, "since": "bad-ts"},
         )
@@ -696,7 +720,8 @@ async def test_list_session_history_bad_until(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_session_history",
             {"workspace": _WS_NAME, "item": _WH_NAME, "until": "bad-ts"},
         )
@@ -722,7 +747,8 @@ async def test_list_session_history_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_session_history",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -739,7 +765,8 @@ async def test_list_session_history_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_session_history",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -766,7 +793,8 @@ async def test_list_frequent_queries_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[fq]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_frequent_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -790,7 +818,8 @@ async def test_list_frequent_queries_with_since_until(mock_ctx, ctx_patch) -> No
         ctx_patch,
         patch("fabric_dw.services.query_insights.list_frequent_queries", new=mock_svc),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_frequent_queries",
             {
                 "workspace": _WS_NAME,
@@ -817,7 +846,8 @@ async def test_list_frequent_queries_bad_since(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_frequent_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME, "since": "bad"},
         )
@@ -835,7 +865,8 @@ async def test_list_frequent_queries_bad_until(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_frequent_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME, "until": "bad"},
         )
@@ -861,7 +892,8 @@ async def test_list_frequent_queries_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_frequent_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -878,7 +910,8 @@ async def test_list_frequent_queries_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_frequent_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -905,7 +938,8 @@ async def test_list_long_running_queries_happy_path(mock_ctx, ctx_patch) -> None
             new=AsyncMock(return_value=[lrq]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_long_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -929,7 +963,8 @@ async def test_list_long_running_queries_with_since_until(mock_ctx, ctx_patch) -
         ctx_patch,
         patch("fabric_dw.services.query_insights.list_long_running_queries", new=mock_svc),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_long_running_queries",
             {
                 "workspace": _WS_NAME,
@@ -956,7 +991,8 @@ async def test_list_long_running_queries_bad_since(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_long_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME, "since": "bad"},
         )
@@ -974,7 +1010,8 @@ async def test_list_long_running_queries_bad_until(ctx_patch) -> None:
         ctx_patch,
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_long_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME, "until": "bad"},
         )
@@ -1000,7 +1037,8 @@ async def test_list_long_running_queries_fabric_error(mock_ctx, ctx_patch) -> No
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_long_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1017,7 +1055,8 @@ async def test_list_long_running_queries_workspace_not_allowed(ctx_patch) -> Non
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_long_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1058,7 +1097,8 @@ async def test_list_running_queries_raw_driver_exc_raises_tool_error(mock_ctx, c
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_running_queries",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1085,7 +1125,8 @@ async def test_list_connections_raw_driver_exc_raises_tool_error(mock_ctx, ctx_p
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_connections",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1112,7 +1153,8 @@ async def test_kill_session_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "kill_session",
             {"workspace": _WS_NAME, "item": _WH_NAME, "session_id": 42},
         )
@@ -1160,7 +1202,8 @@ async def test_list_locks_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[lock]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_locks",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1187,7 +1230,8 @@ async def test_list_locks_returns_dicts(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[lock]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_locks",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1214,7 +1258,8 @@ async def test_list_locks_fabric_error_raises_tool_error(mock_ctx, ctx_patch) ->
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_locks",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1235,7 +1280,8 @@ async def test_list_locks_empty_result(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=[]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "list_locks",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1260,7 +1306,8 @@ async def test_list_locks_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) 
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_locks",
             {"workspace": _WS_NAME, "item": _WH_NAME},
         )
@@ -1305,7 +1352,8 @@ async def test_get_request_detail_happy_path_found(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=hist),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_request_detail",
             {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": _DIST_STMT_ID},
         )
@@ -1330,7 +1378,8 @@ async def test_get_request_detail_happy_path_not_found(mock_ctx, ctx_patch) -> N
             new=AsyncMock(return_value=None),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_request_detail",
             {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": "nonexistent-id"},
         )
@@ -1356,7 +1405,8 @@ async def test_get_request_detail_fabric_error(mock_ctx, ctx_patch) -> None:
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_request_detail",
             {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": _DIST_STMT_ID},
         )
@@ -1380,7 +1430,8 @@ async def test_get_request_detail_permission_denied(mock_ctx, ctx_patch) -> None
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_request_detail",
             {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": _DIST_STMT_ID},
         )
@@ -1397,7 +1448,8 @@ async def test_get_request_detail_workspace_not_allowed(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-ws"}),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_request_detail",
             {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": _DIST_STMT_ID},
         )
@@ -1420,7 +1472,8 @@ async def test_get_request_detail_raw_driver_exc_raises_tool_error(mock_ctx, ctx
         ),
         pytest.raises(ToolError) as exc_info,
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_request_detail",
             {"workspace": _WS_NAME, "item": _WH_NAME, "dist_statement_id": _DIST_STMT_ID},
         )

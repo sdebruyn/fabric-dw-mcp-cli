@@ -20,6 +20,8 @@ from uuid import UUID
 
 import pytest
 
+from tests.unit.mcp._call import call_tool
+
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
@@ -891,7 +893,8 @@ async def test_execute_sql_max_rows_truncation() -> None:
             new=AsyncMock(return_value=sql_result),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "execute_sql",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1", "max_rows": 10},
         )
@@ -942,7 +945,8 @@ async def test_execute_sql_no_truncation_when_under_limit() -> None:
             new=AsyncMock(return_value=sql_result),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "execute_sql",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1", "max_rows": 100},
         )
@@ -967,7 +971,8 @@ async def test_execute_sql_blocked_by_readonly_mode() -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "execute_sql",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "DROP TABLE dbo.t"},
         )
@@ -1011,7 +1016,8 @@ async def test_execute_sql_allowed_in_readonly_mode_for_select() -> None:
             new=AsyncMock(return_value=sql_result),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "execute_sql",
             {"workspace": _WS_NAME, "item": _WH_NAME, "query": "SELECT 1"},
         )
@@ -1036,7 +1042,8 @@ async def test_delete_warehouse_blocked_without_destructive_flag() -> None:
         patch.dict(os.environ, env_copy, clear=True),
         pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_warehouse",
             {"workspace": _WS_NAME, "warehouse": _WH_NAME},
         )
@@ -1053,7 +1060,8 @@ async def test_delete_snapshot_blocked_without_destructive_flag() -> None:
         patch.dict(os.environ, env_copy, clear=True),
         pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "delete_snapshot",
             {"workspace": _WS_NAME, "snapshot": "snap-1"},
         )
@@ -1086,7 +1094,8 @@ async def test_get_workspace_blocked_by_workspace_allowlist() -> None:
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "allowed-ws"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_workspace",
             {"workspace": "forbidden-ws"},
         )
@@ -1112,7 +1121,8 @@ async def test_list_warehouses_all_workspaces_blocked_when_allowlist_set() -> No
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "prod"}),
         pytest.raises(ToolError, match="all_workspaces"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_warehouses",
             {"workspace": _WS_NAME, "all_workspaces": True},
         )
@@ -1138,7 +1148,8 @@ async def test_list_sql_endpoints_all_workspaces_blocked_when_allowlist_set() ->
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "prod"}),
         pytest.raises(ToolError, match="all_workspaces"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "list_sql_endpoints",
             {"workspace": _WS_NAME, "all_workspaces": True},
         )
@@ -1214,7 +1225,8 @@ async def test_drop_view_blocked_without_destructive_flag() -> None:
         patch.dict(os.environ, env_copy, clear=True),
         pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "drop_view",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -1252,7 +1264,8 @@ async def test_drop_view_allowed_with_destructive_flag() -> None:
         patch.dict(os.environ, {"FABRIC_MCP_ALLOW_DESTRUCTIVE": "1"}),
         patch("fabric_dw.services.views.drop_view", new=AsyncMock(return_value=None)),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "drop_view",
             {"workspace": _WS_NAME, "item": _WH_NAME, "qualified_name": "dbo.vw_sales"},
         )
@@ -1276,7 +1289,8 @@ async def test_refresh_sql_endpoint_metadata_recreate_blocked_without_destructiv
         patch.dict(os.environ, env_copy, clear=True),
         pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "refresh_sql_endpoint_metadata",
             {"workspace": _WS_NAME, "endpoint": _WH_NAME, "recreate_tables": True},
         )
@@ -1319,7 +1333,8 @@ async def test_refresh_sql_endpoint_metadata_no_recreate_allowed_without_destruc
             new=AsyncMock(return_value=[]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "refresh_sql_endpoint_metadata",
             {"workspace": _WS_NAME, "endpoint": _WH_NAME, "recreate_tables": False},
         )
@@ -1363,7 +1378,7 @@ async def test_list_workspaces_filtered_by_allowlist() -> None:
             new=AsyncMock(return_value=[allowed_ws, forbidden_ws]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool("list_workspaces", {})
+        result = await call_tool(mcp, "list_workspaces", {})
 
     assert len(result) == 1
     assert result[0]["displayName"] == "prod"
@@ -1397,7 +1412,7 @@ async def test_list_workspaces_filtered_by_guid_allowlist() -> None:
             new=AsyncMock(return_value=[allowed_ws, forbidden_ws]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool("list_workspaces", {})
+        result = await call_tool(mcp, "list_workspaces", {})
 
     assert len(result) == 1
     assert result[0]["displayName"] == "prod"
@@ -1433,7 +1448,7 @@ async def test_list_workspaces_no_filter_when_allowlist_unset() -> None:
             new=AsyncMock(return_value=[ws1, ws2]),
         ),
     ):
-        result = await mcp._tool_manager.call_tool("list_workspaces", {})
+        result = await call_tool(mcp, "list_workspaces", {})
 
     assert len(result) == 2
 
@@ -1573,7 +1588,8 @@ async def test_get_workspace_blocked_by_config_allowlist_env_unset() -> None:
         patch.dict(os.environ, env_without_workspaces, clear=True),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_workspace",
             {"workspace": "forbidden-ws"},
         )

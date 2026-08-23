@@ -12,6 +12,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from fabric_dw.exceptions import NotFoundError
 from fabric_dw.models import WarehouseSettings
 from fabric_dw.services.settings import RETENTION_MAX, RETENTION_MIN
+from tests.unit.mcp._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
     WS_NAME,
@@ -55,7 +56,8 @@ async def test_get_warehouse_settings_happy_path(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=settings),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "get_warehouse_settings",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -79,7 +81,8 @@ async def test_get_warehouse_settings_fabric_error_becomes_tool_error(mock_ctx, 
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_warehouse_settings",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -94,7 +97,8 @@ async def test_get_warehouse_settings_workspace_allowlist_blocks(ctx_patch) -> N
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "get_warehouse_settings",
             {"workspace": WS_NAME, "item": WH_NAME},
         )
@@ -117,7 +121,8 @@ async def test_set_result_set_caching_enable(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.settings.set_result_set_caching", new=mock_set),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_result_set_caching",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
         )
@@ -142,7 +147,8 @@ async def test_set_result_set_caching_disable(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.settings.set_result_set_caching", new=mock_set),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_result_set_caching",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": False},
         )
@@ -161,7 +167,8 @@ async def test_set_result_set_caching_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_result_set_caching",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
         )
@@ -176,7 +183,8 @@ async def test_set_result_set_caching_workspace_allowlist_blocks(ctx_patch) -> N
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_result_set_caching",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
         )
@@ -195,7 +203,8 @@ async def test_set_result_set_caching_fabric_error_becomes_tool_error(mock_ctx, 
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_result_set_caching",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
         )
@@ -218,7 +227,8 @@ async def test_set_time_travel_retention_happy_path(mock_ctx, ctx_patch) -> None
         ctx_patch,
         patch("fabric_dw.services.settings.set_time_travel_retention", new=mock_set),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": WH_NAME, "days": 30},
         )
@@ -248,7 +258,8 @@ async def test_set_time_travel_retention_min_bound(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=settings),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": WH_NAME, "days": RETENTION_MIN},
         )
@@ -270,7 +281,8 @@ async def test_set_time_travel_retention_max_bound(mock_ctx, ctx_patch) -> None:
             new=AsyncMock(return_value=settings),
         ),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": WH_NAME, "days": RETENTION_MAX},
         )
@@ -286,7 +298,8 @@ async def test_set_time_travel_retention_below_min_raises_tool_error(ctx_patch) 
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": WH_NAME, "days": RETENTION_MIN - 1},
         )
@@ -300,7 +313,8 @@ async def test_set_time_travel_retention_above_max_raises_tool_error(ctx_patch) 
         ctx_patch,
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": WH_NAME, "days": RETENTION_MAX + 1},
         )
@@ -321,7 +335,8 @@ async def test_set_time_travel_retention_fabric_error_becomes_tool_error(
         ),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": WH_NAME, "days": 30},
         )
@@ -336,7 +351,8 @@ async def test_set_time_travel_retention_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": WH_NAME, "days": 30},
         )
@@ -351,7 +367,8 @@ async def test_set_time_travel_retention_workspace_allowlist_blocks(ctx_patch) -
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": WH_NAME, "days": 30},
         )
@@ -391,7 +408,8 @@ async def test_set_result_set_caching_forwards_kind_to_service(mock_ctx, ctx_pat
         ctx_patch,
         patch("fabric_dw.services.settings.set_result_set_caching", new=mock_set),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_result_set_caching",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
         )
@@ -421,7 +439,8 @@ async def test_set_result_set_caching_rejects_sql_endpoint_via_real_guard(
         patch("fabric_dw.sql.open_connection", side_effect=Exception("should not connect")),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_result_set_caching",
             {"workspace": WS_NAME, "item": "MySqlEndpoint", "enabled": True},
         )
@@ -440,7 +459,8 @@ async def test_set_time_travel_retention_forwards_kind_to_service(mock_ctx, ctx_
         ctx_patch,
         patch("fabric_dw.services.settings.set_time_travel_retention", new=mock_set),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": WH_NAME, "days": 14},
         )
@@ -469,7 +489,8 @@ async def test_set_time_travel_retention_rejects_sql_endpoint_via_real_guard(
         patch("fabric_dw.sql.open_connection", side_effect=Exception("should not connect")),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_time_travel_retention",
             {"workspace": WS_NAME, "item": "MySqlEndpoint", "days": 14},
         )
@@ -492,7 +513,8 @@ async def test_set_data_lake_log_publishing_enable(mock_ctx, ctx_patch) -> None:
         ctx_patch,
         patch("fabric_dw.services.settings.set_data_lake_log_publishing", new=mock_set),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_data_lake_log_publishing",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
         )
@@ -516,7 +538,8 @@ async def test_set_data_lake_log_publishing_disable(mock_ctx, ctx_patch) -> None
         ctx_patch,
         patch("fabric_dw.services.settings.set_data_lake_log_publishing", new=mock_set),
     ):
-        result = await mcp._tool_manager.call_tool(
+        result = await call_tool(
+            mcp,
             "set_data_lake_log_publishing",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": False},
         )
@@ -535,7 +558,8 @@ async def test_set_data_lake_log_publishing_readonly_blocked(ctx_patch) -> None:
         patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
         pytest.raises(ToolError, match="read-only"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_data_lake_log_publishing",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
         )
@@ -550,7 +574,8 @@ async def test_set_data_lake_log_publishing_workspace_allowlist_blocks(ctx_patch
         patch.dict(os.environ, {"FABRIC_MCP_WORKSPACES": "other-workspace"}),
         pytest.raises(ToolError, match="allowlist"),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_data_lake_log_publishing",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
         )
@@ -569,7 +594,8 @@ async def test_set_data_lake_log_publishing_forwards_kind_to_service(mock_ctx, c
         ctx_patch,
         patch("fabric_dw.services.settings.set_data_lake_log_publishing", new=mock_set),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_data_lake_log_publishing",
             {"workspace": WS_NAME, "item": WH_NAME, "enabled": True},
         )
@@ -594,7 +620,8 @@ async def test_set_data_lake_log_publishing_rejects_sql_endpoint_via_real_guard(
         patch("fabric_dw.sql.open_connection", side_effect=Exception("should not connect")),
         pytest.raises(ToolError),
     ):
-        await mcp._tool_manager.call_tool(
+        await call_tool(
+            mcp,
             "set_data_lake_log_publishing",
             {"workspace": WS_NAME, "item": "MySqlEndpoint", "enabled": True},
         )
