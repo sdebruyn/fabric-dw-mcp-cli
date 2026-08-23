@@ -734,7 +734,7 @@ dev = [
     { name = "pytest-socket", specifier = ">=0.8.0" },
     { name = "pytest-xdist", specifier = ">=3.5" },
     { name = "respx", specifier = ">=0.23" },
-    { name = "ruff", specifier = ">=0.15,<0.16" },
+    { name = "ruff", specifier = ">=0.15,<0.17" },
     { name = "ty", specifier = "==0.0.71" },
     { name = "types-pyyaml", specifier = ">=6.0" },
 ]
