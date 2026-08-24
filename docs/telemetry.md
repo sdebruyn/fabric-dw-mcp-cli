@@ -79,9 +79,20 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 ### No spans or metrics are ever exported
 
 `fabric-dw` emits telemetry as OpenTelemetry **log records**, never as spans. It
-sets `OTEL_TRACES_EXPORTER=none` and `OTEL_METRICS_EXPORTER=none` before
-initialising Application Insights, so no span exporter and no metric exporter is
+forces `OTEL_TRACES_EXPORTER=none` and `OTEL_METRICS_EXPORTER=none` around the
+Application Insights setup call, so no span exporter and no metric exporter is
 built. Only the logs pipeline, which carries the `customEvents` above, is active.
+
+Those two variables are set unconditionally rather than deferring to a value you
+may already have in your environment, and they are restored to whatever they were
+immediately afterwards, so nothing else in your process is affected. The reason
+they are not merely defaulted is that the Azure Monitor library reads them only
+to check for the exact string `none`: any other value, including an empty string
+or `otlp`, leaves the pipeline on and installs the **Azure Monitor** exporter
+rather than the one you asked for. Deferring would therefore have handed you no
+control while quietly turning the export path back on. `OTEL_LOGS_EXPORTER` is
+left alone: setting it to `none` yourself switches off `fabric-dw`'s own events,
+which is a choice worth respecting.
 
 This matters because the MCP Python SDK installs an OpenTelemetry middleware on
 every server it creates, and that middleware emits one span per inbound protocol

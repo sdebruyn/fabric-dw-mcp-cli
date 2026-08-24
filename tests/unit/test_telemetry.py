@@ -32,6 +32,39 @@ def _reload_telemetry() -> Any:
     return importlib.import_module("fabric_dw.telemetry")
 
 
+# Environment variables that ``_get_tracer()`` writes to ``os.environ``. Tests in
+# this module call it for real, so without a restore these escape into the rest
+# of the pytest process.
+_SDK_ENV_VARS = (
+    "OTEL_TRACES_EXPORTER",
+    "OTEL_METRICS_EXPORTER",
+    "OTEL_LOGS_EXPORTER",
+    "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_sdk_env() -> Generator[None, None, None]:
+    """Snapshot and restore the env vars ``_get_tracer()`` writes.
+
+    ``monkeypatch.delenv(..., raising=False)`` records nothing when the key is
+    already absent, so a subsequent real assignment inside ``_get_tracer()`` has
+    no teardown and leaks process-globally. Nothing breaks today, but it is
+    state escaping a test, and it would mask a future test written without its
+    own defence. Autouse so the pre-existing tests that call ``_get_tracer()``
+    are covered too, not just the ones added for #1043.
+    """
+    saved = {k: os.environ.get(k) for k in _SDK_ENV_VARS}
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 # ---------------------------------------------------------------------------
 # Opt-out: telemetry_enabled()
 # ---------------------------------------------------------------------------
@@ -1134,10 +1167,20 @@ def test_get_tracer_passes_enable_performance_counters_false(
 # false assurance as asserting on the kwarg, just relocated.
 #
 # What they assert instead is the decisive fact, end to end and without a
-# network: the environment ``_get_tracer()`` establishes, fed through the REAL
+# network: the environment the library sees AT CALL TIME, fed through the REAL
 # azure-monitor-opentelemetry decision functions, resolves to "tracing off" and
 # "metrics off". That composition is what determines whether an exporter gets
 # built, so it cannot pass while the pipeline is live.
+#
+# Call time matters: the exporter variables are set only for the duration of the
+# ``configure_azure_monitor`` call and restored immediately afterwards, so
+# reading ``os.environ`` after ``_get_tracer()`` returns proves nothing.
+
+_WATCHED_OTEL_VARS = (
+    "OTEL_TRACES_EXPORTER",
+    "OTEL_METRICS_EXPORTER",
+    "OTEL_LOGS_EXPORTER",
+)
 #
 # The real-process check was run by hand against the locked versions: point
 # telemetry._DEFAULT_CONNECTION_STRING at an unroutable IngestionEndpoint, call
@@ -1148,41 +1191,96 @@ def test_get_tracer_passes_enable_performance_counters_false(
 # because of the autouse mock described above.
 
 
-def _env_after_get_tracer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
-    """Run ``_get_tracer()`` and return the module, leaving its env vars in place.
+def _run_get_tracer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    preset: dict[str, str] | None = None,
+) -> tuple[Any, dict[str, str | None], dict[str, str | None]]:
+    """Run ``_get_tracer()`` and capture the environment as the library would see it.
 
-    ``configure_azure_monitor`` is mocked by the autouse fixture, but the
-    ``os.environ.setdefault`` calls under test run before it, so the environment
-    this leaves behind is exactly the one the real library would have read.
+    The exporter variables are now set only for the duration of the
+    ``configure_azure_monitor`` call and restored immediately afterwards, so
+    reading ``os.environ`` after the fact proves nothing. Instead this snapshots
+    the variables from inside the mocked call, which is the exact moment the real
+    library reads them.
+
+    *preset* seeds the environment beforehand, to exercise the case where the
+    caller's process already has these variables set.
+
+    The autouse ``_mock_configure_azure_monitor`` fixture is resolved through
+    *request* rather than injected by name, because its value is needed (to hang
+    a side effect on) and a leading-underscore fixture parameter trips PT019.
+
+    Returns ``(module, env_at_call_time, env_after)``.
     """
+    configure_mock = request.getfixturevalue("_mock_configure_azure_monitor")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
     monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-    # setdefault means a pre-existing value would win, which would make these
-    # tests pass for the wrong reason. Clear all three first.
-    monkeypatch.delenv("OTEL_TRACES_EXPORTER", raising=False)
-    monkeypatch.delenv("OTEL_METRICS_EXPORTER", raising=False)
-    monkeypatch.delenv("OTEL_LOGS_EXPORTER", raising=False)
+
+    # Start from a known-clean slate so a value inherited from the surrounding
+    # process cannot make these tests pass for the wrong reason. Teardown is
+    # handled by the autouse _restore_sdk_env fixture, which also covers the
+    # assignments _get_tracer() makes directly to os.environ.
+    for key in _WATCHED_OTEL_VARS:
+        monkeypatch.delenv(key, raising=False)
+    for key, value in (preset or {}).items():
+        monkeypatch.setenv(key, value)
+
+    captured: dict[str, str | None] = {}
+
+    def _snapshot(**_kwargs: object) -> None:
+        captured.update({k: os.environ.get(k) for k in _WATCHED_OTEL_VARS})
+
+    configure_mock.side_effect = _snapshot
 
     mod = _reload_telemetry()
     mod._sdk_initialised = False
     mod._tracer = None
     mod._otel_logger = None
     mod._get_tracer()
-    return mod
+
+    after = {k: os.environ.get(k) for k in _WATCHED_OTEL_VARS}
+    return mod, captured, after
+
+
+def _resolves_disabled(kind: str, env_at_call: dict[str, str | None]) -> bool:
+    """Ask the REAL library whether *kind* resolves to disabled for that environment."""
+    from azure.monitor.opentelemetry._utils import configurations as _cfg  # noqa: PLC0415
+
+    fn = {
+        "tracing": _cfg._default_disable_tracing,
+        "metrics": _cfg._default_disable_metrics,
+        "logging": _cfg._default_disable_logging,
+    }[kind]
+    var = {
+        "tracing": "OTEL_TRACES_EXPORTER",
+        "metrics": "OTEL_METRICS_EXPORTER",
+        "logging": "OTEL_LOGS_EXPORTER",
+    }[kind]
+    with patch.dict(os.environ, {}, clear=False):
+        value = env_at_call.get(var)
+        if value is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = value
+        resolved: dict[str, Any] = {f"disable_{kind}": True}
+        fn(resolved)
+        return bool(resolved[f"disable_{kind}"])
 
 
 def test_get_tracer_disables_the_trace_pipeline_effectively(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    """The environment _get_tracer() sets must make the real library disable tracing.
+    """The environment the library sees must make it disable tracing.
 
     Asserting that ``configure_azure_monitor`` merely RECEIVES
     ``disable_tracing=True`` would be worthless: the library throws that value
     away. ``_get_configurations`` copies caller kwargs into a dict and then runs
     ``_default_disable_tracing``, which assigns unconditionally and consults only
-    ``OTEL_TRACES_EXPORTER``. So this feeds our environment through that real
-    decision function and asserts the outcome.
+    ``OTEL_TRACES_EXPORTER``. So this captures the environment at call time and
+    feeds it through that real decision function.
 
     Why it matters: MCP Python SDK v2 installs an OpenTelemetry middleware on
     every server unconditionally, emitting one SERVER span per inbound protocol
@@ -1192,22 +1290,12 @@ def test_get_tracer_disables_the_trace_pipeline_effectively(
 
     Do not "simplify" this into an assertion about kwargs.
     """
-    from azure.monitor.opentelemetry._utils.configurations import (  # noqa: PLC0415
-        _default_disable_tracing,
-    )
-
-    mod = _env_after_get_tracer(monkeypatch, tmp_path)
+    mod, at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request)
     try:
-        assert os.environ.get("OTEL_TRACES_EXPORTER") == "none", (
-            "_get_tracer must set OTEL_TRACES_EXPORTER=none; it is the only thing "
-            "that actually disables the trace pipeline (#1043)."
-        )
-        effective: dict[str, Any] = {"disable_tracing": True}
-        _default_disable_tracing(effective)
-        assert effective["disable_tracing"] is True, (
-            "The real library resolves tracing as ENABLED under the environment "
-            "_get_tracer() leaves behind, so MCP protocol spans would be exported "
-            "to Application Insights."
+        assert at_call["OTEL_TRACES_EXPORTER"] == "none"
+        assert _resolves_disabled("tracing", at_call), (
+            "The real library resolves tracing as ENABLED, so MCP protocol spans "
+            "would be exported to Application Insights."
         )
     finally:
         mod._sdk_initialised = False
@@ -1216,28 +1304,18 @@ def test_get_tracer_disables_the_trace_pipeline_effectively(
 
 
 def test_get_tracer_disables_the_metrics_pipeline_effectively(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """Same for metrics, which has been silently enabled all along.
 
     ``disable_metrics=True`` has never worked, for the identical reason, so this
     project has been starting a metrics pipeline it documents as disabled.
     """
-    from azure.monitor.opentelemetry._utils.configurations import (  # noqa: PLC0415
-        _default_disable_metrics,
-    )
-
-    mod = _env_after_get_tracer(monkeypatch, tmp_path)
+    mod, at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request)
     try:
-        assert os.environ.get("OTEL_METRICS_EXPORTER") == "none", (
-            "_get_tracer must set OTEL_METRICS_EXPORTER=none; the disable_metrics "
-            "kwarg is discarded by the library (#1043)."
-        )
-        effective: dict[str, Any] = {"disable_metrics": True}
-        _default_disable_metrics(effective)
-        assert effective["disable_metrics"] is True, (
-            "The real library resolves metrics as ENABLED under the environment "
-            "_get_tracer() leaves behind."
+        assert at_call["OTEL_METRICS_EXPORTER"] == "none"
+        assert _resolves_disabled("metrics", at_call), (
+            "The real library resolves metrics as ENABLED."
         )
     finally:
         mod._sdk_initialised = False
@@ -1245,31 +1323,113 @@ def test_get_tracer_disables_the_metrics_pipeline_effectively(
         mod._otel_logger = None
 
 
+@pytest.mark.parametrize("preset", ["otlp", "console", "", "azure_monitor", "NONE_BUT_TYPO"])
+def test_preexisting_exporter_env_cannot_reopen_the_export_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    preset: str,
+) -> None:
+    """A value already in the environment must not re-enable the export path.
+
+    This is the reason these variables are hard-set rather than defaulted. The
+    library treats anything other than the exact string ``none`` as "exporter
+    enabled", and what it then installs is the AzureMonitorTraceExporter pointed
+    at the maintainer's ingestion endpoint, NOT whatever the operator named. With
+    ``setdefault`` this test fails for every parameter below, and a user with
+    ``OTEL_TRACES_EXPORTER`` set for their own stack silently ships MCP protocol
+    spans to a third party.
+
+    The empty string is included deliberately: it is falsy but not ``none``, and
+    it is what an unset-looking ``export OTEL_TRACES_EXPORTER=`` produces.
+    """
+    mod, at_call, after = _run_get_tracer(
+        monkeypatch,
+        tmp_path,
+        request,
+        preset={"OTEL_TRACES_EXPORTER": preset, "OTEL_METRICS_EXPORTER": preset},
+    )
+    try:
+        assert _resolves_disabled("tracing", at_call), (
+            f"OTEL_TRACES_EXPORTER={preset!r} in the caller's environment left the "
+            "trace pipeline ENABLED, so the Azure exporter would ship MCP protocol "
+            "spans to Application Insights."
+        )
+        assert _resolves_disabled("metrics", at_call), (
+            f"OTEL_METRICS_EXPORTER={preset!r} left the metrics pipeline ENABLED."
+        )
+        # ...and the caller's environment is handed back untouched, because
+        # fabric-dw can be embedded as a library.
+        assert after["OTEL_TRACES_EXPORTER"] == preset
+        assert after["OTEL_METRICS_EXPORTER"] == preset
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_get_tracer_restores_the_exporter_env_when_it_was_unset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """With nothing pre-set, the variables must be absent again afterwards.
+
+    fabric-dw can be imported into a host process; it must not leave OTel
+    configuration behind for whatever else runs there.
+    """
+    mod, at_call, after = _run_get_tracer(monkeypatch, tmp_path, request)
+    try:
+        assert at_call["OTEL_TRACES_EXPORTER"] == "none", "set during the call"
+        assert after["OTEL_TRACES_EXPORTER"] is None, "and removed again afterwards"
+        assert after["OTEL_METRICS_EXPORTER"] is None
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
 def test_get_tracer_leaves_the_logs_pipeline_enabled(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """Disabling traces and metrics must NOT disable logs.
 
     customEvents are emitted as OTel log records, so the logs pipeline is the one
-    that has to stay on. Without this, adding ``OTEL_LOGS_EXPORTER=none`` to the
-    block above (an easy symmetry mistake) would silently kill all telemetry
+    that has to stay on. Without this, adding ``OTEL_LOGS_EXPORTER`` to the
+    hard-set block (an easy symmetry mistake) would silently kill all telemetry
     rather than just the parts we do not want.
     """
-    from azure.monitor.opentelemetry._utils.configurations import (  # noqa: PLC0415
-        _default_disable_logging,
-    )
-
-    mod = _env_after_get_tracer(monkeypatch, tmp_path)
+    mod, at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request)
     try:
-        assert os.environ.get("OTEL_LOGS_EXPORTER") != "none", (
-            "_get_tracer must NOT disable the logs exporter; customEvents ride on it."
+        assert at_call["OTEL_LOGS_EXPORTER"] != "none", (
+            "_get_tracer must never disable the logs exporter; customEvents ride on it."
         )
-        effective: dict[str, Any] = {"disable_logging": False}
-        _default_disable_logging(effective)
-        assert effective["disable_logging"] is False, (
+        assert not _resolves_disabled("logging", at_call), (
             "The logs pipeline resolved to DISABLED, which would drop every "
             "customEvent this project emits."
         )
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_user_can_still_disable_our_own_events_via_otel_logs_exporter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """``OTEL_LOGS_EXPORTER=none`` is respected, unlike the trace/metric ones.
+
+    That asymmetry is deliberate and worth pinning: switching off the logs
+    exporter switches off *our* telemetry, which is the safe direction, so the
+    user's value is left alone.
+    """
+    mod, at_call, _after = _run_get_tracer(
+        monkeypatch,
+        tmp_path,
+        request,
+        preset={"OTEL_LOGS_EXPORTER": "none"},
+    )
+    try:
+        assert at_call["OTEL_LOGS_EXPORTER"] == "none", "the user's value must survive"
+        assert _resolves_disabled("logging", at_call)
     finally:
         mod._sdk_initialised = False
         mod._tracer = None

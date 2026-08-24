@@ -24,12 +24,13 @@ Architecture notes
   ``cache_tenant_id_from_token()`` (#366).
 - Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
   request URLs (containing tenant IDs) from leaking as span attributes.
-- ``OTEL_TRACES_EXPORTER=none`` means no span exporter is ever installed, so
-  spans emitted by code this project does not own are never exported.  This is
-  not hypothetical: MCP Python SDK v2 installs an OpenTelemetry middleware on
-  every server unconditionally, which emits one span per inbound protocol
-  message.  Note that the env var, not the ``disable_tracing`` kwarg, is what
-  delivers this; the kwarg is silently overwritten by the library.
+- No span or metric exporter is ever installed, so spans emitted by code this
+  project does not own are never exported.  This is not hypothetical: MCP Python
+  SDK v2 installs an OpenTelemetry middleware on every server unconditionally,
+  which emits one span per inbound protocol message.  ``OTEL_TRACES_EXPORTER``
+  and ``OTEL_METRICS_EXPORTER`` are hard-set to ``none`` around the
+  ``configure_azure_monitor`` call and restored afterwards; the matching kwargs
+  are silently overwritten by the library and do not work.
 - ``shutdown_on_exit`` is disabled; a bounded ``force_flush`` + ``provider.shutdown()``
   (≤8 s total) is performed at app exit in a daemon thread so the CLI never hangs.
   The explicit ``force_flush`` call before ``shutdown()`` is required to reliably
@@ -636,6 +637,15 @@ _INSTRUMENTATION_OPTIONS: dict[str, dict[str, bool]] = {
     "urllib3": {"enabled": False},
 }
 
+# Environment applied around the configure_azure_monitor call to switch off the
+# trace and metric pipelines.  Only the exact string "none" works; see the long
+# comment at the call site for why this is a hard set rather than a setdefault,
+# and why OTEL_LOGS_EXPORTER is deliberately absent.
+_OTEL_EXPORTERS_OFF: dict[str, str] = {
+    "OTEL_TRACES_EXPORTER": "none",
+    "OTEL_METRICS_EXPORTER": "none",
+}
+
 
 def _harden_azure_sdk_logging() -> None:
     """Raise the level of noisy Azure SDK loggers to CRITICAL and detach them from root.
@@ -710,11 +720,12 @@ def _get_tracer() -> object | None:
       log records carrying ``microsoft.custom_event.name`` are exported as
       ``EventData`` (``customEvents`` table) — the reason this function now sets
       up a logger instead of a tracer.
-    - ``OTEL_TRACES_EXPORTER=none`` / ``OTEL_METRICS_EXPORTER=none`` are what
-      actually switch off the trace and metric pipelines.  The matching
+    - ``OTEL_TRACES_EXPORTER=none`` / ``OTEL_METRICS_EXPORTER=none``, hard-set
+      around the ``configure_azure_monitor`` call and restored afterwards, are
+      what actually switch off the trace and metric pipelines.  The matching
       ``disable_tracing`` / ``disable_metrics`` kwargs do NOT work: the library
       overwrites caller-supplied values with its own defaults (see the long
-      comment at the ``os.environ.setdefault`` calls).  Verified by inspecting
+      comment at the call site).  Verified by inspecting
       the resulting global providers, which are the no-op ``ProxyTracerProvider``
       and ``_ProxyMeterProvider``, not SDK providers with Azure exporters.
 
@@ -788,38 +799,6 @@ def _get_tracer() -> object | None:
             # respected.
             os.environ.setdefault("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "true")
 
-            # PRIVACY / correctness, load-bearing: these two env vars are the ONLY
-            # working way to switch off the trace and metric pipelines.
-            #
-            # `configure_azure_monitor(disable_tracing=True, disable_metrics=True)`
-            # looks like it should do this, and does not.  In
-            # azure-monitor-opentelemetry 1.8.9, `_get_configurations()` copies the
-            # caller's kwargs into a dict and THEN runs a `_default_*` pass in which
-            # `_default_disable_tracing` / `_default_disable_metrics` assign
-            # unconditionally, clobbering whatever the caller passed.  Contrast
-            # `_default_connection_string`, which early-returns when the key is
-            # already present.  Those two defaults consult only
-            # OTEL_TRACES_EXPORTER / OTEL_METRICS_EXPORTER, so the env var wins and
-            # the kwarg does not.  Measured against the locked version:
-            #     passed {'disable_tracing': True} -> effective disable_tracing=False
-            #     with OTEL_TRACES_EXPORTER=none   -> effective disable_tracing=True
-            # The kwargs below are kept as a statement of intent, but they are NOT
-            # what delivers it.  Do not remove these two lines on the assumption
-            # that the kwargs cover it.
-            #
-            # Why tracing must be off: we emit customEvents as OTel *log records*
-            # and author no spans, but MCP Python SDK v2 installs an
-            # OpenTelemetryMiddleware on every server unconditionally, which emits
-            # one SERVER span per inbound protocol message.  With an exporter
-            # installed those spans ship to Application Insights, carrying method
-            # and tool names, request IDs and timings that the documented
-            # collection list does not cover.  See docs/telemetry.md.
-            #
-            # setdefault, so an operator who deliberately sets either variable
-            # (e.g. to run a local OTLP collector) keeps control.
-            os.environ.setdefault("OTEL_TRACES_EXPORTER", "none")
-            os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
-
             # Build the OTel Resource that populates native Part A fields and prevents
             # hostname fallback for cloud_RoleInstance / ai.device.id (#477).
             resource = _build_otel_resource(_current_surface)
@@ -835,10 +814,10 @@ def _get_tracer() -> object | None:
                 "disable_logging": False,
                 # NOTE: these next two are statements of intent, NOT the mechanism.
                 # azure-monitor-opentelemetry clobbers both with its own defaults
-                # (see the OTEL_*_EXPORTER setdefault block above, which is what
-                # actually disables these pipelines).  They are kept so the intent
-                # is visible at the call site and so the arguments become effective
-                # for free if upstream ever stops overwriting caller kwargs.
+                # (see _OTEL_EXPORTERS_OFF below, which is what actually disables
+                # these pipelines).  They are kept so the intent is visible at the
+                # call site and so the arguments become effective for free if
+                # upstream ever stops overwriting caller kwargs.
                 "disable_metrics": True,
                 "disable_tracing": True,
                 # A1: disable PerformanceCounters — not covered by disable_metrics in
@@ -859,7 +838,47 @@ def _get_tracer() -> object | None:
             if resource is not None:
                 configure_kwargs["resource"] = resource
 
-            configure_azure_monitor(**configure_kwargs)
+            # PRIVACY, load-bearing.  These two env vars are the ONLY working way
+            # to switch off the trace and metric pipelines, and they must be set
+            # HARD, not with setdefault.
+            #
+            # Why the kwargs above do not do it: in azure-monitor-opentelemetry
+            # 1.8.9 `_get_configurations()` copies the caller's kwargs into a dict
+            # and THEN runs a `_default_*` pass in which `_default_disable_tracing`
+            # / `_default_disable_metrics` assign unconditionally, clobbering
+            # whatever the caller passed.  Contrast `_default_connection_string`,
+            # which early-returns when the key is already present.  Those defaults
+            # consult only these env vars, and only for an exact `== "none"` after
+            # lower/strip.
+            #
+            # Why NOT setdefault: any pre-existing value that is not literally
+            # "none" leaves the pipeline ON, and what then gets installed is the
+            # AzureMonitorTraceExporter pointed at the maintainer's ingestion
+            # endpoint, NOT the exporter the operator asked for.  Measured:
+            #     (unset)                     -> ProxyTracerProvider, no exporters
+            #     OTEL_TRACES_EXPORTER=otlp   -> AzureMonitorTraceExporter installed
+            #     OTEL_TRACES_EXPORTER=""     -> AzureMonitorTraceExporter installed
+            # So setdefault gives the operator no control (outside the separate
+            # auto-instrumentation entry point, `== "none"` is the only thing this
+            # distro ever reads these for) and one silent third-party export path.
+            # A host process that already installed its own TracerProvider is
+            # unaffected either way: OpenTelemetry refuses to override an existing
+            # provider, so the user's provider wins.
+            #
+            # Scoped and restored, because fabric-dw can be embedded as a library
+            # and must not mutate the host process environment beyond this call.
+            # OTEL_LOGS_EXPORTER is deliberately NOT touched: a user setting it to
+            # "none" disables our own customEvents, which is the safe direction.
+            _prev_otel = {k: os.environ.get(k) for k in _OTEL_EXPORTERS_OFF}
+            os.environ.update(_OTEL_EXPORTERS_OFF)
+            try:
+                configure_azure_monitor(**configure_kwargs)
+            finally:
+                for _key, _old in _prev_otel.items():
+                    if _old is None:
+                        os.environ.pop(_key, None)
+                    else:
+                        os.environ[_key] = _old
             # Obtain the OTel Logger via the global LoggerProvider set up by
             # configure_azure_monitor.  This logger is used in emit_event to fire
             # customEvents as log records (not spans).
