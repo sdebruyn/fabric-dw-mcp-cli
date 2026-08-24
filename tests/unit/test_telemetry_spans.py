@@ -16,6 +16,7 @@ execution order.
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -26,6 +27,7 @@ from mcp_types import JSONRPCRequest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
+from opentelemetry.sdk.util.instrumentation import InstrumentationScope
 from opentelemetry.trace import SpanKind, StatusCode
 
 from fabric_dw import telemetry_spans
@@ -477,3 +479,78 @@ def test_installing_the_pipeline_wires_the_sanitiser_in_front_of_azure(
     assert MARKER not in _blob(captured.spans)
 
     provider.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Failure modes
+# ---------------------------------------------------------------------------
+
+
+def test_an_unreadable_method_map_degrades_to_unknown_rather_than_passing_it_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the SDK's method maps cannot be read, no method name is exported.
+
+    The allowlist is what makes ``mcp.method.name`` safe, so losing it has to
+    fail towards recording nothing rather than towards recording whatever the
+    client sent.
+    """
+    monkeypatch.setitem(sys.modules, "mcp_types.methods", None)
+    telemetry_spans._known_methods.cache_clear()
+    try:
+        span = _make_span(MCP_SDK_SCOPE, "ping", {"mcp.method.name": "ping"})
+        sanitised = sanitise_span(span)
+
+        assert sanitised is not None
+        assert sanitised.name == UNKNOWN_METHOD
+    finally:
+        telemetry_spans._known_methods.cache_clear()
+
+
+def test_an_unreadable_version_list_drops_the_protocol_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same failure direction for the protocol revision."""
+    monkeypatch.setitem(sys.modules, "mcp_types.version", None)
+    telemetry_spans._known_protocol_versions.cache_clear()
+    try:
+        span = _make_span(
+            MCP_SDK_SCOPE,
+            "ping",
+            {"mcp.method.name": "ping", "mcp.protocol.version": HANDSHAKE_VERSION},
+        )
+        sanitised = sanitise_span(span)
+
+        assert sanitised is not None
+        assert "mcp.protocol.version" not in (sanitised.attributes or {})
+    finally:
+        telemetry_spans._known_protocol_versions.cache_clear()
+
+
+def test_a_span_without_attributes_is_reduced_rather_than_rejected() -> None:
+    """A span carrying no attributes at all must not break the exporter.
+
+    ``ReadableSpan.attributes`` is a ``BoundedAttributes`` mapping when the SDK
+    fills it and ``None`` when it does not, and an early draft of this code
+    tested for ``dict``, which is neither.
+    """
+    span = ReadableSpan(
+        name="something",
+        instrumentation_scope=InstrumentationScope(MCP_SDK_SCOPE),
+        attributes=None,
+    )
+    sanitised = sanitise_span(span)
+
+    assert sanitised is not None
+    assert dict(sanitised.attributes or {}) == {"mcp.method.name": UNKNOWN_METHOD}
+
+
+def test_installing_the_pipeline_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Telemetry setup failing must not take the MCP server down with it."""
+
+    def _explode(_provider: Any) -> None:
+        raise RuntimeError("boom")
+
+    _patch_global_provider_hooks(monkeypatch, setter=_explode, getter=lambda: None)
+
+    assert install_mcp_span_pipeline(_CONNECTION_STRING, None) is False
