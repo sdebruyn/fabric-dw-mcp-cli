@@ -31,6 +31,7 @@ as ``unknown``, which the protocol permits.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import ExitStack, suppress
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -84,14 +85,15 @@ class ClientInfoMiddleware:
         call_next: CallNext,
     ) -> HandlerResult:
         """Record the connecting client, then hand the message on."""
-        try:
-            # Resolved per call rather than bound at import, which is how every
-            # telemetry call site outside the two entry points reaches this
-            # module (see telemetry_commands.emit_command_invoked and auth.py).
-            from fabric_dw.telemetry import mcp_client_scope  # noqa: PLC0415
+        with ExitStack() as stack:
+            # Only the recording is best-effort.  call_next stays outside the
+            # suppression, so a handler's exception propagates untouched.
+            with suppress(Exception):
+                # Resolved per call rather than bound at import, which is how
+                # every telemetry call site outside the two entry points reaches
+                # this module (see telemetry_commands.emit_command_invoked and
+                # auth.py).
+                from fabric_dw.telemetry import mcp_client_scope  # noqa: PLC0415
 
-            scope = mcp_client_scope(client_name_from_context(ctx))
-        except Exception:
-            return await call_next(ctx)
-        with scope:
+                stack.enter_context(mcp_client_scope(client_name_from_context(ctx)))
             return await call_next(ctx)
