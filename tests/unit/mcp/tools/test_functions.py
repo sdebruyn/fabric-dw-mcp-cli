@@ -6,7 +6,7 @@ Goal:   ≥90% branch coverage.
 Strategy
 --------
 - All calls routed via the shared ``call_tool()`` helper (``tests/unit/_call.py``),
-  which wraps ``mcp._tool_manager.call_tool`` (same path FastMCP uses at
+  which wraps ``mcp._tool_manager.call_tool`` (same path the MCP server uses at
   runtime) so the ``@mcp.tool`` decorator, Pydantic validation, and guards
   are all exercised.
 - ``ServerContext`` injected by patching ``fabric_dw.mcp._context._SERVER_CTX``
@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from fabric_dw.exceptions import FabricError, NotFoundError
 from fabric_dw.models import FunctionDetails, FunctionKind

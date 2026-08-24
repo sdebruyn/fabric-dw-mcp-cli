@@ -2,9 +2,7 @@
 
 Architecture note
 -----------------
-``mcp.shared.memory.create_connected_server_and_client_session`` wires a
-real FastMCP server to a real :class:`~mcp.ClientSession` via in-memory
-anyio streams, exercising the full MCP JSON-RPC handshake without any TCP
+:class:`mcp.client.Client` connects to an in-process server without any TCP
 sockets.  This gives us a contract-level check that:
 
 1. ``list_tools`` returns the expected tool names.
@@ -12,12 +10,32 @@ sockets.  This gives us a contract-level check that:
    and returns structured content.
 3. A destructive-guarded tool (``delete_restore_point``) raises an error
    when ``FABRIC_MCP_ALLOW_DESTRUCTIVE`` is unset.
+4. The server identifies itself with the fabric-dw version in ``serverInfo``.
 
 Unlike ``test_server.py`` (which goes through the shared ``call_tool()`` test
 helper, itself a thin wrapper around ``_tool_manager.call_tool``), these tests
 go through the MCP serialisation layer (JSON-RPC encoding/decoding,
 ``CallToolResult`` wrapping, etc.) so they would catch regressions in tool
 registration, schema export, and result serialisation.
+
+``mode`` is pinned, never defaulted
+-----------------------------------
+``Client`` defaults to ``mode="auto"``, and for an in-process server that
+dispatches through a ``DirectDispatcher``: no JSON-RPC framing, no initialize
+handshake, Python objects handed straight across.  Under that mode every
+assertion in this file would still pass while the serialisation layer this file
+exists to cover went completely untested.
+
+So the mode is always explicit here, and both are exercised via the
+``client_mode`` fixture:
+
+``legacy``
+    Forces the initialize handshake and full JSON-RPC framing.  This is the
+    path a stdio or streamable-HTTP client actually takes, and the one that
+    makes these serialisation tests worth running.
+``auto``
+    The modern per-request path.  Skips framing but still runs handler lookup,
+    parameter validation, middleware, and v2's new result-schema validation.
 
 Testing strategy
 ----------------
@@ -46,8 +64,9 @@ from tests.unit.mcp.conftest import WS_ID, WS_NAME, make_item_entry
 
 # ---------------------------------------------------------------------------
 # Minimum tool count — guards against catastrophic registration drops.
-# Set just below the current count (~96) so adding tools never requires a
-# bump, while a whole-domain disappearance (≥6 tools) is still caught.
+# Set well below the current count (121 at time of writing) so adding tools
+# never requires a bump, while a whole-domain disappearance is still caught.
+# The exact number is deliberately not asserted; only a floor is.
 # ---------------------------------------------------------------------------
 
 MIN_TOOL_COUNT = 90
@@ -86,24 +105,42 @@ def contract_ctx():
 
 
 # ---------------------------------------------------------------------------
+# Fixture: the connect mode, always explicit.  See the module docstring for why
+# the `Client` default of "auto" must never be relied on here.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(params=["legacy", "auto"])
+def client_mode(request) -> str:
+    """The ``Client(mode=...)`` value under test.
+
+    ``legacy`` is the load-bearing one: it is the only mode that puts JSON-RPC
+    framing and the initialize handshake in the path, which is what this file
+    is here to cover.  ``auto`` is included so the modern per-request path is
+    covered too.
+    """
+    return request.param
+
+
+# ---------------------------------------------------------------------------
 # Fixture: live tool list via the full MCP protocol round-trip
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-async def live_tools(contract_ctx):
+async def live_tools(contract_ctx, client_mode):
     """Return the list of Tool objects enumerated via the MCP protocol.
 
-    Wires a real FastMCP server to a real ClientSession through in-memory
-    streams (no TCP), so this exercises the same JSON-RPC ``tools/list``
-    handshake the production server uses.
+    Connects a real :class:`mcp.client.Client` to the production server
+    in-process (no TCP), so this exercises the same ``tools/list`` round-trip
+    the production server serves.
     """
-    from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
+    from mcp.client import Client  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with patch("fabric_dw.mcp._context.build_context", return_value=contract_ctx):
-        async with create_connected_server_and_client_session(mcp) as client:
+        async with Client(mcp, mode=client_mode) as client:
             result = await client.list_tools()
 
     return result.tools
@@ -198,7 +235,7 @@ async def test_list_tools_contains_destructive_tool(live_tools) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_call_tool_list_workspaces_round_trips(contract_ctx) -> None:
+async def test_call_tool_list_workspaces_round_trips(contract_ctx, client_mode) -> None:
     """Calling list_workspaces via MCP protocol returns serialised workspace data.
 
     Verifies:
@@ -206,7 +243,7 @@ async def test_call_tool_list_workspaces_round_trips(contract_ctx) -> None:
     - The result content contains the expected workspace data.
     - The protocol wraps the return value as TextContent (JSON string).
     """
-    from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
+    from mcp.client import Client  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -216,11 +253,11 @@ async def test_call_tool_list_workspaces_round_trips(contract_ctx) -> None:
         patch("fabric_dw.mcp._context.build_context", return_value=contract_ctx),
         patch("fabric_dw.services.workspaces.list_all", new=AsyncMock(return_value=[ws])),
     ):
-        async with create_connected_server_and_client_session(mcp) as client:
+        async with Client(mcp, mode=client_mode) as client:
             result = await client.call_tool("list_workspaces", {})
 
     assert result is not None
-    assert not result.isError
+    assert not result.is_error
     # The MCP protocol wraps results in ContentBlock items.
     assert len(result.content) >= 1
     # Extract text from the first content block.
@@ -234,14 +271,14 @@ async def test_call_tool_list_workspaces_round_trips(contract_ctx) -> None:
         assert len(parsed) >= 1
         workspace_data = parsed[0]
     else:
-        # Some FastMCP versions embed the list inside a wrapper
+        # Some SDK versions embed the list inside a wrapper
         workspace_data = parsed
     assert str(WS_ID) in json.dumps(workspace_data)
 
 
-async def test_call_tool_list_workspaces_empty_returns_list(contract_ctx) -> None:
+async def test_call_tool_list_workspaces_empty_returns_list(contract_ctx, client_mode) -> None:
     """list_workspaces with no workspaces returns a successful result."""
-    from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
+    from mcp.client import Client  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -249,11 +286,11 @@ async def test_call_tool_list_workspaces_empty_returns_list(contract_ctx) -> Non
         patch("fabric_dw.mcp._context.build_context", return_value=contract_ctx),
         patch("fabric_dw.services.workspaces.list_all", new=AsyncMock(return_value=[])),
     ):
-        async with create_connected_server_and_client_session(mcp) as client:
+        async with Client(mcp, mode=client_mode) as client:
             result = await client.call_tool("list_workspaces", {})
 
     assert result is not None
-    assert not result.isError
+    assert not result.is_error
 
 
 # ---------------------------------------------------------------------------
@@ -262,15 +299,15 @@ async def test_call_tool_list_workspaces_empty_returns_list(contract_ctx) -> Non
 
 
 async def test_destructive_tool_blocked_without_env_flag(
-    contract_ctx, monkeypatch: pytest.MonkeyPatch
+    contract_ctx, client_mode, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """delete_restore_point raises a ToolError when FABRIC_MCP_ALLOW_DESTRUCTIVE is unset.
 
-    The MCP protocol returns this as ``isError=True`` on the CallToolResult.
+    The MCP protocol returns this as ``is_error=True`` on the CallToolResult.
     This validates that the guard logic survives the full protocol round-trip
     (the guard runs inside the tool function, which the protocol invokes).
     """
-    from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
+    from mcp.client import Client  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -278,9 +315,10 @@ async def test_destructive_tool_blocked_without_env_flag(
     monkeypatch.delenv("FABRIC_MCP_ALLOW_DESTRUCTIVE", raising=False)
 
     with patch("fabric_dw.mcp._context.build_context", return_value=contract_ctx):
-        async with create_connected_server_and_client_session(
+        async with Client(
             mcp,
-            raise_exceptions=False,  # Return errors as isError=True instead of raising
+            mode=client_mode,
+            raise_exceptions=False,  # Return errors as is_error=True instead of raising
         ) as client:
             result = await client.call_tool(
                 "delete_restore_point",
@@ -292,19 +330,19 @@ async def test_destructive_tool_blocked_without_env_flag(
             )
 
     # The protocol must reflect the ToolError as an error result.
-    assert result.isError, (
-        f"Expected isError=True for destructive tool without flag; got: {result!r}"
+    assert result.is_error, (
+        f"Expected is_error=True for destructive tool without flag; got: {result!r}"
     )
 
 
 async def test_destructive_tool_allowed_with_env_flag(
-    contract_ctx, monkeypatch: pytest.MonkeyPatch
+    contract_ctx, client_mode, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """delete_restore_point proceeds when FABRIC_MCP_ALLOW_DESTRUCTIVE=1.
 
     The service layer is mocked so no real HTTP occurs.
     """
-    from mcp.shared.memory import create_connected_server_and_client_session  # noqa: PLC0415
+    from mcp.client import Client  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -319,9 +357,7 @@ async def test_destructive_tool_allowed_with_env_flag(
             new=AsyncMock(return_value=None),
         ),
     ):
-        async with create_connected_server_and_client_session(
-            mcp, raise_exceptions=False
-        ) as client:
+        async with Client(mcp, mode=client_mode, raise_exceptions=False) as client:
             result = await client.call_tool(
                 "delete_restore_point",
                 {
@@ -331,4 +367,44 @@ async def test_destructive_tool_allowed_with_env_flag(
                 },
             )
 
-    assert not result.isError, f"Expected success; got error: {result!r}"
+    assert not result.is_error, f"Expected success; got error: {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# 4. serverInfo — the server identifies itself over the protocol
+# ---------------------------------------------------------------------------
+
+
+async def test_server_info_reports_fabric_dw_version(contract_ctx, client_mode) -> None:
+    """The version the client sees must be the fabric-dw version.
+
+    Under SDK v1 the server reported the SDK's own version here; under v2 the
+    constructor defaults it to the empty string. Either way it has to be passed
+    explicitly, and this is the assertion that proves the client actually
+    receives it.
+
+    The SDK guarantees ``serverInfo`` only on legacy connections; on modern ones
+    it is an optional ``_meta`` stamp. This server populates it in both cases
+    (measured), so both modes assert unconditionally rather than tolerating
+    ``None``. A version of this test that skipped its assertions whenever
+    ``info`` happened to be ``None`` would assert nothing at all under ``auto``,
+    which is worse than not running it there. If a future SDK stops stamping
+    ``serverInfo`` on modern connections, this fails loudly and the decision to
+    accept that gets made deliberately.
+    """
+    from mcp.client import Client  # noqa: PLC0415
+
+    from fabric_dw import __version__  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with patch("fabric_dw.mcp._context.build_context", return_value=contract_ctx):
+        async with Client(mcp, mode=client_mode) as client:
+            info = client.server_info
+
+    assert info is not None, (
+        f"no serverInfo on a {client_mode} connection; the client cannot tell "
+        "which server or version it is talking to"
+    )
+    assert info.name == "fabric-dw"
+    assert info.version == __version__
+    assert info.version, "server version must not be empty"

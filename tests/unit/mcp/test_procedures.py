@@ -144,7 +144,7 @@ async def test_list_procedures_workspace_allowlist_blocks(
     mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """list_procedures raises ToolError when workspace is not in the allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -194,7 +194,7 @@ async def test_get_procedure_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_get_procedure_bad_qualified_name_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """get_procedure raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -249,7 +249,7 @@ async def test_create_procedure_blocked_in_readonly(
     mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """create_procedure raises ToolError when FABRIC_MCP_READONLY is set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -339,7 +339,7 @@ async def test_update_procedure_blocked_in_readonly(
     mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """update_procedure raises ToolError when FABRIC_MCP_READONLY is set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -397,7 +397,7 @@ async def test_drop_procedure_blocked_without_destructive_flag(
     mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """drop_procedure raises ToolError when FABRIC_MCP_ALLOW_DESTRUCTIVE is not set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -418,7 +418,7 @@ async def test_drop_procedure_blocked_in_readonly(
     mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """drop_procedure raises ToolError when FABRIC_MCP_READONLY is set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -541,7 +541,7 @@ async def test_transfer_procedure_blocked_in_readonly(
     mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """transfer_procedure raises ToolError when FABRIC_MCP_READONLY is set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 

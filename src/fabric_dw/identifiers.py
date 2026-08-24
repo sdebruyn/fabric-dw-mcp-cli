@@ -264,7 +264,7 @@ def parse_qualified_name(qualified: str, kind: str = "object") -> tuple[str, str
     - Raises :class:`ValueError` for any invalid input; upper layers
       (:func:`~fabric_dw.mcp._helpers.parse_qualified_name`,
       :func:`~fabric_dw.cli.commands._utils.parse_qualified_name`) convert
-      that into their respective error types (:class:`~mcp.server.fastmcp.exceptions.ToolError`,
+      that into their respective error types (:class:`~mcp.server.mcpserver.exceptions.ToolError`,
       :class:`click.UsageError`).
 
     Args:

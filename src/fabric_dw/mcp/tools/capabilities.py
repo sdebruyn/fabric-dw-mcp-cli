@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from fabric_dw.telemetry_commands import resolve_domain
 
@@ -13,7 +13,7 @@ __all__ = ["register"]
 _log = logging.getLogger(__name__)
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     """Register capabilities tools against *mcp*."""
 
     @mcp.tool(name="list_capabilities")

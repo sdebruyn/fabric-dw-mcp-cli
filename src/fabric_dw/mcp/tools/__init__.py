@@ -1,8 +1,8 @@
 """Per-domain MCP tool registration modules.
 
-Each sub-module exposes a ``register(mcp: FastMCP) -> None`` function that
+Each sub-module exposes a ``register(mcp: MCPServer) -> None`` function that
 decorates and registers that domain's tools against the provided
-:class:`~mcp.server.fastmcp.FastMCP` instance.
+:class:`~mcp.server.mcpserver.MCPServer` instance.
 
 Domains
 -------
@@ -31,7 +31,7 @@ Domains
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from fabric_dw.mcp.tools import (
     audit,
@@ -84,7 +84,7 @@ _DOMAINS = [
 ]
 
 
-def register_all(mcp: FastMCP) -> None:
+def register_all(mcp: MCPServer) -> None:
     """Register all domain tools against *mcp*."""
     for domain in _DOMAINS:
         domain.register(mcp)

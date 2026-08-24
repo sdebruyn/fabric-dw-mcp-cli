@@ -73,6 +73,66 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 - Connection strings or any credentials
 - File paths or environment variable values
 - Any other personally-identifiable information
+- Distributed traces of any kind, including MCP protocol spans
+- Metrics of any kind, including the SDK's own delivery-statistics counters
+
+### `fabric-dw` exports no spans and no metrics
+
+`fabric-dw` emits telemetry as OpenTelemetry **log records**, never as spans. It
+forces `OTEL_TRACES_EXPORTER=none` and `OTEL_METRICS_EXPORTER=none` around the
+Application Insights setup call, so no span exporter and no metric exporter is
+built. Only the logs pipeline, which carries the `customEvents` above, is active.
+
+One qualifier on "no spans are exported", because it is about this package and
+not about your process: if you embed `fabric-dw` in an application that has
+already set up its own OpenTelemetry `TracerProvider`, that provider keeps
+collecting spans and sending them wherever you configured. That is intended. What
+`fabric-dw` guarantees is that it never adds an export path of its own, and never
+points one at the maintainers.
+
+Those two variables are set unconditionally rather than deferring to a value you
+may already have in your environment, and they are restored to whatever they were
+immediately afterwards, so nothing else in your process is affected. The reason
+they are not merely defaulted is that the Azure Monitor library reads them only
+to check for the exact string `none`: any other value, including an empty string
+or `otlp`, leaves the pipeline on and installs the **Azure Monitor** exporter
+rather than the one you asked for. Deferring would therefore have handed you no
+control while quietly turning the export path back on. `OTEL_LOGS_EXPORTER` is
+left alone: setting it to `none` yourself switches off `fabric-dw`'s own events,
+which is a choice worth respecting.
+
+There is a second, separately gated pipeline that the exporter library starts on
+its own: **customer sdkstats**, a delivery-statistics channel that reports how
+many telemetry items succeeded, dropped, or were retried. Despite the name it is
+not covered by the statsbeat switch, and it builds its own metric exporter, meter
+provider, and a reader on a 15-minute timer, all pointed at the same connection
+string. A CLI command finishes long before the first export cycle, but an MCP
+server does not, and that is this project's main mode. `fabric-dw` therefore sets
+`APPLICATIONINSIGHTS_SDKSTATS_DISABLED=true` unless you have already given that
+variable a value of your own.
+
+This matters because the MCP Python SDK installs an OpenTelemetry middleware on
+every server it creates, and that middleware emits one span per inbound protocol
+message. Measured against the version this package pins, those spans carry the
+method name (`tools/call`), the protocol revision, the JSON-RPC request ID, the
+tool name, an `error.type` marker, and timings.
+
+To be precise about what that is and is not: a failing tool call does **not** put
+the exception text on the span. The MCP server converts a failing tool into an
+error result before the middleware sees it, so the middleware records only
+`error.type="tool_error"` with no message. SQL text, Fabric API error strings and
+warehouse names are therefore not in the span payload. What would leak is
+metadata: which tool ran, when, how long it took, and whether it failed. That is
+still not on the collection list above, which is why the exporters are off.
+
+Two notes for completeness. Both `disable_tracing=True` and `disable_metrics=True`
+are also passed to the Azure Monitor configuration, but neither works: the library
+overwrites caller-supplied values with its own defaults, which read only the
+environment variables. The environment variables are the mechanism; the arguments
+are a statement of intent. And a server that registered MCP *prompts* would leak
+one more thing, the client-supplied prompt name, which the middleware copies into
+the span name verbatim. `fabric-dw` registers no prompts and no resources, so this
+does not arise here.
 
 ## Where telemetry data goes
 

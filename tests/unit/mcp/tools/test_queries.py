@@ -180,7 +180,7 @@ async def test_list_running_queries_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_list_running_queries_fabric_error(mock_ctx, ctx_patch) -> None:
     """list_running_queries wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -205,7 +205,7 @@ async def test_list_running_queries_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_list_running_queries_workspace_not_allowed(ctx_patch) -> None:
     """list_running_queries raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -280,7 +280,7 @@ async def test_list_connections_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_list_connections_fabric_error(mock_ctx, ctx_patch) -> None:
     """list_connections wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -305,7 +305,7 @@ async def test_list_connections_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_list_connections_workspace_not_allowed(ctx_patch) -> None:
     """list_connections raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -352,7 +352,7 @@ async def test_kill_session_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_kill_session_fabric_error(mock_ctx, ctx_patch) -> None:
     """kill_session wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -377,7 +377,7 @@ async def test_kill_session_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_kill_session_value_error(mock_ctx, ctx_patch) -> None:
     """kill_session wraps ValueError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -404,7 +404,7 @@ async def test_kill_session_value_error(mock_ctx, ctx_patch) -> None:
 
 async def test_kill_session_readonly_blocked(ctx_patch) -> None:
     """kill_session raises ToolError in read-only mode."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -424,7 +424,7 @@ async def test_kill_session_readonly_blocked(ctx_patch) -> None:
 
 async def test_kill_session_workspace_not_allowed(ctx_patch) -> None:
     """kill_session raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -443,7 +443,7 @@ async def test_kill_session_workspace_not_allowed(ctx_patch) -> None:
 @pytest.mark.parametrize("bad_session_id", [0, -1])
 async def test_kill_session_rejects_non_positive_session_id(ctx_patch, bad_session_id: int) -> None:
     """kill_session raises ToolError for session_id=0 or session_id=-1 (Field(ge=1) bound)."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -549,7 +549,7 @@ async def test_list_request_history_with_since_until(mock_ctx, ctx_patch) -> Non
 
 async def test_list_request_history_bad_since(ctx_patch) -> None:
     """list_request_history raises ToolError on invalid ISO-8601 since."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -568,7 +568,7 @@ async def test_list_request_history_bad_since(ctx_patch) -> None:
 
 async def test_list_request_history_bad_until(ctx_patch) -> None:
     """list_request_history raises ToolError on invalid ISO-8601 until."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -587,7 +587,7 @@ async def test_list_request_history_bad_until(ctx_patch) -> None:
 
 async def test_list_request_history_fabric_error(mock_ctx, ctx_patch) -> None:
     """list_request_history wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -612,7 +612,7 @@ async def test_list_request_history_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_list_request_history_workspace_not_allowed(ctx_patch) -> None:
     """list_request_history raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -693,7 +693,7 @@ async def test_list_session_history_with_since_until(mock_ctx, ctx_patch) -> Non
 
 async def test_list_session_history_bad_since(ctx_patch) -> None:
     """list_session_history raises ToolError on invalid ISO-8601 since."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -712,7 +712,7 @@ async def test_list_session_history_bad_since(ctx_patch) -> None:
 
 async def test_list_session_history_bad_until(ctx_patch) -> None:
     """list_session_history raises ToolError on invalid ISO-8601 until."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -731,7 +731,7 @@ async def test_list_session_history_bad_until(ctx_patch) -> None:
 
 async def test_list_session_history_fabric_error(mock_ctx, ctx_patch) -> None:
     """list_session_history wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -756,7 +756,7 @@ async def test_list_session_history_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_list_session_history_workspace_not_allowed(ctx_patch) -> None:
     """list_session_history raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -838,7 +838,7 @@ async def test_list_frequent_queries_with_since_until(mock_ctx, ctx_patch) -> No
 
 async def test_list_frequent_queries_bad_since(ctx_patch) -> None:
     """list_frequent_queries raises ToolError on invalid ISO-8601 since."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -857,7 +857,7 @@ async def test_list_frequent_queries_bad_since(ctx_patch) -> None:
 
 async def test_list_frequent_queries_bad_until(ctx_patch) -> None:
     """list_frequent_queries raises ToolError on invalid ISO-8601 until."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -876,7 +876,7 @@ async def test_list_frequent_queries_bad_until(ctx_patch) -> None:
 
 async def test_list_frequent_queries_fabric_error(mock_ctx, ctx_patch) -> None:
     """list_frequent_queries wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -901,7 +901,7 @@ async def test_list_frequent_queries_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_list_frequent_queries_workspace_not_allowed(ctx_patch) -> None:
     """list_frequent_queries raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -983,7 +983,7 @@ async def test_list_long_running_queries_with_since_until(mock_ctx, ctx_patch) -
 
 async def test_list_long_running_queries_bad_since(ctx_patch) -> None:
     """list_long_running_queries raises ToolError on invalid ISO-8601 since."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1002,7 +1002,7 @@ async def test_list_long_running_queries_bad_since(ctx_patch) -> None:
 
 async def test_list_long_running_queries_bad_until(ctx_patch) -> None:
     """list_long_running_queries raises ToolError on invalid ISO-8601 until."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1021,7 +1021,7 @@ async def test_list_long_running_queries_bad_until(ctx_patch) -> None:
 
 async def test_list_long_running_queries_fabric_error(mock_ctx, ctx_patch) -> None:
     """list_long_running_queries wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1046,7 +1046,7 @@ async def test_list_long_running_queries_fabric_error(mock_ctx, ctx_patch) -> No
 
 async def test_list_long_running_queries_workspace_not_allowed(ctx_patch) -> None:
     """list_long_running_queries raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1082,7 +1082,7 @@ _RAW_DRIVER_EXC = _FakeDriverError(_FakeDriverError._INTERNAL_DETAIL)
 
 async def test_list_running_queries_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """A raw driver exception from list_running is converted to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1110,7 +1110,7 @@ async def test_list_running_queries_raw_driver_exc_raises_tool_error(mock_ctx, c
 
 async def test_list_connections_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """A raw driver exception from list_connections is converted to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1138,7 +1138,7 @@ async def test_list_connections_raw_driver_exc_raises_tool_error(mock_ctx, ctx_p
 
 async def test_kill_session_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """A raw driver exception from queries.kill is converted to ToolError without leaking."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1242,7 +1242,7 @@ async def test_list_locks_returns_dicts(mock_ctx, ctx_patch) -> None:
 
 async def test_list_locks_fabric_error_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """list_locks wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1291,7 +1291,7 @@ async def test_list_locks_empty_result(mock_ctx, ctx_patch) -> None:
 
 async def test_list_locks_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """A raw driver exception from list_locks is converted to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1389,7 +1389,7 @@ async def test_get_request_detail_happy_path_not_found(mock_ctx, ctx_patch) -> N
 
 async def test_get_request_detail_fabric_error(mock_ctx, ctx_patch) -> None:
     """get_request_detail wraps FabricError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1414,7 +1414,7 @@ async def test_get_request_detail_fabric_error(mock_ctx, ctx_patch) -> None:
 
 async def test_get_request_detail_permission_denied(mock_ctx, ctx_patch) -> None:
     """get_request_detail wraps PermissionDeniedError as ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1439,7 +1439,7 @@ async def test_get_request_detail_permission_denied(mock_ctx, ctx_patch) -> None
 
 async def test_get_request_detail_workspace_not_allowed(ctx_patch) -> None:
     """get_request_detail raises ToolError when workspace not in allowlist."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1457,7 +1457,7 @@ async def test_get_request_detail_workspace_not_allowed(ctx_patch) -> None:
 
 async def test_get_request_detail_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """A raw driver exception is converted to ToolError without leaking internal details."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 

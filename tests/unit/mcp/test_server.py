@@ -2,12 +2,13 @@
 
 Testing strategy
 ----------------
-FastMCP 1.x ships no in-process test transport in its public API, so we use
-unit-style mocking via the shared ``mock_ctx`` / ``ctx_patch`` fixtures defined
-in ``conftest.py``.
+These are unit-style tests: the ``ServerContext`` is mocked via the shared
+``mock_ctx`` / ``ctx_patch`` fixtures defined in ``conftest.py``, and tools are
+invoked directly rather than over the protocol.  ``test_contract.py`` covers the
+protocol round-trip through the SDK's in-process ``mcp.client.Client``.
 
 Tools are called via ``call_tool(mcp, name, args)`` which is the
-same call path FastMCP uses at runtime, giving realistic coverage of the
+same call path the MCP server uses at runtime, giving realistic coverage of the
 ``@mcp.tool`` decorator, Pydantic validation, and guard logic.
 
 The ``ServerContext`` (http / cache / resolver) is injected by patching
@@ -232,7 +233,7 @@ def _make_item_access() -> ItemAccess:
 
 
 def test_core_tools_registered() -> None:
-    """Every core tool must be registered in the FastMCP server.
+    """Every core tool must be registered in the MCP server.
 
     ``CORE_TOOLS`` is a stable subset of fundamental tools spanning all major
     domains.  A registration regression (e.g. a broken ``register_all`` call)
@@ -254,10 +255,10 @@ def test_registered_tools_no_duplicates() -> None:
     """
     import asyncio  # noqa: PLC0415
 
-    from fabric_dw.mcp._helpers import InstrumentedFastMCP  # noqa: PLC0415
+    from fabric_dw.mcp._helpers import InstrumentedMCPServer  # noqa: PLC0415
     from fabric_dw.mcp.tools import register_all  # noqa: PLC0415
 
-    mcp = InstrumentedFastMCP("dup-check")
+    mcp = InstrumentedMCPServer("dup-check")
     register_all(mcp)
     all_tools = asyncio.run(mcp.list_tools())
     all_names = [t.name for t in all_tools]
@@ -283,10 +284,10 @@ def test_registered_tools_non_empty_descriptions() -> None:
     """
     import asyncio  # noqa: PLC0415
 
-    from fabric_dw.mcp._helpers import InstrumentedFastMCP  # noqa: PLC0415
+    from fabric_dw.mcp._helpers import InstrumentedMCPServer  # noqa: PLC0415
     from fabric_dw.mcp.tools import register_all  # noqa: PLC0415
 
-    mcp = InstrumentedFastMCP("desc-check")
+    mcp = InstrumentedMCPServer("desc-check")
     register_all(mcp)
     all_tools = asyncio.run(mcp.list_tools())
     missing_desc = [t.name for t in all_tools if not (t.description or "").strip()]
@@ -392,7 +393,7 @@ async def test_clear_cache_scope_items(mock_ctx, ctx_patch) -> None:
 
 async def test_fabric_error_becomes_tool_error(ctx_patch) -> None:
     """A FabricError raised by the service layer must become a ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -466,8 +467,23 @@ async def test_list_warehouses_happy_path(mock_ctx, ctx_patch) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_server_reports_its_own_version() -> None:
+    """The server must advertise the fabric-dw version, not an empty string.
+
+    Under SDK v1 the constructor defaulted this to the SDK's own version, which
+    was wrong but at least non-empty.  v2 defaults it to ``""``, so it has to be
+    passed explicitly.  ``test_contract.py`` checks the same value as it appears
+    in ``serverInfo`` over the protocol.
+    """
+    from fabric_dw import __version__  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    assert mcp.version == __version__
+    assert mcp.version, "server version must not be empty"
+
+
 def test_run_uses_stdio_by_default() -> None:
-    """run() with no args calls FastMCP.run(transport='stdio')."""
+    """run() with no args calls MCPServer.run(transport='stdio')."""
     from fabric_dw.mcp import run  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -483,14 +499,55 @@ def test_run_uses_stdio_by_default() -> None:
 
 
 def test_run_accepts_http_transport() -> None:
-    """run(['--transport', 'http']) calls FastMCP.run(transport='streamable-http')."""
+    """run(['--transport', 'http']) calls MCPServer.run(transport='streamable-http')."""
     from fabric_dw.mcp import run  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with patch.object(mcp, "run") as mock_run:
         run(["--transport", "http"])
 
-    mock_run.assert_called_once_with(transport="streamable-http")
+    mock_run.assert_called_once_with(transport="streamable-http", host="127.0.0.1", port=8000)
+
+
+def test_run_http_forwards_host_and_port_to_run() -> None:
+    """--host and --port reach MCPServer.run() as keyword arguments.
+
+    v2 removed the mutable settings object the previous implementation assigned
+    to (``mcp.settings.host`` / ``mcp.settings.port``); assigning to those now
+    raises.  Host and port are transport-specific ``run()`` kwargs instead, so
+    this pins that they are actually forwarded rather than silently dropped,
+    which would leave the server on the SDK's 127.0.0.1:8000 defaults.
+
+    Both values must differ from every default in play or the test cannot fail.
+    ``127.0.0.1`` is simultaneously the argparse default AND the SDK's own
+    ``run()`` default, so a hardcoded host would still satisfy an assertion
+    written against it.  ``localhost`` is used instead: still loopback, so the
+    guard does not demand ``FABRIC_MCP_ALLOW_REMOTE``, but distinct from both
+    defaults.  The port is likewise nowhere near 8000.
+    """
+    from fabric_dw.mcp import run  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with patch.object(mcp, "run") as mock_run:
+        run(["--transport", "http", "--host", "localhost", "--port", "9123"])
+
+    mock_run.assert_called_once_with(transport="streamable-http", host="localhost", port=9123)
+
+
+def test_run_stdio_passes_no_transport_kwargs() -> None:
+    """The stdio branch must not forward host/port.
+
+    The v2 ``run()`` stdio overload accepts no keyword arguments, so passing
+    host or port there is a type error even though the runtime ``**kwargs``
+    signature would swallow them.
+    """
+    from fabric_dw.mcp import run  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    with patch.object(mcp, "run") as mock_run:
+        run(["--host", "0.0.0.0", "--port", "9123"])  # noqa: S104
+
+    mock_run.assert_called_once_with(transport="stdio")
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +621,7 @@ async def test_list_running_queries_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_not_found_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """NotFoundError (a FabricError subclass) must become a ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -586,7 +643,7 @@ async def test_not_found_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
 
 async def test_create_snapshot_bad_datetime_becomes_tool_error(ctx_patch) -> None:
     """create_snapshot raises ToolError when snapshot_dt is not ISO-8601."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -612,7 +669,7 @@ async def test_roll_snapshot_timestamp_bad_datetime_becomes_tool_error(
     ctx_patch,
 ) -> None:
     """roll_snapshot_timestamp raises ToolError when new_dt is not ISO-8601."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -843,7 +900,7 @@ async def test_list_sql_endpoints_all_workspaces(ctx_patch) -> None:
 
 async def test_list_warehouses_all_workspaces_blocked_by_allowlist(ctx_patch) -> None:
     """all_workspaces=True raises ToolError when FABRIC_MCP_WORKSPACES is set (warehouses)."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -857,7 +914,7 @@ async def test_list_warehouses_all_workspaces_blocked_by_allowlist(ctx_patch) ->
 
 async def test_list_sql_endpoints_all_workspaces_blocked_by_allowlist(ctx_patch) -> None:
     """all_workspaces=True raises ToolError when FABRIC_MCP_WORKSPACES is set (sql_endpoints)."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -968,7 +1025,7 @@ async def test_set_audit_retention_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_set_audit_retention_value_error_becomes_tool_error(mock_ctx, ctx_patch) -> None:
     """set_audit_retention converts ValueError (disabled audit or out-of-range) to ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1029,7 +1086,7 @@ async def test_execute_sql_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_execute_sql_no_connection_string_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """execute_sql raises ToolError when the item has no connection string."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1084,7 +1141,7 @@ async def test_list_item_permissions_permission_denied_becomes_tool_error(
     mock_ctx, ctx_patch
 ) -> None:
     """list_item_permissions wraps PermissionDeniedError into ToolError."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1117,7 +1174,7 @@ _SE_ID = UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
 
 async def test_create_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """create_table must raise ToolError when the item is a SQL Endpoint."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1150,7 +1207,7 @@ async def test_delete_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) 
     FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
     the SQL-endpoint read-only guard fires instead.
     """
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1179,7 +1236,7 @@ async def test_clear_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -
     FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
     the SQL-endpoint read-only guard fires instead.
     """
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1275,7 +1332,7 @@ async def test_clone_table_with_at_timestamp(mock_ctx, ctx_patch) -> None:
 
 async def test_clone_table_readonly_mode_blocked(ctx_patch) -> None:
     """clone_table must raise ToolError in readonly mode (FABRIC_MCP_READONLY=1)."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1300,7 +1357,7 @@ async def test_clone_table_readonly_mode_blocked(ctx_patch) -> None:
 
 async def test_clone_table_workspace_not_in_allowlist(ctx_patch) -> None:
     """clone_table must raise ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1325,7 +1382,7 @@ async def test_clone_table_workspace_not_in_allowlist(ctx_patch) -> None:
 
 async def test_clone_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """clone_table must raise ToolError when the item is a SQL Endpoint."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1588,7 +1645,7 @@ async def test_read_view_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_read_view_no_connection_string_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """read_view raises ToolError when the item has no connection string."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1609,7 +1666,7 @@ async def test_read_view_no_connection_string_raises_tool_error(mock_ctx, ctx_pa
 
 async def test_read_view_bad_qualified_name_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """read_view raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1675,7 +1732,7 @@ async def test_rename_table_happy_path(mock_ctx, ctx_patch) -> None:
 
 async def test_rename_table_readonly_blocked(mock_ctx, ctx_patch) -> None:
     """rename_table raises ToolError when FABRIC_MCP_READONLY is set."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1701,7 +1758,7 @@ async def test_rename_table_readonly_blocked(mock_ctx, ctx_patch) -> None:
 
 async def test_rename_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """rename_table must raise ToolError when the item is a SQL Analytics Endpoint."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1731,7 +1788,7 @@ async def test_rename_table_sql_endpoint_raises_tool_error(mock_ctx, ctx_patch) 
 
 async def test_rename_table_workspace_allowlist_blocks(mock_ctx, ctx_patch) -> None:
     """rename_table raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1760,7 +1817,7 @@ async def test_rename_table_undotted_qualified_name_raises_tool_error(
     ctx_patch,
 ) -> None:
     """rename_table must raise ToolError immediately for an undotted qualified_name."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1831,7 +1888,7 @@ async def test_rename_view_blocked_by_readonly(ctx_patch) -> None:
     """rename_view raises ToolError when FABRIC_MCP_READONLY is set."""
     import os  # noqa: PLC0415
 
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1856,7 +1913,7 @@ async def test_rename_view_blocked_by_workspace_allowlist(ctx_patch) -> None:
     """rename_view raises ToolError when workspace is not in FABRIC_MCP_WORKSPACES."""
     import os  # noqa: PLC0415
 
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -1919,7 +1976,7 @@ async def test_rename_view_accepts_sql_endpoint_item(mock_ctx, ctx_patch) -> Non
 
 async def test_rename_view_bad_qualified_name_raises_tool_error(ctx_patch) -> None:
     """rename_view raises ToolError when qualified_name has no dot."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -2006,7 +2063,7 @@ async def test_get_query_plan_allowed_under_readonly(
 
 async def test_get_query_plan_no_connection_string_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """get_query_plan raises ToolError when the item has no connection string."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -2043,7 +2100,7 @@ def _make_reclustered_table() -> Table:
 
 async def test_set_cluster_columns_requires_destructive_flag() -> None:
     """set_cluster_columns raises ToolError without FABRIC_MCP_ALLOW_DESTRUCTIVE=1."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -2104,7 +2161,7 @@ async def test_set_cluster_columns_sql_endpoint_raises_tool_error(mock_ctx, ctx_
     FABRIC_MCP_ALLOW_DESTRUCTIVE=1 is set so the destructive guard passes and
     the SQL-endpoint clustering guard fires instead.
     """
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 

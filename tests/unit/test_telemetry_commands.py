@@ -191,7 +191,7 @@ class TestMapStatus:
         assert map_status(exc) == "api_error"
 
     def test_tool_error_is_user_error(self) -> None:
-        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+        from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
         exc = ToolError("bad tool call")
         assert map_status(exc) == "user_error"
@@ -618,7 +618,7 @@ class TestMcpCommandInvokedInstrumentation:
     def test_wrap_status_user_error_on_tool_error(self) -> None:
         import asyncio  # noqa: PLC0415
 
-        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+        from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
         from fabric_dw.mcp._helpers import _wrap_mcp_tool_with_telemetry  # noqa: PLC0415
 
@@ -713,15 +713,15 @@ class TestMcpCommandInvokedInstrumentation:
 
         This is the regression test for the double-emission bug: mutating_tool()
         calls _wrap_mcp_tool_with_telemetry (layer 1) and then mcp.tool() which
-        triggers InstrumentedFastMCP.tool() (potential layer 2).  The fix marks
+        triggers InstrumentedMCPServer.tool() (potential layer 2).  The fix marks
         already-wrapped callables with __fabric_telemetry_wrapped__ so that
-        InstrumentedFastMCP.tool() skips the second wrapping.
+        InstrumentedMCPServer.tool() skips the second wrapping.
         """
         import asyncio  # noqa: PLC0415
 
-        from fabric_dw.mcp._helpers import InstrumentedFastMCP, mutating_tool  # noqa: PLC0415
+        from fabric_dw.mcp._helpers import InstrumentedMCPServer, mutating_tool  # noqa: PLC0415
 
-        instrumented_mcp: InstrumentedFastMCP = InstrumentedFastMCP("test-server")
+        instrumented_mcp: InstrumentedMCPServer = InstrumentedMCPServer("test-server")
 
         @mutating_tool(instrumented_mcp, "create_warehouse")
         async def create_warehouse(name: str) -> dict:  # type: ignore[return]
@@ -741,9 +741,9 @@ class TestMcpCommandInvokedInstrumentation:
         """A read-only tool registered via @mcp.tool() emits EXACTLY ONE command_invoked."""
         import asyncio  # noqa: PLC0415
 
-        from fabric_dw.mcp._helpers import InstrumentedFastMCP  # noqa: PLC0415
+        from fabric_dw.mcp._helpers import InstrumentedMCPServer  # noqa: PLC0415
 
-        instrumented_mcp: InstrumentedFastMCP = InstrumentedFastMCP("test-server-ro")
+        instrumented_mcp: InstrumentedMCPServer = InstrumentedMCPServer("test-server-ro")
 
         @instrumented_mcp.tool(name="list_warehouses")
         async def list_warehouses(workspace: str) -> list:  # type: ignore[return]

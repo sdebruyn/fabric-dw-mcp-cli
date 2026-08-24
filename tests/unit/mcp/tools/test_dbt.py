@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError
 
 from fabric_dw.services.dbt_scaffold import DbtAuthMode
 from tests.unit._call import call_tool

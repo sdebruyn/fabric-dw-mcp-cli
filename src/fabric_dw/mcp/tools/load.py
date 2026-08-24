@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any, Literal
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from fabric_dw.exceptions import FabricError
@@ -39,7 +39,7 @@ def _absent_table_msg(schema: str, table: str) -> str:
     )
 
 
-def register(mcp: FastMCP) -> None:  # noqa: PLR0915
+def register(mcp: MCPServer) -> None:  # noqa: PLR0915
     """Register table-load tools against *mcp*."""
 
     @mutating_tool(mcp, "load_table_from_url")
@@ -153,7 +153,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             max_errors: Maximum errors before aborting.
             rejected_row_location: URL for rejected-row output.
         """
-        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+        from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
         schema, table_name = parse_qualified_name(qualified_name, kind="table")
         ctx = get_context()
@@ -379,7 +379,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
 
         # SQL Endpoint guard: COPY INTO is Warehouse-only.
         if file_type not in ("CSV", "PARQUET"):
-            from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+            from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
             raise ToolError(f"Unsupported file_type {file_type!r}; must be CSV or PARQUET")
 
@@ -419,7 +419,7 @@ def register(mcp: FastMCP) -> None:  # noqa: PLR0915
             )
             sql_target = make_sql_target(ws_id, entry, item)
 
-            from mcp.server.fastmcp.exceptions import (  # noqa: PLC0415
+            from mcp.server.mcpserver.exceptions import (  # noqa: PLC0415
                 ToolError as _ToolError,
             )
 

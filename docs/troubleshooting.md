@@ -181,3 +181,11 @@ The client automatically retries on each 429 and waits exactly as long as the se
 3. **Restart the MCP client:** Most AI tools (Claude Desktop, Cursor, VS Code) cache the tool list at startup. After updating the config or reinstalling the package, fully quit and reopen the application.
 
 4. **Check the client logs:** Look for stderr output from the `fabric-dw-mcp` process in your AI tool's log folder - startup errors (missing env vars, import failures) are printed there.
+
+## HTTP 413 from the HTTP transport
+
+**Symptom:** A tool call over `--transport http` fails with HTTP 413 (payload too large). The same call over stdio succeeds.
+
+**Cause:** The streamable-HTTP transport caps request bodies at 4 MiB. Only a very large payload reaches that: a multi-megabyte `execute_sql` script, or a procedure or view definition passed to `create_procedure` / `create_view`.
+
+**Fix:** Split the statement, or load the script from storage with `load_table_from_url` / `import_table_from_url` rather than sending it inline. If neither fits, use the stdio transport, which has no body limit.

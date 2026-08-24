@@ -6,8 +6,8 @@ import json
 import logging
 from typing import Annotated, Any, Literal, assert_never
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from fabric_dw.exceptions import FabricError
@@ -24,7 +24,7 @@ __all__ = ["register"]
 _log = logging.getLogger(__name__)
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     """Register sql_exec tools against *mcp*."""
 
     @mcp.tool(name="execute_sql")

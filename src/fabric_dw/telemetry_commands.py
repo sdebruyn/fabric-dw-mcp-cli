@@ -352,7 +352,7 @@ def map_status(exc: BaseException | None) -> str:
             return "api_error"
 
     with contextlib.suppress(ImportError):
-        from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+        from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
         if isinstance(exc, ToolError):
             return "user_error"

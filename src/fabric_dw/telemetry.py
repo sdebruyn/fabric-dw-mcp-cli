@@ -24,6 +24,20 @@ Architecture notes
   ``cache_tenant_id_from_token()`` (#366).
 - Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
   request URLs (containing tenant IDs) from leaking as span attributes.
+- This package installs no span or metric exporter of its own, so spans emitted
+  by code it does not own are never exported *to Application Insights*.  This is
+  not hypothetical: MCP Python SDK v2 installs an OpenTelemetry middleware on
+  every server unconditionally, which emits one span per inbound protocol
+  message.  ``OTEL_TRACES_EXPORTER`` and ``OTEL_METRICS_EXPORTER`` are hard-set
+  to ``none`` around the ``configure_azure_monitor`` call and restored
+  afterwards; the matching kwargs are silently overwritten by the library and do
+  not work.  Note the qualifier: a host process that embeds fabric-dw and has
+  already installed its own ``TracerProvider`` still collects those spans and
+  sends them wherever it chose.  That is correct and desirable; what this
+  prevents is *this package* adding an export path the user did not ask for.
+- ``APPLICATIONINSIGHTS_SDKSTATS_DISABLED`` suppresses the customer-sdkstats
+  channel, which is separate from statsbeat and would otherwise run its own
+  metrics pipeline on our connection string.
 - ``shutdown_on_exit`` is disabled; a bounded ``force_flush`` + ``provider.shutdown()``
   (≤8 s total) is performed at app exit in a daemon thread so the CLI never hangs.
   The explicit ``force_flush`` call before ``shutdown()`` is required to reliably
@@ -72,8 +86,8 @@ release — re-check when upgrading azure-monitor-opentelemetry-exporter.
 
 The logs pipeline must be active for customEvents to flow, so
 ``disable_logging=False`` is passed to ``configure_azure_monitor``.  All other
-safeguards (no auto-instrumentation, no metrics, no live metrics, no statsbeat,
-no atexit hang) are kept exactly as before.
+safeguards (no tracing, no auto-instrumentation, no metrics, no live metrics,
+no statsbeat, no atexit hang) are kept exactly as before.
 """
 
 from __future__ import annotations
@@ -630,6 +644,15 @@ _INSTRUMENTATION_OPTIONS: dict[str, dict[str, bool]] = {
     "urllib3": {"enabled": False},
 }
 
+# Environment applied around the configure_azure_monitor call to switch off the
+# trace and metric pipelines.  Only the exact string "none" works; see the long
+# comment at the call site for why this is a hard set rather than a setdefault,
+# and why OTEL_LOGS_EXPORTER is deliberately absent.
+_OTEL_EXPORTERS_OFF: dict[str, str] = {
+    "OTEL_TRACES_EXPORTER": "none",
+    "OTEL_METRICS_EXPORTER": "none",
+}
+
 
 def _harden_azure_sdk_logging() -> None:
     """Raise the level of noisy Azure SDK loggers to CRITICAL and detach them from root.
@@ -704,7 +727,36 @@ def _get_tracer() -> object | None:
       log records carrying ``microsoft.custom_event.name`` are exported as
       ``EventData`` (``customEvents`` table) — the reason this function now sets
       up a logger instead of a tracer.
-    - ``disable_metrics=True`` prevents generic metric exporters from starting.
+    - ``OTEL_TRACES_EXPORTER=none`` / ``OTEL_METRICS_EXPORTER=none``, hard-set
+      around the ``configure_azure_monitor`` call and restored afterwards, are
+      what actually switch off the trace and metric pipelines.  The matching
+      ``disable_tracing`` / ``disable_metrics`` kwargs do NOT work: the library
+      overwrites caller-supplied values with its own defaults (see the long
+      comment at the call site).  Verified by inspecting
+      the resulting global providers, which are the no-op ``ProxyTracerProvider``
+      and ``_ProxyMeterProvider``, not SDK providers with Azure exporters.
+
+      Tracing must stay off because MCP Python SDK v2 installs an
+      OpenTelemetry middleware on every server unconditionally, emitting one
+      SERVER span per inbound protocol message.  Measured, those spans carry
+      ``mcp.method.name``, ``mcp.protocol.version``, ``jsonrpc.request.id``,
+      ``gen_ai.operation.name``, ``gen_ai.tool.name``, ``error.type`` and span
+      timings.  They do NOT carry tool exception text: ``MCPServer`` converts a
+      failing tool into ``CallToolResult(is_error=True)`` before the middleware
+      sees it, so the middleware's ``record_exception`` branch never fires for
+      tool errors and only ``error.type="tool_error"`` is set.  The leak is
+      therefore metadata, not payload — but it is metadata the documented
+      collection list in ``docs/telemetry.md`` does not cover, which is reason
+      enough.  (``prompts/get`` would additionally echo the client-supplied
+      prompt name into the span name and ``gen_ai.prompt.name``; this project
+      registers no prompts.  ``resources/read`` does not echo, since its params
+      carry ``uri`` rather than ``name``.)
+
+      The exporter-side fix is preferred over the producer-side one (dropping
+      the middleware from ``MCPServer.middleware``, a public but explicitly
+      "Provisional" property whose signature is expected to change before v2 is
+      final).  One global switch covers every library that might emit spans,
+      needs no per-instance wiring, and does not depend on a provisional API.
     - ``enable_performance_counters=False`` disables the PerformanceCounters
       subsystem (CPU / memory poller) which is NOT covered by ``disable_metrics``
       in azure-monitor-opentelemetry 1.8+.  On short-lived processes its
@@ -754,6 +806,31 @@ def _get_tracer() -> object | None:
             # respected.
             os.environ.setdefault("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "true")
 
+            # Customer sdkstats: a SECOND, separately-gated telemetry-about-telemetry
+            # channel.  Note the different variable name; the statsbeat one above does
+            # NOT gate this.
+            #
+            # AzureMonitorLogExporter.__init__ calls collect_customer_sdkstats()
+            # unconditionally, which stands up a singleton manager holding its own
+            # AzureMonitorMetricExporter on OUR connection string, a private
+            # MeterProvider, and a PeriodicExportingMetricReader on a 15-minute
+            # interval.  It exports item.success.count / item.drop.count /
+            # item.retry.count with language, exporter version and compute type.
+            # Measured without this line, and even with OTEL_METRICS_EXPORTER=none,
+            # the manager reports enabled and initialised, holds a live
+            # PeriodicExportingMetricReader, and the process carries an
+            # "AzureMonitorMetricExporter Storage" thread alongside the reader's own.
+            # That is a metrics pipeline, which contradicts docs/telemetry.md.  A CLI
+            # run shorter than the 15-minute interval never reaches an export cycle,
+            # but a long-lived MCP server does, and that is this project's main mode.
+            #
+            # setdefault, not a hard set: the gate is `disabled.lower() != "true"`, so
+            # an operator setting it to "false" genuinely re-enables collection.  That
+            # makes it a real override rather than a discarded value (unlike the
+            # OTEL_*_EXPORTER pair below), and the failure direction is benign: more
+            # Microsoft-internal telemetry, opted into deliberately.
+            os.environ.setdefault("APPLICATIONINSIGHTS_SDKSTATS_DISABLED", "true")
+
             # Build the OTel Resource that populates native Part A fields and prevents
             # hostname fallback for cloud_RoleInstance / ai.device.id (#477).
             resource = _build_otel_resource(_current_surface)
@@ -767,7 +844,14 @@ def _get_tracer() -> object | None:
                 # microsoft.custom_event.name are silently dropped and events never
                 # appear in the App Insights "Usage → Events" or "Usage → Users" blades.
                 "disable_logging": False,
+                # NOTE: these next two are statements of intent, NOT the mechanism.
+                # azure-monitor-opentelemetry clobbers both with its own defaults
+                # (see _OTEL_EXPORTERS_OFF below, which is what actually disables
+                # these pipelines).  They are kept so the intent is visible at the
+                # call site and so the arguments become effective for free if
+                # upstream ever stops overwriting caller kwargs.
                 "disable_metrics": True,
+                "disable_tracing": True,
                 # A1: disable PerformanceCounters — not covered by disable_metrics in
                 # azure-monitor-opentelemetry 1.8+; its _get_processor_time callback
                 # divides by zero on short-lived processes and logs a traceback (#399).
@@ -786,7 +870,51 @@ def _get_tracer() -> object | None:
             if resource is not None:
                 configure_kwargs["resource"] = resource
 
-            configure_azure_monitor(**configure_kwargs)
+            # PRIVACY, load-bearing.  These two env vars are the ONLY working way
+            # to switch off the trace and metric pipelines, and they must be set
+            # HARD, not with setdefault.
+            #
+            # Why the kwargs above do not do it: in azure-monitor-opentelemetry
+            # 1.8.9 `_get_configurations()` copies the caller's kwargs into a dict
+            # and THEN runs a `_default_*` pass in which `_default_disable_tracing`
+            # / `_default_disable_metrics` assign unconditionally, clobbering
+            # whatever the caller passed.  Contrast `_default_connection_string`,
+            # which early-returns when the key is already present.  Those defaults
+            # consult only these env vars, and only for an exact `== "none"` after
+            # lower/strip.
+            #
+            # Why NOT setdefault: any pre-existing value that is not literally
+            # "none" leaves the pipeline ON, and what then gets installed is the
+            # AzureMonitorTraceExporter pointed at the maintainer's ingestion
+            # endpoint, NOT the exporter the operator asked for.  Measured:
+            #     (unset)                     -> ProxyTracerProvider, no exporters
+            #     OTEL_TRACES_EXPORTER=otlp   -> AzureMonitorTraceExporter installed
+            #     OTEL_TRACES_EXPORTER=""     -> AzureMonitorTraceExporter installed
+            # So setdefault gives the operator no control (outside the separate
+            # auto-instrumentation entry point, `== "none"` is the only thing this
+            # distro ever reads these for) and one silent third-party export path.
+            # A host process that already installed its own TracerProvider is
+            # unaffected either way: OpenTelemetry refuses to override an existing
+            # provider, so the user's provider wins.
+            #
+            # Scoped and restored, because fabric-dw can be embedded as a library
+            # and must not mutate the host process environment beyond this call.
+            # Mutating os.environ is process-global, but the window is safe: it sits
+            # inside the double-checked _sdk_init_lock so it runs exactly once, and
+            # both entry points (the CLI and the MCP server) reach it on the main
+            # thread before any transport or worker concurrency starts.
+            # OTEL_LOGS_EXPORTER is deliberately NOT touched: a user setting it to
+            # "none" disables our own customEvents, which is the safe direction.
+            _prev_otel = {k: os.environ.get(k) for k in _OTEL_EXPORTERS_OFF}
+            os.environ.update(_OTEL_EXPORTERS_OFF)
+            try:
+                configure_azure_monitor(**configure_kwargs)
+            finally:
+                for _key, _old in _prev_otel.items():
+                    if _old is None:
+                        os.environ.pop(_key, None)
+                    else:
+                        os.environ[_key] = _old
             # Obtain the OTel Logger via the global LoggerProvider set up by
             # configure_azure_monitor.  This logger is used in emit_event to fire
             # customEvents as log records (not spans).
@@ -815,8 +943,8 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
     exporter is slow or unreachable.  The thread is daemon so the OS kills it
     when the main thread exits (no hang possible).
 
-    Both the tracer provider (spans, if any) and the logger provider (customEvents
-    log pipeline) are flushed so no records are lost.
+    Both the tracer provider (a no-op while ``OTEL_TRACES_EXPORTER=none``) and the
+    logger provider (customEvents log pipeline) are flushed so no records are lost.
 
     Args:
         timeout_ms: Maximum milliseconds to wait for the flush.  Defaults to
@@ -829,8 +957,13 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
         # Each pipeline is flushed independently so a failure in one does
         # not prevent the other from running.
 
-        # Tracer provider — belt-and-suspenders; no spans are emitted in the
-        # new path, but kept here in case the SDK creates internal spans.
+        # Tracer provider — belt-and-suspenders.  Spans ARE created in-process
+        # (the MCP SDK middleware makes one per inbound message), but with
+        # OTEL_TRACES_EXPORTER=none no exporter is attached, so the global
+        # provider is the no-op ProxyTracerProvider, which has no force_flush.
+        # Verified against the locked azure-monitor-opentelemetry, not assumed.
+        # The getattr guard handles that; the branch stays so a future opt-in to
+        # tracing still flushes.
         with contextlib.suppress(Exception):
             from opentelemetry import trace as _trace  # noqa: PLC0415
 
@@ -945,8 +1078,10 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
             if callable(log_shutdown):
                 log_shutdown()
 
-        # Tracer provider — belt-and-suspenders; no spans are emitted in the
-        # new path, but kept so any SDK-internal spans are flushed.
+        # Tracer provider — belt-and-suspenders.  With OTEL_TRACES_EXPORTER=none
+        # the global provider is the no-op ProxyTracerProvider and has no
+        # shutdown; the getattr guard handles that.  Verified, not assumed.  The
+        # branch stays so a future opt-in still tears the trace pipeline down.
         with contextlib.suppress(Exception):
             from opentelemetry import trace as _trace  # noqa: PLC0415
 

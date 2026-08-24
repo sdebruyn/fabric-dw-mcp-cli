@@ -2,7 +2,7 @@
 
 Every test that asserts on a tool's raw Python return value invokes it
 through ``mcp._tool_manager.call_tool(name, arguments)`` rather than the
-public ``FastMCP.call_tool()`` / ``MCPServer.call_tool()`` API. That is
+public ``MCPServer.call_tool()`` API. That is
 deliberate: the public API always runs with ``convert_result=True`` and
 wraps the return value in a ``CallToolResult``, which would force every
 such assertion to be rewritten against ``.structured_content`` /
@@ -16,13 +16,13 @@ Used by:
 - every test module under ``tests/unit/mcp/`` (and ``tests/unit/mcp/tools/``)
   that calls an MCP tool directly against the production ``mcp`` singleton
 - ``tests/unit/test_telemetry_commands.py``, which builds its own
-  ``InstrumentedFastMCP`` instances and calls tools on those instead
+  ``InstrumentedMCPServer`` instances and calls tools on those instead
 
 Centralising the call here removes ~580 direct references to the private
 SDK internal, and gives the suite a single place to update instead of one
-per call site. In MCP SDK v2, ``ToolManager.call_tool()`` gains a required
+per call site. In MCP SDK v2, ``ToolManager.call_tool()`` gained a required
 ``context`` positional argument; that is the reason this wrapper exists,
-so the v2 migration only has to change the body of :func:`call_tool` rather
+so the v2 migration only had to change the body of :func:`call_tool` rather
 than every call site.
 """
 
@@ -30,14 +30,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 
-async def call_tool(mcp: FastMCP, name: str, arguments: dict[str, Any]) -> Any:
+async def call_tool(mcp: MCPServer, name: str, arguments: dict[str, Any]) -> Any:
     """Call the MCP tool *name* with *arguments* and return its raw return value.
 
-    Thin wrapper around ``mcp._tool_manager.call_tool(name, arguments)``. See
-    the module docstring for why this goes through the private tool manager
+    Thin wrapper around ``mcp._tool_manager.call_tool(name, arguments, context)``.
+    See the module docstring for why this goes through the private tool manager
     instead of the public, result-wrapping ``call_tool()`` API.
+
+    The ``context`` is built exactly the way ``MCPServer.call_tool()`` builds it
+    when no request context exists, so tools see the same object they would from
+    the public API. No tool in this project takes a ``Context`` parameter (the
+    shared ``ServerContext`` is reached through a module-level sentinel instead),
+    so nothing reads it; it is required by the signature, not by the callees.
     """
-    return await mcp._tool_manager.call_tool(name, arguments)
+    context: Context[Any, Any] = Context(mcp_server=mcp, subscriptions=mcp._subscriptions)
+    return await mcp._tool_manager.call_tool(name, arguments, context)

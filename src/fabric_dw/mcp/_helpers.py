@@ -3,17 +3,17 @@
 This module provides utilities imported by every domain tool module:
 
 - :func:`fabric_err` — convert a :class:`~fabric_dw.exceptions.FabricError`
-  to a :class:`~mcp.server.fastmcp.exceptions.ToolError` with structured data.
+  to a :class:`~mcp.server.mcpserver.exceptions.ToolError` with structured data.
 - :func:`tool_err` — uniform error funnel mapping FabricError / ValueError /
   Exception to ToolError without inline ternaries.
-- :func:`mutating_tool` — decorator factory that registers a tool with FastMCP
+- :func:`mutating_tool` — decorator factory that registers a tool with the MCP server
   **and** injects :func:`~fabric_dw.mcp._guards.assert_writes_allowed` using
   the same name string, eliminating the duplication flagged by M21.
 - :func:`parse_iso8601` — parse an ISO-8601 string to :class:`~datetime.datetime`,
-  raising :class:`~mcp.server.fastmcp.exceptions.ToolError` on bad input.
+  raising :class:`~mcp.server.mcpserver.exceptions.ToolError` on bad input.
 - :func:`parse_qualified_name` — adapter around
   :func:`~fabric_dw.identifiers.parse_qualified_name` that converts
-  :class:`ValueError` to :class:`~mcp.server.fastmcp.exceptions.ToolError`.
+  :class:`ValueError` to :class:`~mcp.server.mcpserver.exceptions.ToolError`.
 - :func:`make_sql_target` — build a :class:`~fabric_dw.sql.SqlTarget` from a
   resolved item entry and workspace ID, including the connection-string guard.
 - :func:`resolve_item` — return ``(workspace_id, ItemEntry)`` in one resolver
@@ -23,7 +23,7 @@ This module provides utilities imported by every domain tool module:
 
 Telemetry
 ---------
-Both :func:`mutating_tool` and the :class:`InstrumentedFastMCP` subclass
+Both :func:`mutating_tool` and the :class:`InstrumentedMCPServer` subclass
 wrap every registered tool with a timing + ``command_invoked`` telemetry
 call (fire-and-forget, never raises).
 """
@@ -38,8 +38,8 @@ from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 from uuid import UUID
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from fabric_dw.cache import ItemEntry as _ItemEntry
 from fabric_dw.exceptions import FabricError
@@ -55,7 +55,7 @@ from fabric_dw.telemetry_commands import (
 )
 
 __all__ = [
-    "InstrumentedFastMCP",
+    "InstrumentedMCPServer",
     "fabric_err",
     "make_sql_target",
     "mutating_tool",
@@ -104,7 +104,7 @@ def _wrap_mcp_tool_with_telemetry(
     never propagate to the caller.
 
     The wrapper sets ``__fabric_telemetry_wrapped__ = True`` on the returned
-    callable so that :class:`InstrumentedFastMCP` can detect already-wrapped
+    callable so that :class:`InstrumentedMCPServer` can detect already-wrapped
     functions and skip the second wrapping (preventing double-emission).
 
     Args:
@@ -135,13 +135,13 @@ def _wrap_mcp_tool_with_telemetry(
                 destructive=destructive,
             )
 
-    # Mark as already instrumented so InstrumentedFastMCP.tool() skips re-wrapping.
+    # Mark as already instrumented so InstrumentedMCPServer.tool() skips re-wrapping.
     setattr(telemetry_wrapper, _TELEMETRY_WRAPPED_ATTR, True)
     return telemetry_wrapper
 
 
 def mutating_tool(
-    mcp: FastMCP,
+    mcp: MCPServer,
     name: str,
     *,
     destructive: bool = False,
@@ -177,7 +177,7 @@ def mutating_tool(
             ...
 
     Args:
-        mcp: The :class:`~mcp.server.fastmcp.FastMCP` server instance.
+        mcp: The :class:`~mcp.server.mcpserver.MCPServer` server instance.
         name: The tool name string, used for both registration and the write guard.
         destructive: When ``True``, also call
             :func:`~fabric_dw.mcp._guards.assert_destructive_allowed` before the
@@ -212,8 +212,8 @@ def mutating_tool(
     return decorator
 
 
-class InstrumentedFastMCP(FastMCP):
-    """A :class:`~mcp.server.fastmcp.FastMCP` subclass that wraps every
+class InstrumentedMCPServer(MCPServer[None]):
+    """A :class:`~mcp.server.mcpserver.MCPServer` subclass that wraps every
     ``@mcp.tool(name=...)`` call with a fire-and-forget ``command_invoked``
     telemetry event.
 
@@ -224,6 +224,11 @@ class InstrumentedFastMCP(FastMCP):
 
     No changes to any tool registration code are required: all existing
     ``@mcp.tool(name=...)`` calls automatically gain instrumentation.
+
+    The base is parameterised as ``MCPServer[None]`` because
+    :func:`~fabric_dw.mcp._context.fabric_lifespan` yields ``None``: the shared
+    :class:`~fabric_dw.mcp._context.ServerContext` is reached through a
+    module-level sentinel, not through the lifespan result.
     """
 
     def tool(  # noqa: PLR0913
@@ -236,7 +241,7 @@ class InstrumentedFastMCP(FastMCP):
         meta: dict[str, Any] | None = None,
         structured_output: bool | None = None,  # noqa: FBT001
     ) -> Callable[[Any], Any]:
-        """Override :meth:`FastMCP.tool` to inject per-call telemetry."""
+        """Override :meth:`MCPServer.tool` to inject per-call telemetry."""
         parent_decorator = super().tool(
             name=name,
             title=title,
@@ -365,7 +370,7 @@ def parse_qualified_name(qualified_name: str, kind: str = "object") -> tuple[str
 
     Delegates to :func:`~fabric_dw.identifiers.parse_qualified_name` (the
     canonical implementation) and converts :class:`ValueError` to
-    :class:`~mcp.server.fastmcp.exceptions.ToolError`.
+    :class:`~mcp.server.mcpserver.exceptions.ToolError`.
 
     Semantics match :func:`~fabric_dw.identifiers.parse_qualified_name`:
 
@@ -400,7 +405,7 @@ def parse_qualified_name(qualified_name: str, kind: str = "object") -> tuple[str
 def make_sql_target(ws_id: UUID, entry: _ItemEntry, item: str) -> SqlTarget:
     """Build a :class:`~fabric_dw.sql.SqlTarget` from a resolved item entry.
 
-    Raises :class:`~mcp.server.fastmcp.exceptions.ToolError` directly when
+    Raises :class:`~mcp.server.mcpserver.exceptions.ToolError` directly when
     *entry* has no connection string, eliminating the ``try: raise FabricError
     # noqa: TRY301`` anti-pattern in every caller.
 

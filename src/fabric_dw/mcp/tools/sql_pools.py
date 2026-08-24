@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field, ValidationError
 
 from fabric_dw.exceptions import AlreadyExistsError, FabricError, NotFoundError
@@ -30,7 +30,7 @@ __all__ = ["register"]
 _log = logging.getLogger(__name__)
 
 
-def register(mcp: FastMCP) -> None:  # noqa: PLR0915
+def register(mcp: MCPServer) -> None:  # noqa: PLR0915
     """Register SQL Pools tools against *mcp*."""
 
     @mcp.tool(name="get_sql_pools_status")

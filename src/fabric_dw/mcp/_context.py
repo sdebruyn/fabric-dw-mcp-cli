@@ -7,7 +7,7 @@ and cleared on shutdown.
 
 Design note
 -----------
-FastMCP's lifespan mechanism stores the yielded object inside the low-level
+The SDK's lifespan mechanism stores the yielded object inside the low-level
 request context (``request_context.lifespan_context``), but retrieving it
 requires injecting a ``Context`` parameter into every tool function.  Instead,
 we store the single ``ServerContext`` instance in a module-level sentinel
@@ -41,7 +41,7 @@ from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.resolver import Resolver
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
 __all__ = [
     "ServerContext",
@@ -193,17 +193,17 @@ def build_context(
 
 
 # ---------------------------------------------------------------------------
-# FastMCP lifespan
+# MCP server lifespan
 # ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
-async def fabric_lifespan(app: FastMCP) -> AsyncIterator[None]:  # noqa: ARG001
-    """FastMCP lifespan that initialises and tears down the :class:`ServerContext`.
+async def fabric_lifespan(app: MCPServer) -> AsyncIterator[None]:  # noqa: ARG001
+    """MCP server lifespan that initialises and tears down the :class:`ServerContext`.
 
     Usage::
 
-        mcp = FastMCP("fabric-dw", lifespan=fabric_lifespan)
+        mcp = MCPServer("fabric-dw", lifespan=fabric_lifespan)
 
     The lifespan:
 

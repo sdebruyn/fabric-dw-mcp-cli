@@ -26,10 +26,16 @@ applied:
 - ``_reset_telemetry_module_globals`` — resets ``_tenant_id_override`` and the
   ``_tenant_id_cache`` sentinel between tests so values cannot bleed across tests
   in the same process.
+
+A third fixture, ``_restore_sdk_env``, applies to *every* test rather than only
+the self-managed modules: it restores the ``OTEL_*`` / ``APPLICATIONINSIGHTS_*``
+variables that ``_get_tracer()`` writes straight to ``os.environ``, which
+``monkeypatch`` cannot roll back when the key was absent to begin with.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Generator
 from types import ModuleType
@@ -110,6 +116,45 @@ def _disable_telemetry_globally(
     if request.path is not None and request.path.name in _TELEMETRY_SELF_MANAGED_MODULES:
         return
     monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
+
+
+# Environment variables that ``fabric_dw.telemetry._get_tracer()`` writes directly
+# to ``os.environ``.  Three test modules reach the real ``_get_tracer()``, so
+# without a restore these escape into the rest of the pytest process.
+_SDK_ENV_VARS = (
+    "OTEL_TRACES_EXPORTER",
+    "OTEL_METRICS_EXPORTER",
+    "OTEL_LOGS_EXPORTER",
+    "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+    "APPLICATIONINSIGHTS_SDKSTATS_DISABLED",
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_sdk_env() -> Generator[None, None, None]:
+    """Snapshot and restore the env vars ``_get_tracer()`` writes.
+
+    ``monkeypatch.delenv(..., raising=False)`` records nothing when the key is
+    already absent, so a subsequent real assignment inside ``_get_tracer()`` has
+    no teardown and leaks process-globally.  A full ``tests/unit`` run used to end
+    with ``APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL`` set, sourced from
+    ``test_telemetry_commands.py``.
+
+    Deliberately unconditional rather than gated on
+    ``_TELEMETRY_SELF_MANAGED_MODULES``: the cost is a dict of five lookups per
+    test, and gating would mean a future module that reaches ``_get_tracer()``
+    silently reintroduces the leak until someone remembers to extend the
+    frozenset.  Nothing depends on these variables surviving a test.
+    """
+    saved = {key: os.environ.get(key) for key in _SDK_ENV_VARS}
+    try:
+        yield
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @pytest.fixture(autouse=True)

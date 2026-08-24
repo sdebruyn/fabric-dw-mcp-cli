@@ -270,11 +270,11 @@ async def test_get_query_plan_mermaid_no_xml_key(mock_ctx, ctx_patch) -> None:
 async def test_get_query_plan_invalid_format_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """An unsupported format value raises ToolError.
 
-    This exercises FastMCP's *schema-validation* layer (Pydantic rejects the
+    This exercises the MCP server's *schema-validation* layer (Pydantic rejects the
     Literal before the function body runs), not the in-body ``assert_never``.
     Removing the ``assert_never`` would not make this test pass through the body.
     """
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -322,7 +322,7 @@ _SENSITIVE_QUERY = "SELECT col FROM dbo.Payments WHERE user_id = 42"
 
 async def test_execute_sql_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """A raw driver exception from execute() is converted to ToolError at the tool boundary."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -348,7 +348,7 @@ async def test_execute_sql_raw_driver_exc_does_not_leak_internal_detail(
     mock_ctx, ctx_patch
 ) -> None:
     """ToolError message from a raw driver exception must not contain the raw exception text."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -378,7 +378,7 @@ async def test_execute_sql_raw_driver_exc_does_not_leak_internal_detail(
 
 async def test_get_query_plan_raw_driver_exc_raises_tool_error(mock_ctx, ctx_patch) -> None:
     """A raw driver exception from get_plan() is converted to ToolError at the tool boundary."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
@@ -404,7 +404,7 @@ async def test_get_query_plan_raw_driver_exc_does_not_leak_internal_detail(
     mock_ctx, ctx_patch
 ) -> None:
     """ToolError message from a raw driver exception must not contain the raw exception text."""
-    from mcp.server.fastmcp.exceptions import ToolError  # noqa: PLC0415
+    from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
 
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
