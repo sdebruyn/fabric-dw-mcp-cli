@@ -51,8 +51,12 @@ def register(mcp: MCPServer) -> None:
         read-only investigation.
 
         Supports both Warehouse and SQL Analytics Endpoint items.  Multi-statement
-        batches are allowed; only the **last** result set is returned.  DDL/DML
-        statements that produce no result set return ``columns=[]`` and ``rows=[]``.
+        batches are allowed; the tool keeps the last result set that has a column
+        list (i.e. the last query), not the last statement.  A batch that ends with
+        DDL/DML after a query, such as ``SELECT id FROM t; UPDATE t SET x = 1;``,
+        returns the ``SELECT`` result and does not separately report that the
+        ``UPDATE`` ran.  A statement with no result set at all (DDL/DML with nothing
+        else in the batch) returns ``columns=[]`` and ``rows=[]``.
 
         ``datetime`` and ``Decimal`` column values are pre-serialised to strings.
         ``bytes`` / varbinary columns are base64-encoded and their column names are

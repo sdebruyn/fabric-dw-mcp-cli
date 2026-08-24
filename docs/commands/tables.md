@@ -390,6 +390,8 @@ Run `sp_get_table_health_metrics` against a single table to surface Delta/Parque
 
 The proc is Generally Available (announced at Build 2026) but Microsoft Learn has no dedicated reference page yet. Output columns are passed through verbatim - the exact column names and types are determined by the proc and may change across Fabric releases.
 
+`--json` on a zero-row result prints `[]`, with no column names included. This is different from `sql exec --json`, which always emits `{"columns": [...], "rows": [...], "rowcount": N}` even when `rows` is empty. `tables health-check --json` follows the convention shared by every other list-style `--json` command in this CLI instead: the output is always a JSON array, regardless of row count. If you need the column names of a table with no health issues, they are also available unconditionally through the `get_table_health_metrics` MCP tool.
+
 **Synopsis**
 
 ```

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from datetime import UTC, datetime
 from io import StringIO
@@ -15,6 +16,7 @@ from fabric_dw.cli._render import (
     _format_nested,
     _is_guid_column,
     _make_bar,
+    _render_positional_table,
     confirm,
     render,
     render_permissions_table,
@@ -2226,7 +2228,70 @@ class TestRenderResultRowsEmptyRows:
         assert "(0 rows)" in output
 
     def test_empty_rows_json_output_is_empty_list(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """The JSON path is unaffected: zero rows still serialise to []."""
+        """Zero rows still serialise to [], dropping *columns* — deliberate, not a bug.
+
+        This is the JSON-branch asymmetry issue #1041 discusses: the table
+        path above still renders headers for an empty result, but the JSON
+        branch collapses to a bare ``[]`` with no shape information at all.
+        The decision recorded in #1041 is to keep this behaviour rather than
+        change it, because ``render_result_rows``'s JSON branch backs every
+        list-style ``--json`` CLI command that uses it and must keep
+        returning a JSON array; see the ``.. note::`` on ``render_result_rows``
+        in ``src/fabric_dw/cli/_render.py`` for the full reasoning. Do not
+        "fix" this without re-reading that note and #1041.
+        """
         render_result_rows(["id", "name"], [], json_output=True)
         captured = capsys.readouterr()
         assert json.loads(captured.out) == []
+
+
+class TestPruneNullColumnsDefault:
+    """``prune_null_columns`` defaults (issue #1041).
+
+    ``_render_positional_table`` used to default to *True* while its only
+    caller, ``render_result_rows``, defaulted to *False*. Reading either
+    signature in isolation gave the wrong idea about what happens by
+    default, and the two could silently drift apart in the future.
+
+    The fix is not "pick a matching default for both": ``render_result_rows``
+    keeps ``prune_null_columns=False`` because ``fdw sql exec``
+    (``src/fabric_dw/cli/commands/sql.py``) calls it without passing
+    ``prune_null_columns`` at all and relies on that default to show every
+    column a query returned, including all-NULL ones. Flipping that default
+    would silently break ``sql exec`` output.
+
+    ``_render_positional_table``, by contrast, has exactly one caller
+    (``render_result_rows``), which always forwards the flag explicitly. Its
+    default was therefore dead configuration whose only effect was the
+    divergence #1041 reported — so instead of defaulting it to match, the
+    parameter is now required keyword-only. A future mismatch becomes a
+    ``TypeError`` at the call site rather than a second default to keep in
+    sync.
+    """
+
+    def test_render_result_rows_default_is_false(self) -> None:
+        """``sql exec`` depends on this default; guard it directly against drift."""
+        default = inspect.signature(render_result_rows).parameters["prune_null_columns"].default
+        assert default is False
+
+    def test_positional_table_requires_prune_null_columns(self) -> None:
+        """No default left to diverge: the parameter must be required."""
+        param = inspect.signature(_render_positional_table).parameters["prune_null_columns"]
+        assert param.default is inspect.Parameter.empty
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
+
+    def test_positional_table_keeps_all_null_column_when_not_pruning(self) -> None:
+        """With ``prune_null_columns=False``, ``_render_positional_table`` must not prune."""
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        _render_positional_table(
+            ["alpha", "beta"],
+            [[None, 5], [None, 10]],
+            console=console,
+            title=None,
+            prune_null_columns=False,
+        )
+        output = sio.getvalue()
+        assert "alpha" in output
+        assert "beta" in output
+        assert "NULL" in output

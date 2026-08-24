@@ -321,7 +321,7 @@ class TestSqlExec:
                 ],
             )
         assert result.exit_code == 0
-        assert "rowcount" in result.output
+        assert "Query executed successfully. rowcount=3" in result.output
 
 
 class TestSqlExecErrors:

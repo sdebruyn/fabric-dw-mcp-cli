@@ -2,7 +2,8 @@
 
 Public API
 ----------
-- :func:`execute` — run an arbitrary SQL batch and return the last result set.
+- :func:`execute` — run an arbitrary SQL batch and return the last result set
+  that has columns.
 - :func:`get_plan` — capture the estimated SHOWPLAN_XML for a query without executing it.
 """
 
@@ -155,12 +156,16 @@ async def execute(
     mode: CredentialMode = CredentialMode.DEFAULT,
     row_limit: int | None = None,
 ) -> SqlResult:
-    """Execute *query* against *target* and return the last result set.
+    """Execute *query* against *target* and return the last result set that has columns.
 
     The function executes the SQL batch as-is (no read-only enforcement).
-    Multi-statement batches are supported; only the **last** result set is
-    returned.  DDL/DML statements that produce no result set return an empty
-    ``SqlResult`` (``columns=[]``, ``rows=[]``).
+    Multi-statement batches are supported; the function keeps the last result
+    set that has a column list (i.e. the last query), not the last statement.
+    A batch that ends with DDL/DML after a query, such as
+    ``SELECT id FROM t; UPDATE t SET x = 1;``, returns the ``SELECT`` result
+    and does not separately report that the ``UPDATE`` ran.  A statement with
+    no result set at all (DDL/DML with nothing else in the batch) returns an
+    empty ``SqlResult`` (``columns=[]``, ``rows=[]``).
 
     ``datetime`` and ``Decimal`` values are serialised to strings before being
     placed in ``SqlResult.rows``.  ``bytes`` / ``varbinary`` values are

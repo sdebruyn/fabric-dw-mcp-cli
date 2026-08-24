@@ -3984,6 +3984,49 @@ class TestTablesHealthCheck:
         parsed = json.loads(result.output)
         assert parsed == []
 
+    def test_health_check_zero_rows_json_output_is_empty_list(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Columns present but zero rows, through the full CLI command (issue #1041).
+
+        Unlike ``test_health_check_empty_result`` above, which mocks a result
+        with no columns at all, this exercises the actual asymmetry #1041
+        discusses: a result that has a column list but no rows. The JSON
+        branch of ``render_result_rows`` deliberately still emits a bare
+        ``[]`` here, discarding the column list, so that every list-style
+        ``--json`` CLI command keeps returning a JSON array rather than
+        switching to an object on the empty case. This is a decision, not a
+        gap: see the ``.. note::`` on ``render_result_rows`` in
+        ``src/fabric_dw/cli/_render.py``. Consumers that need the column
+        shape of an empty result have it through ``sql exec --json`` or the
+        MCP ``get_table_health_metrics`` tool, neither of which goes through
+        ``render_result_rows``.
+        """
+        _ = cache_env
+        mock_http = AsyncMock()
+        fake_cols = ["issue", "severity"]
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.get_table_health_metrics",
+                new=AsyncMock(return_value=ResultSet(columns=fake_cols, rows=[])),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "--json", "tables", "health-check", SE_GUID, "dbo.FactSales"],
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed == []
+
     def test_health_check_zero_rows_renders_table_headers(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
