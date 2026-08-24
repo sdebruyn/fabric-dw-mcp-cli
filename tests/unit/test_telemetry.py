@@ -1121,8 +1121,24 @@ def test_get_tracer_passes_enable_performance_counters_false(
 
 
 # ---------------------------------------------------------------------------
-# Privacy: no span or metric exporter is ever installed (#1043)
+# The library never builds its own exporters (#1043, revised by #1049)
 # ---------------------------------------------------------------------------
+#
+# What changed with #1049
+# -----------------------
+# This project now DOES export spans: the MCP protocol spans the MCP SDK emits,
+# which #1049 decided are worth collecting. What it does not do is let
+# ``configure_azure_monitor`` build the trace pipeline, because the exporter that
+# call installs ships every span in the process verbatim, and parts of an MCP
+# span are chosen by the client (see tests/unit/test_telemetry_spans.py for the
+# measured list). The pipeline is built instead by
+# ``telemetry_spans.install_mcp_span_pipeline``, whose exporter drops non-MCP
+# spans and rebuilds the rest from an allowlist.
+#
+# So the intent these tests pin is: the metrics pipeline stays off entirely, the
+# library's own trace pipeline never gets built, the logs pipeline stays on, and
+# a user's ``OTEL_TRACES_EXPORTER`` still cannot cause the unfiltered exporter to
+# be installed.
 #
 # What these tests can and cannot do
 # ----------------------------------
@@ -1164,6 +1180,7 @@ def _run_get_tracer(
     tmp_path: Path,
     request: pytest.FixtureRequest,
     preset: dict[str, str] | None = None,
+    surface: str = "cli",
 ) -> tuple[Any, dict[str, str | None], dict[str, str | None]]:
     """Run ``_get_tracer()`` and capture the environment as the library would see it.
 
@@ -1174,7 +1191,8 @@ def _run_get_tracer(
     library reads them.
 
     *preset* seeds the environment beforehand, to exercise the case where the
-    caller's process already has these variables set.
+    caller's process already has these variables set.  *surface* sets the module
+    global the MCP span pipeline is gated on.
 
     The autouse ``_mock_configure_azure_monitor`` fixture is resolved through
     *request* rather than injected by name, because its value is needed (to hang
@@ -1207,6 +1225,7 @@ def _run_get_tracer(
     mod._sdk_initialised = False
     mod._tracer = None
     mod._otel_logger = None
+    mod._current_surface = surface
     mod._get_tracer()
 
     after = {k: os.environ.get(k) for k in _WATCHED_OTEL_VARS}
@@ -1238,10 +1257,23 @@ def _resolves_disabled(kind: str, env_at_call: dict[str, str | None]) -> bool:
         return bool(resolved[f"disable_{kind}"])
 
 
-def test_get_tracer_disables_the_trace_pipeline_effectively(
+def test_get_tracer_never_lets_the_library_build_the_trace_pipeline(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    """The environment the library sees must make it disable tracing.
+    """The environment the library sees must still make it skip tracing setup.
+
+    #1049 turned span collection ON, but not this way. What
+    ``configure_azure_monitor`` installs is an ``AzureMonitorTraceExporter``
+    wired straight to the batch processor, which exports every span in the
+    process exactly as produced. An MCP span as produced carries the
+    client-chosen prompt or tool name in its span name, the server's error text
+    in its status description, and, on the ``prompts/get`` path, an exception
+    event holding the message and the full stacktrace. Letting the library build
+    this pipeline would ship all of that.
+
+    ``telemetry_spans.install_mcp_span_pipeline`` builds the pipeline instead,
+    with a sanitising exporter in front. This test guards the boundary between
+    the two: the library's own pipeline must stay unbuilt.
 
     Asserting that ``configure_azure_monitor`` merely RECEIVES
     ``disable_tracing=True`` would be worthless: the library throws that value
@@ -1250,25 +1282,69 @@ def test_get_tracer_disables_the_trace_pipeline_effectively(
     ``OTEL_TRACES_EXPORTER``. So this captures the environment at call time and
     feeds it through that real decision function.
 
-    Why it matters: MCP Python SDK v2 installs an OpenTelemetry middleware on
-    every server unconditionally, emitting one SERVER span per inbound protocol
-    message with ``mcp.method.name``, ``jsonrpc.request.id``,
-    ``gen_ai.tool.name``, ``error.type`` and timings. That is metadata the
-    documented collection list in docs/telemetry.md does not cover.
-
     Do not "simplify" this into an assertion about kwargs.
     """
     mod, at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request)
     try:
         assert at_call["OTEL_TRACES_EXPORTER"] == "none"
         assert _resolves_disabled("tracing", at_call), (
-            "The real library resolves tracing as ENABLED, so MCP protocol spans "
-            "would be exported to Application Insights."
+            "The real library resolves tracing as ENABLED, so it would install its own "
+            "unfiltered AzureMonitorTraceExporter alongside the sanitising one."
         )
     finally:
         mod._sdk_initialised = False
         mod._tracer = None
         mod._otel_logger = None
+
+
+@pytest.mark.parametrize(
+    ("surface", "expected"),
+    [("mcp", True), ("cli", False)],
+)
+def test_span_pipeline_is_installed_on_the_mcp_surface_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    surface: str,
+    expected: bool,  # noqa: FBT001
+) -> None:
+    """Only the MCP server collects protocol spans; the CLI emits none.
+
+    Installing the pipeline on the CLI surface would claim the process-wide
+    ``TracerProvider`` and run a batch exporter thread for a stream that is
+    always empty, which also matters for an application that embeds this
+    package and wants to install a provider of its own.
+    """
+    with patch("fabric_dw.telemetry_spans.install_mcp_span_pipeline") as install:
+        mod, _at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request, surface=surface)
+        try:
+            assert install.called is expected
+        finally:
+            mod._sdk_initialised = False
+            mod._tracer = None
+            mod._otel_logger = None
+
+
+def test_opting_out_also_means_no_span_pipeline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Nothing is exported when telemetry is off, spans included.
+
+    The span pipeline is installed from ``_get_tracer``, which only runs behind
+    the ``telemetry_enabled()`` gate in ``emit_event``.  With no provider
+    installed the MCP SDK's spans go to OpenTelemetry's no-op provider and stop
+    there.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
+
+    mod = _reload_telemetry()
+
+    with patch("fabric_dw.telemetry_spans.install_mcp_span_pipeline") as install:
+        mod.record_app_started("mcp")
+        mod.record_mcp_server_started()
+
+    install.assert_not_called()
 
 
 def test_get_tracer_disables_the_metrics_pipeline_effectively(
@@ -1298,15 +1374,19 @@ def test_preexisting_exporter_env_cannot_reopen_the_export_path(
     request: pytest.FixtureRequest,
     preset: str,
 ) -> None:
-    """A value already in the environment must not re-enable the export path.
+    """A value already in the environment must not open an unfiltered export path.
 
     This is the reason these variables are hard-set rather than defaulted. The
     library treats anything other than the exact string ``none`` as "exporter
     enabled", and what it then installs is the AzureMonitorTraceExporter pointed
-    at the maintainer's ingestion endpoint, NOT whatever the operator named. With
-    ``setdefault`` this test fails for every parameter below, and a user with
-    ``OTEL_TRACES_EXPORTER`` set for their own stack silently ships MCP protocol
-    spans to a third party.
+    at the maintainer's ingestion endpoint, NOT whatever the operator named.
+
+    That the project now exports MCP spans deliberately does not soften this.
+    The library's exporter takes spans exactly as produced, so under
+    ``setdefault`` a user who has ``OTEL_TRACES_EXPORTER`` set for their own
+    stack would ship raw, unsanitised spans to a third party, alongside the
+    sanitised ones. This test fails for every parameter below if the hard set
+    is ever relaxed.
 
     The empty string is included deliberately: it is falsy but not ``none``, and
     it is what an unset-looking ``export OTEL_TRACES_EXPORTER=`` produces.
@@ -1320,8 +1400,8 @@ def test_preexisting_exporter_env_cannot_reopen_the_export_path(
     try:
         assert _resolves_disabled("tracing", at_call), (
             f"OTEL_TRACES_EXPORTER={preset!r} in the caller's environment left the "
-            "trace pipeline ENABLED, so the Azure exporter would ship MCP protocol "
-            "spans to Application Insights."
+            "library's trace pipeline ENABLED, so its unfiltered exporter would ship "
+            "raw MCP protocol spans to Application Insights."
         )
         assert _resolves_disabled("metrics", at_call), (
             f"OTEL_METRICS_EXPORTER={preset!r} left the metrics pipeline ENABLED."

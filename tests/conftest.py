@@ -179,7 +179,15 @@ def _mock_configure_azure_monitor(
     if request.path is None or request.path.name not in _TELEMETRY_SELF_MANAGED_MODULES:
         yield MagicMock()
         return
-    with patch("azure.monitor.opentelemetry.configure_azure_monitor") as mock_configure:
+    # install_mcp_span_pipeline is stubbed alongside it: on the MCP surface
+    # _get_tracer() builds a real AzureMonitorTraceExporter on the production
+    # connection string and claims the process-wide TracerProvider, neither of
+    # which a unit test may do.  Tests that exercise the pipeline itself patch
+    # the exporter and call it directly.
+    with (
+        patch("azure.monitor.opentelemetry.configure_azure_monitor") as mock_configure,
+        patch("fabric_dw.telemetry_spans.install_mcp_span_pipeline", return_value=True),
+    ):
         yield mock_configure
 
 

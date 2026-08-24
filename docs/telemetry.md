@@ -66,29 +66,89 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 | `config` | `config` | - |
 | `completion` | `completion` | - |
 
-### What is deliberately NOT collected
+### MCP protocol spans
 
-- SQL text, query results, or row counts
-- Workspace, warehouse, schema, table, column, or snapshot names/IDs
-- Connection strings or any credentials
-- File paths or environment variable values
-- Any other personally-identifiable information
-- Distributed traces of any kind, including MCP protocol spans
-- Metrics of any kind, including the SDK's own delivery-statistics counters
+When you run the MCP server, `fabric-dw` also collects the OpenTelemetry spans
+the MCP Python SDK produces: one span per inbound protocol message. This is
+instrumentation the SDK maintains, so it covers every message type and keeps
+covering new ones as the protocol grows, which hand-written events do not. Over
+`command_invoked` it adds the non-tool protocol methods (`initialize`,
+`tools/list`, `prompts/list`, ...), the negotiated protocol revision, exact
+timings rather than buckets, and a per-message error classification.
 
-### `fabric-dw` exports no spans and no metrics
+The CLI produces no protocol spans and therefore installs no trace pipeline at
+all.
 
-`fabric-dw` emits telemetry as OpenTelemetry **log records**, never as spans. It
-forces `OTEL_TRACES_EXPORTER=none` and `OTEL_METRICS_EXPORTER=none` around the
-Application Insights setup call, so no span exporter and no metric exporter is
-built. Only the logs pipeline, which carries the `customEvents` above, is active.
+Each exported span carries a fixed set of fields and nothing else:
 
-One qualifier on "no spans are exported", because it is about this package and
-not about your process: if you embed `fabric-dw` in an application that has
-already set up its own OpenTelemetry `TracerProvider`, that provider keeps
-collecting spans and sending them wherever you configured. That is intended. What
-`fabric-dw` guarantees is that it never adds an export path of its own, and never
-points one at the maintainers.
+| Field | Description |
+|---|---|
+| span name | The protocol method, e.g. `tools/call`. |
+| span kind | Inbound message, or a request the server sent to the client. |
+| start and end time | The message's duration. |
+| `mcp.method.name` | The protocol method again, as a queryable field. |
+| `mcp.protocol.version` | The negotiated protocol revision, e.g. `2025-06-18`. |
+| `jsonrpc.request.id` | The request's numeric id, for correlating a request with its response. |
+| `gen_ai.operation.name` | `execute_tool` on a `tools/call`, absent otherwise. |
+| `error.type` | A JSON-RPC error code, `tool_error`, or the class name of a server-side exception. |
+| `rpc.response.status_code` | The JSON-RPC error code, when the message failed. |
+| trace and span IDs | Random identifiers, so a message's spans can be correlated with each other. |
+
+Spans do not carry the event envelope listed at the top of this page. What they
+do carry alongside the table above is the same resource description every event
+carries: `anonymous_install_id`, `app_version`, and the surface (`mcp`).
+
+#### What is stripped before a span is exported
+
+Anything on a span that the client chose is removed. This is not hypothetical:
+several such values land on a span as produced, and the values are as free-form
+as whatever the sender typed.
+
+- **The client-supplied name on a request.** A `prompts/get` or `tools/call`
+  names what it wants, and the SDK copies that name into the span name and into
+  a `gen_ai.prompt.name` / `gen_ai.tool.name` attribute. Registering no prompts
+  is not protection: the resulting `Unknown prompt: <name>` error puts the same
+  value into the span's status description as well. The span name is rebuilt
+  from the method alone and both attributes are dropped. Which tool ran is
+  already recorded, by name, on `command_invoked`.
+- **Error messages and stack traces.** The status description is dropped and
+  span events are dropped entirely, which is what removes the exception message
+  and the full Python stack trace the SDK attaches on some failure paths. The
+  `error.type` classification above is kept in their place.
+- **A method name the protocol does not define.** The instrumentation covers
+  the "method not found" path too, so a client calling a made-up method would
+  otherwise have that string exported. Method names are checked against the
+  protocol's own list and anything else is recorded as `<unknown>`, which still
+  counts the call without quoting it.
+- **A non-numeric JSON-RPC request id.** The id is the client's to choose and
+  may be any string, so only an integer id is recorded.
+- **Everything else.** Spans are rebuilt from the allowlist in the table above
+  rather than filtered, so a field a future SDK release adds is dropped until it
+  has been looked at.
+
+#### Spans from anything other than the MCP SDK are never exported
+
+The export path drops every span that did not come from the MCP SDK's own
+tracer. All of OpenTelemetry's automatic instrumentation is switched off in this
+package, so nothing else produces spans in the first place, but the drop is
+unconditional so that stays true no matter what a future dependency starts
+doing. HTTP client instrumentation in particular would attach request URLs, and
+this project's URLs contain workspace and warehouse identifiers.
+
+One qualifier, because it is about this package and not about your process: if
+you embed `fabric-dw` in an application that has already set up its own
+OpenTelemetry `TracerProvider`, that provider keeps collecting spans and sending
+them wherever you configured, and `fabric-dw` leaves it alone rather than
+replacing it. Its own pipeline then stands down entirely, so in that case the
+MCP spans go to your destination and not to the maintainers.
+
+### `fabric-dw` exports no metrics
+
+`fabric-dw` forces `OTEL_METRICS_EXPORTER=none` around the Application Insights
+setup call, so no metric exporter is built. `OTEL_TRACES_EXPORTER` is forced to
+`none` there too, because the exporter that call would install ships spans
+exactly as produced, including everything listed above as stripped; the trace
+pipeline is built separately afterwards, with the filtering in front of it.
 
 Those two variables are set unconditionally rather than deferring to a value you
 may already have in your environment, and they are restored to whatever they were
@@ -97,9 +157,15 @@ they are not merely defaulted is that the Azure Monitor library reads them only
 to check for the exact string `none`: any other value, including an empty string
 or `otlp`, leaves the pipeline on and installs the **Azure Monitor** exporter
 rather than the one you asked for. Deferring would therefore have handed you no
-control while quietly turning the export path back on. `OTEL_LOGS_EXPORTER` is
-left alone: setting it to `none` yourself switches off `fabric-dw`'s own events,
-which is a choice worth respecting.
+control while quietly turning an unfiltered export path back on.
+`OTEL_LOGS_EXPORTER` is left alone: setting it to `none` yourself switches off
+`fabric-dw`'s own events, which is a choice worth respecting.
+
+Both `disable_tracing=True` and `disable_metrics=True` are also passed to the
+Azure Monitor configuration, but neither works: the library overwrites
+caller-supplied values with its own defaults, which read only the environment
+variables. The environment variables are the mechanism; the arguments are a
+statement of intent.
 
 There is a second, separately gated pipeline that the exporter library starts on
 its own: **customer sdkstats**, a delivery-statistics channel that reports how
@@ -111,28 +177,18 @@ server does not, and that is this project's main mode. `fabric-dw` therefore set
 `APPLICATIONINSIGHTS_SDKSTATS_DISABLED=true` unless you have already given that
 variable a value of your own.
 
-This matters because the MCP Python SDK installs an OpenTelemetry middleware on
-every server it creates, and that middleware emits one span per inbound protocol
-message. Measured against the version this package pins, those spans carry the
-method name (`tools/call`), the protocol revision, the JSON-RPC request ID, the
-tool name, an `error.type` marker, and timings.
+### What is deliberately NOT collected
 
-To be precise about what that is and is not: a failing tool call does **not** put
-the exception text on the span. The MCP server converts a failing tool into an
-error result before the middleware sees it, so the middleware records only
-`error.type="tool_error"` with no message. SQL text, Fabric API error strings and
-warehouse names are therefore not in the span payload. What would leak is
-metadata: which tool ran, when, how long it took, and whether it failed. That is
-still not on the collection list above, which is why the exporters are off.
-
-Two notes for completeness. Both `disable_tracing=True` and `disable_metrics=True`
-are also passed to the Azure Monitor configuration, but neither works: the library
-overwrites caller-supplied values with its own defaults, which read only the
-environment variables. The environment variables are the mechanism; the arguments
-are a statement of intent. And a server that registered MCP *prompts* would leak
-one more thing, the client-supplied prompt name, which the middleware copies into
-the span name verbatim. `fabric-dw` registers no prompts and no resources, so this
-does not arise here.
+- SQL text, query results, or row counts
+- Workspace, warehouse, schema, table, column, or snapshot names/IDs
+- Connection strings or any credentials
+- File paths or environment variable values
+- Any other personally-identifiable information
+- Any value chosen by whoever composed an MCP request: prompt names, the name on
+  a call for a tool that does not exist, unknown method names, or a string
+  JSON-RPC request id (see above)
+- Spans from anything other than the MCP SDK's protocol instrumentation
+- Metrics of any kind, including the SDK's own delivery-statistics counters
 
 ## Where telemetry data goes
 
