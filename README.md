@@ -171,7 +171,7 @@ Package page: [ghcr.io/sdebruyn/fabric-dw](https://github.com/sdebruyn/fabric-dw
 | `FABRIC_MCP_READONLY` | unset | Set to `1` to restrict `execute_sql` to SELECT/WITH and block all mutating tools. |
 | `FABRIC_MCP_ALLOW_DESTRUCTIVE` | unset | Set to `1` to enable permanently-destructive tools (`delete_*`, `clear_table`, `restore_warehouse_in_place`). Disabled by default. |
 | `FABRIC_MCP_WORKSPACES` | unset | Comma-separated workspace names or GUIDs the server may touch. Unset = all workspaces allowed. |
-| `FABRIC_MCP_ALLOW_REMOTE` | unset | Set to `1` to allow the HTTP transport (`--transport http`) to bind on a non-loopback address. A warning is logged; ensure an authenticating reverse proxy with TLS fronts the endpoint. |
+| `FABRIC_MCP_ALLOW_REMOTE` | unset | Set to `1` to allow the HTTP transport (`--transport http`) to bind on a non-loopback address. A warning is logged; ensure an authenticating reverse proxy with TLS fronts the endpoint, and pass `--allowed-host` so Host validation stays on. See [Hosting the MCP server](https://fdw.debruyn.dev/reference/hosting-mcp-server/). |
 
 #### HTTP transport
 
@@ -181,7 +181,7 @@ The MCP server can be started in HTTP mode for remote clients:
 fabric-dw-mcp --transport http [--host 127.0.0.1] [--port 8000]
 ```
 
-Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP transport has **no built-in authentication or TLS**. Always front it with an authenticating reverse proxy.
+It binds to loopback by default, where Host and Origin validation is handled for you. Binding anywhere else requires `FABRIC_MCP_ALLOW_REMOTE=1` and `--allowed-host`, and the endpoint has **no built-in authentication or TLS**, so always front it with an authenticating reverse proxy. See [Hosting the MCP server](https://fdw.debruyn.dev/reference/hosting-mcp-server/) for that setup.
 
 Request bodies are capped at 4 MiB; anything larger is rejected with HTTP 413. In practice only a multi-megabyte `execute_sql` script or object definition can reach that. The stdio transport has no such limit.
 

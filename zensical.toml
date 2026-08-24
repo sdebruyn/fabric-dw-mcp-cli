@@ -43,6 +43,7 @@ nav = [
     { "Authentication" = "authentication.md" },
     { "Agent Skills" = "skills.md" },
     { "MCP capabilities" = "reference/mcp-capabilities.md" },
+    { "Hosting the MCP server" = "reference/hosting-mcp-server.md" },
     { "Exit codes" = "reference/exit-codes.md" },
     { "Shell Completion" = "completion.md" },
     { "Troubleshooting" = "troubleshooting.md" },

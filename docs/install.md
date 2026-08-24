@@ -446,7 +446,7 @@ The MCP server reads the following environment variables to restrict what it may
 | `FABRIC_MCP_READONLY` | unset | Set to `1` to restrict `execute_sql` to SELECT/WITH and block all mutating tools. |
 | `FABRIC_MCP_ALLOW_DESTRUCTIVE` | unset | Set to `1` to enable permanently-destructive tools (`delete_*`, `clear_table`, `restore_warehouse_in_place`). Disabled by default. |
 | `FABRIC_MCP_WORKSPACES` | unset | Comma-separated workspace names or GUIDs the server may touch. Highest-priority layer of the workspace allowlist knob; see below. An empty or whitespace-only value is treated as absent (falls through to the config layer). |
-| `FABRIC_MCP_ALLOW_REMOTE` | unset | Set to `1` to allow the HTTP transport (`--transport http`) to bind on a non-loopback address. Always front with an authenticating reverse proxy that handles TLS. |
+| `FABRIC_MCP_ALLOW_REMOTE` | unset | Set to `1` to allow the HTTP transport (`--transport http`) to bind on a non-loopback address. Always front with an authenticating reverse proxy that handles TLS, and pass `--allowed-host` so Host validation stays on; see [Hosting the MCP server](reference/hosting-mcp-server.md). |
 
 #### Workspace allowlist
 
@@ -470,13 +470,13 @@ To persist the log level across restarts without setting an env var each time, u
 
 ### HTTP transport
 
-The MCP server can be started in HTTP mode for remote clients:
+The MCP server can also expose a streamable-HTTP endpoint instead of speaking stdio:
 
 ```bash
 fabric-dw-mcp --transport http [--host 127.0.0.1] [--port 8000]
 ```
 
-Binding to non-loopback addresses requires `FABRIC_MCP_ALLOW_REMOTE=1`. The HTTP transport has **no built-in authentication or TLS** - always front it with an authenticating reverse proxy.
+It binds to loopback by default, where `Host` and `Origin` validation is handled for you and there is nothing to configure. Binding anywhere else requires `FABRIC_MCP_ALLOW_REMOTE=1` and `--allowed-host`, and the endpoint needs an authenticating reverse proxy in front of it. See [Hosting the MCP server](reference/hosting-mcp-server.md) for that setup.
 
 Request bodies are capped at 4 MiB; anything larger is rejected with HTTP 413. In practice only a multi-megabyte `execute_sql` script or object definition can reach that. The stdio transport has no such limit.
 
