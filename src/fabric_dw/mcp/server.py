@@ -77,6 +77,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from fabric_dw import __version__
 from fabric_dw.config import load_config
 from fabric_dw.logging import setup_logging
+from fabric_dw.mcp._client_info import ClientInfoMiddleware
 from fabric_dw.mcp._context import fabric_lifespan
 from fabric_dw.mcp._guards import env_flag as _guards_env_flag
 from fabric_dw.mcp._helpers import InstrumentedMCPServer
@@ -133,6 +134,10 @@ mcp: InstrumentedMCPServer = InstrumentedMCPServer(
     # The SDK defaults it to the empty string, so without this the server has
     # no version at all on the wire.
     version=__version__,
+    # Records which client is connected, so telemetry can be broken down per
+    # client (#1048).  Passed to the constructor rather than appended to
+    # `mcp.middleware`, which the SDK marks provisional.
+    middleware=[ClientInfoMiddleware()],
 )
 
 # ---------------------------------------------------------------------------

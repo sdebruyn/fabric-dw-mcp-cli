@@ -23,11 +23,12 @@ Every telemetry event includes a shared envelope of standard fields:
 
 | Event | When | Extra fields |
 |---|---|---|
-| `app_started` | Once per process | - (`auth_mode` omitted - see note below) |
-| `mcp_server_started` | When the MCP server boots | - (`auth_mode` omitted - see note below) |
+| `app_started` | Once per process | - |
+| `mcp_server_started` | When the MCP server boots | - |
+| `mcp_client_connected` | First time each distinct MCP client identifies itself | `mcp_client` |
 | `app_exited` | On process exit | `duration_ms`, `exit_status` (ok / user_error / api_error), `error_category` |
 
-> **Note on `auth_mode` in lifecycle-start events:** `app_started` and `mcp_server_started` fire at process start, before any token is acquired. Emitting `auth_mode` at that point would produce a possibly-wrong value derived from environment-variable heuristics (e.g. `interactive` for a plain `az login`). The accurate value is only available after the first token acquisition and is emitted on `command_invoked` and `app_exited`.
+> `auth_mode` is omitted from the three start events: they fire before any sign-in, so there is nothing accurate to report yet. It appears on `command_invoked` and `app_exited`.
 
 ### `command_invoked`: per-command usage
 
@@ -41,6 +42,7 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 | `status` | `success`, `user_error` (validation/usage problems), or `api_error` (HTTP/driver/unexpected). |
 | `duration_ms_bucket` | Bucketed wall-clock duration: `<100ms`, `<1s`, `<10s`, or `>10s`. |
 | `destructive_op` | `true` only for permanently-destructive MCP tools (delete, clear, restore in-place). Omitted otherwise. |
+| `mcp_client` | The name the connected MCP client reports for itself (e.g. `claude-ai`), capped at 64 characters. MCP only; `unknown` when the client gives no name, and `other` past the first 8 distinct names a server process sees. |
 
 #### Domain rollup
 
@@ -66,6 +68,19 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 | `config` | `config` | - |
 | `completion` | `completion` | - |
 
+### MCP protocol messages
+
+Running the MCP server also records one entry per protocol message it handles, which covers the messages that are not tool calls (`initialize`, `tools/list`, and so on).
+
+| Field | Description |
+|---|---|
+| method | The protocol method, e.g. `tools/call`. A method the MCP protocol does not define is recorded as `<unknown>`, never as the text that was sent. |
+| duration | How long the message took to handle. |
+| outcome | Whether it succeeded, and if not, the error code or the name of the error type. |
+| protocol version | The MCP revision the client and the server agreed on, e.g. `2025-06-18`. |
+
+Anything you choose the content of is removed from these entries first: prompt and tool names, error messages, stack traces, request IDs that are not plain numbers, and the trace IDs a client can put in a request.
+
 ### What is deliberately NOT collected
 
 - SQL text, query results, or row counts
@@ -73,66 +88,9 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 - Connection strings or any credentials
 - File paths or environment variable values
 - Any other personally-identifiable information
-- Distributed traces of any kind, including MCP protocol spans
-- Metrics of any kind, including the SDK's own delivery-statistics counters
-
-### `fabric-dw` exports no spans and no metrics
-
-`fabric-dw` emits telemetry as OpenTelemetry **log records**, never as spans. It
-forces `OTEL_TRACES_EXPORTER=none` and `OTEL_METRICS_EXPORTER=none` around the
-Application Insights setup call, so no span exporter and no metric exporter is
-built. Only the logs pipeline, which carries the `customEvents` above, is active.
-
-One qualifier on "no spans are exported", because it is about this package and
-not about your process: if you embed `fabric-dw` in an application that has
-already set up its own OpenTelemetry `TracerProvider`, that provider keeps
-collecting spans and sending them wherever you configured. That is intended. What
-`fabric-dw` guarantees is that it never adds an export path of its own, and never
-points one at the maintainers.
-
-Those two variables are set unconditionally rather than deferring to a value you
-may already have in your environment, and they are restored to whatever they were
-immediately afterwards, so nothing else in your process is affected. The reason
-they are not merely defaulted is that the Azure Monitor library reads them only
-to check for the exact string `none`: any other value, including an empty string
-or `otlp`, leaves the pipeline on and installs the **Azure Monitor** exporter
-rather than the one you asked for. Deferring would therefore have handed you no
-control while quietly turning the export path back on. `OTEL_LOGS_EXPORTER` is
-left alone: setting it to `none` yourself switches off `fabric-dw`'s own events,
-which is a choice worth respecting.
-
-There is a second, separately gated pipeline that the exporter library starts on
-its own: **customer sdkstats**, a delivery-statistics channel that reports how
-many telemetry items succeeded, dropped, or were retried. Despite the name it is
-not covered by the statsbeat switch, and it builds its own metric exporter, meter
-provider, and a reader on a 15-minute timer, all pointed at the same connection
-string. A CLI command finishes long before the first export cycle, but an MCP
-server does not, and that is this project's main mode. `fabric-dw` therefore sets
-`APPLICATIONINSIGHTS_SDKSTATS_DISABLED=true` unless you have already given that
-variable a value of your own.
-
-This matters because the MCP Python SDK installs an OpenTelemetry middleware on
-every server it creates, and that middleware emits one span per inbound protocol
-message. Measured against the version this package pins, those spans carry the
-method name (`tools/call`), the protocol revision, the JSON-RPC request ID, the
-tool name, an `error.type` marker, and timings.
-
-To be precise about what that is and is not: a failing tool call does **not** put
-the exception text on the span. The MCP server converts a failing tool into an
-error result before the middleware sees it, so the middleware records only
-`error.type="tool_error"` with no message. SQL text, Fabric API error strings and
-warehouse names are therefore not in the span payload. What would leak is
-metadata: which tool ran, when, how long it took, and whether it failed. That is
-still not on the collection list above, which is why the exporters are off.
-
-Two notes for completeness. Both `disable_tracing=True` and `disable_metrics=True`
-are also passed to the Azure Monitor configuration, but neither works: the library
-overwrites caller-supplied values with its own defaults, which read only the
-environment variables. The environment variables are the mechanism; the arguments
-are a statement of intent. And a server that registered MCP *prompts* would leak
-one more thing, the client-supplied prompt name, which the middleware copies into
-the span name verbatim. `fabric-dw` registers no prompts and no resources, so this
-does not arise here.
+- Names you put in an MCP request: prompt names, and the tool name on a call for a tool that does not exist
+- Error messages, stack traces, and trace IDs taken off the wire
+- Metrics of any kind
 
 ## Where telemetry data goes
 

@@ -6,6 +6,7 @@ no real network calls (every Azure Monitor SDK interaction is mocked).
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import os
@@ -29,6 +30,16 @@ def _reload_telemetry() -> Any:
     """Force-reload the telemetry module so module-level state resets."""
     if "fabric_dw.telemetry" in sys.modules:
         del sys.modules["fabric_dw.telemetry"]
+    return importlib.import_module("fabric_dw.telemetry")
+
+
+def _live_telemetry() -> Any:
+    """Return the telemetry module currently in ``sys.modules``.
+
+    A module-level ``import`` would bind whichever object existed at collection
+    time, and :func:`_reload_telemetry` replaces that entry with a fresh module
+    whose globals are the ones the rest of the process then uses.
+    """
     return importlib.import_module("fabric_dw.telemetry")
 
 
@@ -1121,8 +1132,24 @@ def test_get_tracer_passes_enable_performance_counters_false(
 
 
 # ---------------------------------------------------------------------------
-# Privacy: no span or metric exporter is ever installed (#1043)
+# The library never builds its own exporters (#1043, revised by #1049)
 # ---------------------------------------------------------------------------
+#
+# What changed with #1049
+# -----------------------
+# This project now DOES export spans: the MCP protocol spans the MCP SDK emits,
+# which #1049 decided are worth collecting. What it does not do is let
+# ``configure_azure_monitor`` build the trace pipeline, because the exporter that
+# call installs ships every span in the process verbatim, and parts of an MCP
+# span are chosen by the client (see tests/unit/test_telemetry_spans.py for the
+# measured list). The pipeline is built instead by
+# ``telemetry_spans.install_mcp_span_pipeline``, whose exporter drops non-MCP
+# spans and rebuilds the rest from an allowlist.
+#
+# So the intent these tests pin is: the metrics pipeline stays off entirely, the
+# library's own trace pipeline never gets built, the logs pipeline stays on, and
+# a user's ``OTEL_TRACES_EXPORTER`` still cannot cause the unfiltered exporter to
+# be installed.
 #
 # What these tests can and cannot do
 # ----------------------------------
@@ -1164,6 +1191,7 @@ def _run_get_tracer(
     tmp_path: Path,
     request: pytest.FixtureRequest,
     preset: dict[str, str] | None = None,
+    surface: str = "cli",
 ) -> tuple[Any, dict[str, str | None], dict[str, str | None]]:
     """Run ``_get_tracer()`` and capture the environment as the library would see it.
 
@@ -1174,7 +1202,8 @@ def _run_get_tracer(
     library reads them.
 
     *preset* seeds the environment beforehand, to exercise the case where the
-    caller's process already has these variables set.
+    caller's process already has these variables set.  *surface* sets the module
+    global the MCP span pipeline is gated on.
 
     The autouse ``_mock_configure_azure_monitor`` fixture is resolved through
     *request* rather than injected by name, because its value is needed (to hang
@@ -1207,6 +1236,7 @@ def _run_get_tracer(
     mod._sdk_initialised = False
     mod._tracer = None
     mod._otel_logger = None
+    mod._current_surface = surface
     mod._get_tracer()
 
     after = {k: os.environ.get(k) for k in _WATCHED_OTEL_VARS}
@@ -1238,10 +1268,23 @@ def _resolves_disabled(kind: str, env_at_call: dict[str, str | None]) -> bool:
         return bool(resolved[f"disable_{kind}"])
 
 
-def test_get_tracer_disables_the_trace_pipeline_effectively(
+def test_get_tracer_never_lets_the_library_build_the_trace_pipeline(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    """The environment the library sees must make it disable tracing.
+    """The environment the library sees must still make it skip tracing setup.
+
+    #1049 turned span collection ON, but not this way. What
+    ``configure_azure_monitor`` installs is an ``AzureMonitorTraceExporter``
+    wired straight to the batch processor, which exports every span in the
+    process exactly as produced. An MCP span as produced carries the
+    client-chosen prompt or tool name in its span name, the server's error text
+    in its status description, and, on the ``prompts/get`` path, an exception
+    event holding the message and the full stacktrace. Letting the library build
+    this pipeline would ship all of that.
+
+    ``telemetry_spans.install_mcp_span_pipeline`` builds the pipeline instead,
+    with a sanitising exporter in front. This test guards the boundary between
+    the two: the library's own pipeline must stay unbuilt.
 
     Asserting that ``configure_azure_monitor`` merely RECEIVES
     ``disable_tracing=True`` would be worthless: the library throws that value
@@ -1250,25 +1293,69 @@ def test_get_tracer_disables_the_trace_pipeline_effectively(
     ``OTEL_TRACES_EXPORTER``. So this captures the environment at call time and
     feeds it through that real decision function.
 
-    Why it matters: MCP Python SDK v2 installs an OpenTelemetry middleware on
-    every server unconditionally, emitting one SERVER span per inbound protocol
-    message with ``mcp.method.name``, ``jsonrpc.request.id``,
-    ``gen_ai.tool.name``, ``error.type`` and timings. That is metadata the
-    documented collection list in docs/telemetry.md does not cover.
-
     Do not "simplify" this into an assertion about kwargs.
     """
     mod, at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request)
     try:
         assert at_call["OTEL_TRACES_EXPORTER"] == "none"
         assert _resolves_disabled("tracing", at_call), (
-            "The real library resolves tracing as ENABLED, so MCP protocol spans "
-            "would be exported to Application Insights."
+            "The real library resolves tracing as ENABLED, so it would install its own "
+            "unfiltered AzureMonitorTraceExporter alongside the sanitising one."
         )
     finally:
         mod._sdk_initialised = False
         mod._tracer = None
         mod._otel_logger = None
+
+
+@pytest.mark.parametrize(
+    ("surface", "expected"),
+    [("mcp", True), ("cli", False)],
+)
+def test_span_pipeline_is_installed_on_the_mcp_surface_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    surface: str,
+    expected: bool,  # noqa: FBT001
+) -> None:
+    """Only the MCP server collects protocol spans; the CLI emits none.
+
+    Installing the pipeline on the CLI surface would claim the process-wide
+    ``TracerProvider`` and run a batch exporter thread for a stream that is
+    always empty, which also matters for an application that embeds this
+    package and wants to install a provider of its own.
+    """
+    with patch("fabric_dw.telemetry_spans.install_mcp_span_pipeline") as install:
+        mod, _at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request, surface=surface)
+        try:
+            assert install.called is expected
+        finally:
+            mod._sdk_initialised = False
+            mod._tracer = None
+            mod._otel_logger = None
+
+
+def test_opting_out_also_means_no_span_pipeline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Nothing is exported when telemetry is off, spans included.
+
+    The span pipeline is installed from ``_get_tracer``, which only runs behind
+    the ``telemetry_enabled()`` gate in ``emit_event``.  With no provider
+    installed the MCP SDK's spans go to OpenTelemetry's no-op provider and stop
+    there.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
+
+    mod = _reload_telemetry()
+
+    with patch("fabric_dw.telemetry_spans.install_mcp_span_pipeline") as install:
+        mod.record_app_started("mcp")
+        mod.record_mcp_server_started()
+
+    install.assert_not_called()
 
 
 def test_get_tracer_disables_the_metrics_pipeline_effectively(
@@ -1298,15 +1385,19 @@ def test_preexisting_exporter_env_cannot_reopen_the_export_path(
     request: pytest.FixtureRequest,
     preset: str,
 ) -> None:
-    """A value already in the environment must not re-enable the export path.
+    """A value already in the environment must not open an unfiltered export path.
 
     This is the reason these variables are hard-set rather than defaulted. The
     library treats anything other than the exact string ``none`` as "exporter
     enabled", and what it then installs is the AzureMonitorTraceExporter pointed
-    at the maintainer's ingestion endpoint, NOT whatever the operator named. With
-    ``setdefault`` this test fails for every parameter below, and a user with
-    ``OTEL_TRACES_EXPORTER`` set for their own stack silently ships MCP protocol
-    spans to a third party.
+    at the maintainer's ingestion endpoint, NOT whatever the operator named.
+
+    That the project now exports MCP spans deliberately does not soften this.
+    The library's exporter takes spans exactly as produced, so under
+    ``setdefault`` a user who has ``OTEL_TRACES_EXPORTER`` set for their own
+    stack would ship raw, unsanitised spans to a third party, alongside the
+    sanitised ones. This test fails for every parameter below if the hard set
+    is ever relaxed.
 
     The empty string is included deliberately: it is falsy but not ``none``, and
     it is what an unset-looking ``export OTEL_TRACES_EXPORTER=`` produces.
@@ -1320,8 +1411,8 @@ def test_preexisting_exporter_env_cannot_reopen_the_export_path(
     try:
         assert _resolves_disabled("tracing", at_call), (
             f"OTEL_TRACES_EXPORTER={preset!r} in the caller's environment left the "
-            "trace pipeline ENABLED, so the Azure exporter would ship MCP protocol "
-            "spans to Application Insights."
+            "library's trace pipeline ENABLED, so its unfiltered exporter would ship "
+            "raw MCP protocol spans to Application Insights."
         )
         assert _resolves_disabled("metrics", at_call), (
             f"OTEL_METRICS_EXPORTER={preset!r} left the metrics pipeline ENABLED."
@@ -1414,12 +1505,13 @@ def test_operator_can_re_enable_customer_sdkstats(
 def test_get_tracer_leaves_the_logs_pipeline_enabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    """Disabling traces and metrics must NOT disable logs.
+    """Switching off the library's trace and metric pipelines must NOT touch logs.
 
     customEvents are emitted as OTel log records, so the logs pipeline is the one
     that has to stay on. Without this, adding ``OTEL_LOGS_EXPORTER`` to the
-    hard-set block (an easy symmetry mistake) would silently kill all telemetry
-    rather than just the parts we do not want.
+    hard-set block (an easy symmetry mistake) would silently kill all telemetry:
+    every lifecycle event, every ``command_invoked``, and the
+    ``mcp_client_connected`` event too, leaving only the spans.
     """
     mod, at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request)
     try:
@@ -2555,6 +2647,8 @@ def test_shutdown_telemetry_calls_provider_shutdown(
     mod._tracer = _fake_logger  # type: ignore[attr-defined]
     mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
     mod._sdk_shutdown = False  # type: ignore[attr-defined]
+    # The tracer branch only runs for a provider this package installed.
+    mod._span_pipeline_installed = True  # type: ignore[attr-defined]
 
     shutdown_called: list[bool] = []
     fake_provider = types.SimpleNamespace(shutdown=lambda: shutdown_called.append(True))
@@ -2612,6 +2706,7 @@ def test_shutdown_telemetry_is_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_p
     mod._tracer = _fake_logger  # type: ignore[attr-defined]
     mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
     mod._sdk_shutdown = False  # type: ignore[attr-defined]
+    mod._span_pipeline_installed = True  # type: ignore[attr-defined]
 
     shutdown_call_count: list[int] = []
     fake_provider = types.SimpleNamespace(shutdown=lambda: shutdown_call_count.append(1))
@@ -3988,3 +4083,307 @@ def test_azure_cli_without_azure_config_dir_env(
     # After override (simulating what record_auth_mode_from_default_credential does):
     mod.set_auth_mode("azure_cli")  # type: ignore[attr-defined]
     assert mod._build_envelope()["auth_mode"] == "azure_cli"
+
+
+# ---------------------------------------------------------------------------
+# Which MCP client is connected (#1048)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [None, "", "   ", 42, {"name": "claude-ai"}],
+)
+def test_an_unusable_client_name_falls_back_to_unknown(raw: object) -> None:
+    """The protocol lets a client send no client info at all, so this has a floor.
+
+    Recording ``unknown`` rather than dropping the field keeps the count of
+    anonymous clients visible instead of making them look like no client.
+    """
+    tel = _live_telemetry()
+
+    assert tel.normalise_mcp_client(raw) == tel.MCP_CLIENT_UNKNOWN
+
+
+def test_a_client_name_is_bounded_in_length() -> None:
+    """``clientInfo.name`` is client-chosen, so nothing on the wire bounds it."""
+    assert len(_live_telemetry().normalise_mcp_client("x" * 500)) == 64
+
+
+def test_a_client_name_is_recorded_verbatim() -> None:
+    """Deliberately not mapped onto a fixed list of known clients.
+
+    A fixed list can only confirm the clients somebody already thought of, and
+    turns every new or renamed one into ``other`` until a human notices.  The
+    long tail is the interesting part of this field.
+    """
+    assert (
+        _live_telemetry().normalise_mcp_client("  some-brand-new-client  ")
+        == "some-brand-new-client"
+    )
+
+
+def test_the_client_is_announced_once_per_process_and_readable_during_the_request() -> None:
+    """One event per distinct client, and the name available to command_invoked.
+
+    Once per client rather than once per message, because a busy server would
+    otherwise emit a connection event per inbound call.  The context variable is
+    what lets ``command_invoked`` attribute a tool call to the client that made
+    it, which is the question #1048 exists to answer.
+    """
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    with patch.object(tel, "emit_event") as emit:
+        assert tel.current_mcp_client() is None
+        with tel.mcp_client_scope("claude-ai"):
+            assert tel.current_mcp_client() == "claude-ai"
+            with tel.mcp_client_scope("claude-ai"):
+                pass
+        assert tel.current_mcp_client() is None
+
+    assert [call.args[0] for call in emit.call_args_list] == ["mcp_client_connected"]
+    assert emit.call_args.args[1] == {"mcp_client": "claude-ai"}
+
+
+def test_a_second_client_on_the_same_process_is_announced_too() -> None:
+    """One MCP server can serve several clients; each one is worth counting."""
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    with patch.object(tel, "emit_event") as emit:
+        with tel.mcp_client_scope("claude-ai"):
+            pass
+        with tel.mcp_client_scope("mcp-inspector"):
+            pass
+
+    assert [call.args[1]["mcp_client"] for call in emit.call_args_list] == [
+        "claude-ai",
+        "mcp-inspector",
+    ]
+
+
+def test_nothing_is_recorded_when_telemetry_is_opted_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The client field rides the existing opt-out; it adds no switch of its own."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
+
+    mod = _reload_telemetry()
+    mod._seen_mcp_clients.clear()
+
+    with patch.object(mod, "_get_tracer") as get_tracer, mod.mcp_client_scope("claude-ai"):
+        pass
+
+    get_tracer.assert_not_called()
+
+
+def test_shutdown_never_touches_a_provider_this_package_did_not_install(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A host application's TracerProvider must survive our exit.
+
+    When ``install_mcp_span_pipeline`` correctly stands down because the host
+    already installed a provider, that provider is the host's. Shutting it down
+    here would close the host's own exporter permanently, which is the exact
+    opposite of the guarantee this package makes about embedding.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    fake_logger = object()
+    mod._sdk_initialised = True
+    mod._tracer = fake_logger
+    mod._otel_logger = fake_logger
+    mod._sdk_shutdown = False
+    mod._span_pipeline_installed = False  # the host's provider won
+
+    touched: list[str] = []
+    host_provider = types.SimpleNamespace(
+        shutdown=lambda: touched.append("shutdown"),
+        force_flush=lambda **_kw: touched.append("force_flush"),
+    )
+    _install_fake_otel_trace(monkeypatch, host_provider)
+
+    mod.shutdown_telemetry()
+    mod.flush_telemetry()
+
+    assert touched == [], f"the host's provider was {touched}"
+
+
+def test_flush_reaches_our_own_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The other half of the same rule: our provider does get flushed."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    fake_logger = object()
+    mod._sdk_initialised = True
+    mod._tracer = fake_logger
+    mod._otel_logger = fake_logger
+    mod._span_pipeline_installed = True
+
+    flushed: list[int] = []
+    provider = types.SimpleNamespace(force_flush=lambda **kw: flushed.append(kw["timeout_millis"]))
+    _install_fake_otel_trace(monkeypatch, provider)
+
+    mod.flush_telemetry(timeout_ms=1500)
+
+    assert flushed == [1500]
+
+
+# ---------------------------------------------------------------------------
+# The client name is a channel unless it is bounded (#1048 review)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("a\nb\r\nc\x00d", "abcd"),
+        ("\x00\x01\x02", "unknown"),
+        ("claude-ai", "claude-ai"),
+        ("  claude-ai  ", "claude-ai"),
+        ("clau\tde", "claude"),
+    ],
+)
+def test_control_characters_are_removed_from_a_client_name(raw: str, expected: str) -> None:
+    """``strip()`` only touches the ends, so embedded control bytes went straight through.
+
+    A newline or a NUL in the middle of a custom dimension is not something a
+    dashboard, a log query, or whoever reads it downstream should have to deal
+    with, and it is trivially client-controlled.
+    """
+    assert _live_telemetry().normalise_mcp_client(raw) == expected
+
+
+def test_the_number_of_distinct_client_names_is_bounded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One process records a handful of clients, then stops keeping names.
+
+    On protocol revision 2026-07-28 the name rides every request's ``_meta``
+    rather than a handshake, so it can differ per message on a single
+    connection. Without a cap, a client appending a counter or a session id to
+    its name (an ordinary bug, and a trivial exfiltration channel) emits one
+    ``mcp_client_connected`` per request and grows the seen-set forever.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    with patch.object(tel, "emit_event") as emit:
+        recorded = []
+        for index in range(50):
+            with tel.mcp_client_scope(f"EXFIL-CHUNK-{index:04d}"):
+                recorded.append(tel.current_mcp_client())
+
+    assert recorded[: tel._MCP_CLIENT_LIMIT] == [
+        f"EXFIL-CHUNK-{index:04d}" for index in range(tel._MCP_CLIENT_LIMIT)
+    ]
+    assert set(recorded[tel._MCP_CLIENT_LIMIT :]) == {tel.MCP_CLIENT_OTHER}
+
+    # One event per distinct recorded name, and the set cannot grow past the
+    # cap plus the "other" bucket itself.
+    assert emit.call_count == tel._MCP_CLIENT_LIMIT + 1
+    assert len(tel._seen_mcp_clients) == tel._MCP_CLIENT_LIMIT + 1
+
+
+def test_a_client_already_seen_is_still_reported_by_name_after_the_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The cap must not start relabelling the clients it already knows."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    with patch.object(tel, "emit_event"):
+        with tel.mcp_client_scope("claude-ai"):
+            pass
+        for index in range(20):
+            with tel.mcp_client_scope(f"noise-{index}"):
+                pass
+        with tel.mcp_client_scope("claude-ai") as _:
+            still_named = tel.current_mcp_client()
+
+    assert still_named == "claude-ai"
+
+
+async def test_concurrent_requests_do_not_cross_contaminate_the_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Several clients are served at once over HTTP, so this is not theoretical.
+
+    A module global here would report whichever client connected last. The
+    ContextVar is the reason that does not happen, and this pins it: each task
+    interleaves awaits inside its own scope and must still see its own name.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    async def _serve(name: str) -> list[str | None]:
+        seen: list[str | None] = []
+        with tel.mcp_client_scope(name):
+            for _ in range(20):
+                await asyncio.sleep(0)
+                seen.append(tel.current_mcp_client())
+        return seen
+
+    with patch.object(tel, "emit_event"):
+        results = await asyncio.gather(*(_serve(f"client-{index}") for index in range(6)))
+
+    for index, seen in enumerate(results):
+        assert set(seen) == {f"client-{index}"}
+    assert tel.current_mcp_client() is None
+
+
+@pytest.mark.parametrize(
+    ("span_pipeline_installed", "expected_logs_budget"),
+    [(False, 6000), (True, 3000)],
+)
+def test_the_logs_flush_budget_is_only_split_when_there_are_two_pipelines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    span_pipeline_installed: bool,  # noqa: FBT001
+    expected_logs_budget: int,
+) -> None:
+    """The CLI must not pay for a span pipeline it does not have.
+
+    The logs pipeline is the critical one: it carries every ``command_invoked``
+    and ``app_exited``, and the App Insights POST typically takes 2 to 4 s.
+    Halving its budget unconditionally to make room for spans would be a pure
+    loss on the CLI surface, where no span pipeline exists and processes are
+    short-lived.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    fake_logger = object()
+    mod._sdk_initialised = True
+    mod._tracer = fake_logger
+    mod._otel_logger = fake_logger
+    mod._sdk_shutdown = False
+    mod._span_pipeline_installed = span_pipeline_installed
+
+    logs_budgets: list[int] = []
+    span_budgets: list[int] = []
+
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs_fake")
+    fake_logs_mod.get_logger_provider = lambda: types.SimpleNamespace(
+        force_flush=lambda **kw: logs_budgets.append(kw["timeout_millis"]),
+        shutdown=lambda: None,
+    )
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
+    _install_fake_otel_trace(
+        monkeypatch,
+        types.SimpleNamespace(
+            force_flush=lambda **kw: span_budgets.append(kw["timeout_millis"]),
+            shutdown=lambda: None,
+        ),
+    )
+
+    mod.shutdown_telemetry()
+
+    assert logs_budgets == [expected_logs_budget]
+    assert span_budgets == ([3000] if span_pipeline_installed else [])

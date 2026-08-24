@@ -127,6 +127,7 @@ _SDK_ENV_VARS = (
     "OTEL_LOGS_EXPORTER",
     "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
     "APPLICATIONINSIGHTS_SDKSTATS_DISABLED",
+    "APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED",
 )
 
 
@@ -179,7 +180,15 @@ def _mock_configure_azure_monitor(
     if request.path is None or request.path.name not in _TELEMETRY_SELF_MANAGED_MODULES:
         yield MagicMock()
         return
-    with patch("azure.monitor.opentelemetry.configure_azure_monitor") as mock_configure:
+    # install_mcp_span_pipeline is stubbed alongside it: on the MCP surface
+    # _get_tracer() builds a real AzureMonitorTraceExporter on the production
+    # connection string and claims the process-wide TracerProvider, neither of
+    # which a unit test may do.  Tests that exercise the pipeline itself patch
+    # the exporter and call it directly.
+    with (
+        patch("azure.monitor.opentelemetry.configure_azure_monitor") as mock_configure,
+        patch("fabric_dw.telemetry_spans.install_mcp_span_pipeline", return_value=True),
+    ):
         yield mock_configure
 
 
@@ -192,10 +201,9 @@ def _reset_telemetry_module_globals(
     Two tiers of reset are applied:
 
     1. **All tests** — the per-process caches added in #844 (``_install_method_cache``
-       and ``_config_disabled_cache``) are always reset.  Any test that calls
-       ``telemetry_enabled()`` on the shared module instance can set these caches;
-       without a universal teardown they bleed into subsequent tests regardless of
-       which module file those tests live in.
+       and ``_config_disabled_cache``) are always reset, and so is
+       ``_seen_mcp_clients``: any test that drives an MCP server populates it, and
+       a leftover entry silences ``mcp_client_connected`` in a later test.
 
     2. **Self-managed telemetry modules only** (``test_telemetry.py``,
        ``test_telemetry_commands.py``, ``test_app_exited_emission.py``) — the
@@ -265,6 +273,16 @@ def _reset_telemetry_module_globals(
             )
             ns["_install_method_cache"] = None
             ns["_config_disabled_cache"] = None
+            # Clients already announced this process: mcp_client_connected fires
+            # once per distinct client, so a leftover entry makes a later test
+            # see no event at all.  Reset for EVERY test, not only the
+            # self-managed ones: tests/unit/mcp/test_client_info.py drives a real
+            # server and populates this set without being in that list.
+            assert "_seen_mcp_clients" in ns, (
+                "_seen_mcp_clients not found in fabric_dw.telemetry — "
+                "update both telemetry.py and tests/conftest.py"
+            )
+            ns["_seen_mcp_clients"] = set()
             if not is_self_managed:
                 continue
             # Heavier globals: only needed for tests that exercise the telemetry

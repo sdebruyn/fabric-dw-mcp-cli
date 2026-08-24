@@ -24,17 +24,20 @@ Architecture notes
   ``cache_tenant_id_from_token()`` (#366).
 - Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
   request URLs (containing tenant IDs) from leaking as span attributes.
-- This package installs no span or metric exporter of its own, so spans emitted
-  by code it does not own are never exported *to Application Insights*.  This is
-  not hypothetical: MCP Python SDK v2 installs an OpenTelemetry middleware on
-  every server unconditionally, which emits one span per inbound protocol
-  message.  ``OTEL_TRACES_EXPORTER`` and ``OTEL_METRICS_EXPORTER`` are hard-set
-  to ``none`` around the ``configure_azure_monitor`` call and restored
-  afterwards; the matching kwargs are silently overwritten by the library and do
-  not work.  Note the qualifier: a host process that embeds fabric-dw and has
-  already installed its own ``TracerProvider`` still collects those spans and
-  sends them wherever it chose.  That is correct and desirable; what this
-  prevents is *this package* adding an export path the user did not ask for.
+- This package installs no metric exporter, and the only spans it exports are
+  the MCP protocol spans emitted by MCP Python SDK v2, which installs an
+  OpenTelemetry middleware on every server unconditionally (#1049).
+  ``OTEL_TRACES_EXPORTER`` and ``OTEL_METRICS_EXPORTER`` are hard-set to
+  ``none`` around the ``configure_azure_monitor`` call and restored afterwards;
+  the matching kwargs are silently overwritten by the library and do not work.
+  The trace pipeline is then built separately, on the MCP surface only, by
+  :mod:`fabric_dw.telemetry_spans`, whose exporter drops every span that did not
+  come from the MCP SDK and rebuilds the rest from an allowlist so no
+  client-supplied string is exported.  Note the qualifier: a host process that
+  embeds fabric-dw and has already installed its own ``TracerProvider`` keeps
+  it, and its spans keep going wherever it chose.  That is correct and
+  desirable; what this prevents is *this package* adding an export path the user
+  did not ask for.
 - ``APPLICATIONINSIGHTS_SDKSTATS_DISABLED`` suppresses the customer-sdkstats
   channel, which is separate from statsbeat and would otherwise run its own
   metrics pipeline on our connection string.
@@ -98,14 +101,21 @@ import os
 import sys
 import threading
 import uuid
+from collections.abc import Iterator
+from contextvars import ContextVar
 from pathlib import Path
 
 __all__ = [
+    "MCP_CLIENT_OTHER",
+    "MCP_CLIENT_UNKNOWN",
     "cache_tenant_id_from_token",
+    "current_mcp_client",
     "decode_tid_from_token",
     "emit_event",
     "flush_telemetry",
     "maybe_print_first_run_notice",
+    "mcp_client_scope",
+    "normalise_mcp_client",
     "record_app_exited",
     "record_app_started",
     "record_mcp_server_started",
@@ -628,6 +638,10 @@ _sdk_initialised: bool = False
 # inside the lock makes init idempotent under concurrent first calls.
 _sdk_init_lock: threading.Lock = threading.Lock()
 _current_surface: str = "cli"
+# True only when install_mcp_span_pipeline() actually claimed the process-wide
+# TracerProvider.  False when a host application had already installed one, in
+# which case that provider is theirs to flush and shut down, not ours.
+_span_pipeline_installed: bool = False
 
 # Instrumentation options passed to configure_azure_monitor.
 # ALL auto-HTTP / Azure SDK instrumentors are DISABLED so that MSAL's OAuth
@@ -645,9 +659,16 @@ _INSTRUMENTATION_OPTIONS: dict[str, dict[str, bool]] = {
 }
 
 # Environment applied around the configure_azure_monitor call to switch off the
-# trace and metric pipelines.  Only the exact string "none" works; see the long
-# comment at the call site for why this is a hard set rather than a setdefault,
-# and why OTEL_LOGS_EXPORTER is deliberately absent.
+# metric pipeline and to keep the library from building a trace pipeline of its
+# own.  Only the exact string "none" works; see the long comment at the call
+# site for why this is a hard set rather than a setdefault, and why
+# OTEL_LOGS_EXPORTER is deliberately absent.
+#
+# OTEL_TRACES_EXPORTER stays "none" even though this package now DOES export
+# spans: what the library would install is an unfiltered AzureMonitorTraceExporter
+# that ships every span in the process verbatim.  The trace pipeline is instead
+# built by telemetry_spans.install_mcp_span_pipeline, whose exporter drops
+# non-MCP spans and rebuilds the rest from an allowlist.
 _OTEL_EXPORTERS_OFF: dict[str, str] = {
     "OTEL_TRACES_EXPORTER": "none",
     "OTEL_METRICS_EXPORTER": "none",
@@ -729,34 +750,28 @@ def _get_tracer() -> object | None:
       up a logger instead of a tracer.
     - ``OTEL_TRACES_EXPORTER=none`` / ``OTEL_METRICS_EXPORTER=none``, hard-set
       around the ``configure_azure_monitor`` call and restored afterwards, are
-      what actually switch off the trace and metric pipelines.  The matching
-      ``disable_tracing`` / ``disable_metrics`` kwargs do NOT work: the library
-      overwrites caller-supplied values with its own defaults (see the long
-      comment at the call site).  Verified by inspecting
-      the resulting global providers, which are the no-op ``ProxyTracerProvider``
-      and ``_ProxyMeterProvider``, not SDK providers with Azure exporters.
+      what actually keep the library from building trace and metric pipelines
+      of its own.  The matching ``disable_tracing`` / ``disable_metrics`` kwargs
+      do NOT work: the library overwrites caller-supplied values with its own
+      defaults (see the long comment at the call site).  Verified by inspecting
+      the global providers immediately after the call, which are the no-op
+      ``ProxyTracerProvider`` and ``_ProxyMeterProvider``, not SDK providers with
+      Azure exporters.  The meter provider stays that way; the tracer provider is
+      replaced below, on the MCP surface, by one this package builds itself.
 
-      Tracing must stay off because MCP Python SDK v2 installs an
+      Metrics stay off entirely.  Traces do not: MCP Python SDK v2 installs an
       OpenTelemetry middleware on every server unconditionally, emitting one
-      SERVER span per inbound protocol message.  Measured, those spans carry
-      ``mcp.method.name``, ``mcp.protocol.version``, ``jsonrpc.request.id``,
-      ``gen_ai.operation.name``, ``gen_ai.tool.name``, ``error.type`` and span
-      timings.  They do NOT carry tool exception text: ``MCPServer`` converts a
-      failing tool into ``CallToolResult(is_error=True)`` before the middleware
-      sees it, so the middleware's ``record_exception`` branch never fires for
-      tool errors and only ``error.type="tool_error"`` is set.  The leak is
-      therefore metadata, not payload — but it is metadata the documented
-      collection list in ``docs/telemetry.md`` does not cover, which is reason
-      enough.  (``prompts/get`` would additionally echo the client-supplied
-      prompt name into the span name and ``gen_ai.prompt.name``; this project
-      registers no prompts.  ``resources/read`` does not echo, since its params
-      carry ``uri`` rather than ``name``.)
-
-      The exporter-side fix is preferred over the producer-side one (dropping
-      the middleware from ``MCPServer.middleware``, a public but explicitly
-      "Provisional" property whose signature is expected to change before v2 is
-      final).  One global switch covers every library that might emit spans,
-      needs no per-instance wiring, and does not depend on a provisional API.
+      SERVER span per inbound protocol message, and #1049 decided to collect
+      those.  What the library would have installed is an unfiltered exporter,
+      and parts of every such span are chosen by the client: the span name, the
+      status description, ``gen_ai.prompt.name`` / ``gen_ai.tool.name``, an
+      exception event carrying message and stacktrace, ``mcp.method.name`` for
+      a method the server does not implement, and ``jsonrpc.request.id``.  So
+      the span pipeline is built separately by
+      :func:`fabric_dw.telemetry_spans.install_mcp_span_pipeline`, which wraps
+      the Azure exporter in a sanitiser that drops non-MCP spans and rebuilds
+      the rest from an allowlist.  It is installed only on the MCP surface,
+      since the CLI emits no protocol spans.
     - ``enable_performance_counters=False`` disables the PerformanceCounters
       subsystem (CPU / memory poller) which is NOT covered by ``disable_metrics``
       in azure-monitor-opentelemetry 1.8+.  On short-lived processes its
@@ -770,7 +785,7 @@ def _get_tracer() -> object | None:
     - ``_harden_azure_sdk_logging()`` is called before ``configure_azure_monitor``
       so the SDK's own logger tree is silenced before any network attempt (#411).
     """
-    global _otel_logger, _tracer, _sdk_initialised  # noqa: PLW0603
+    global _otel_logger, _tracer, _sdk_initialised, _span_pipeline_installed  # noqa: PLW0603
 
     # Fast path (no lock): already initialised by a previous call.
     if _sdk_initialised:
@@ -915,6 +930,24 @@ def _get_tracer() -> object | None:
                         os.environ.pop(_key, None)
                     else:
                         os.environ[_key] = _old
+
+            # MCP protocol spans (#1049).  Only on the MCP surface: the CLI
+            # produces no protocol spans, so installing a trace pipeline there
+            # would claim the process-wide TracerProvider and run a batch
+            # exporter thread for a stream that is always empty.
+            if _current_surface == "mcp":
+                from fabric_dw.telemetry_spans import (  # noqa: PLC0415
+                    install_mcp_span_pipeline,
+                )
+
+                # Load-bearing, not bookkeeping: flush_telemetry and
+                # shutdown_telemetry must not touch a TracerProvider this
+                # package did not install.  When a host application already had
+                # one, shutting it down at our exit would kill the host's own
+                # exporter for the rest of its life.
+                _span_pipeline_installed = install_mcp_span_pipeline(
+                    _DEFAULT_CONNECTION_STRING, resource
+                )
             # Obtain the OTel Logger via the global LoggerProvider set up by
             # configure_azure_monitor.  This logger is used in emit_event to fire
             # customEvents as log records (not spans).
@@ -943,7 +976,7 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
     exporter is slow or unreachable.  The thread is daemon so the OS kills it
     when the main thread exits (no hang possible).
 
-    Both the tracer provider (a no-op while ``OTEL_TRACES_EXPORTER=none``) and the
+    Both the tracer provider (the MCP protocol spans, on the MCP surface) and the
     logger provider (customEvents log pipeline) are flushed so no records are lost.
 
     Args:
@@ -957,20 +990,18 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
         # Each pipeline is flushed independently so a failure in one does
         # not prevent the other from running.
 
-        # Tracer provider — belt-and-suspenders.  Spans ARE created in-process
-        # (the MCP SDK middleware makes one per inbound message), but with
-        # OTEL_TRACES_EXPORTER=none no exporter is attached, so the global
-        # provider is the no-op ProxyTracerProvider, which has no force_flush.
-        # Verified against the locked azure-monitor-opentelemetry, not assumed.
-        # The getattr guard handles that; the branch stays so a future opt-in to
-        # tracing still flushes.
-        with contextlib.suppress(Exception):
-            from opentelemetry import trace as _trace  # noqa: PLC0415
+        # Tracer provider — carries the MCP protocol spans, and only ours.
+        # _span_pipeline_installed is False on the CLI surface and whenever a
+        # host application's provider won, and the global provider is then not
+        # this package's to flush.
+        if _span_pipeline_installed:
+            with contextlib.suppress(Exception):
+                from opentelemetry import trace as _trace  # noqa: PLC0415
 
-            provider = _trace.get_tracer_provider()
-            force_flush = getattr(provider, "force_flush", None)
-            if callable(force_flush):
-                force_flush(timeout_millis=timeout_ms)
+                provider = _trace.get_tracer_provider()
+                force_flush = getattr(provider, "force_flush", None)
+                if callable(force_flush):
+                    force_flush(timeout_millis=timeout_ms)
 
         # Logger provider — this is the primary pipeline for customEvents.
         with contextlib.suppress(Exception):
@@ -993,10 +1024,10 @@ _sdk_shutdown: bool = False
 def shutdown_telemetry(timeout_ms: int = 8000) -> None:
     """Shut down the OpenTelemetry providers with a bounded timeout.
 
-    Calls ``force_flush`` then ``shutdown()`` on both the tracer provider and
-    the logger provider.  The logger provider path is critical: it must export
-    all pending customEvents (``command_invoked``, ``app_exited``) that were
-    enqueued just before shutdown is called.
+    Calls ``force_flush`` then ``shutdown()`` on the logger provider, and on the
+    tracer provider when this package installed it.  The logger provider path is
+    critical: it must export all pending customEvents (``command_invoked``,
+    ``app_exited``) that were enqueued just before shutdown is called.
 
     Why force_flush before shutdown?
     ---------------------------------
@@ -1009,8 +1040,8 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
     shorter than the HTTP round-trip to the App Insights ingestion endpoint
     (typically 2-4 s), the daemon thread is killed before the POST completes.
 
-    Calling ``force_flush(timeout_ms - 2000)`` **before** ``shutdown()`` ensures
-    all queued records are exported with a generous bound.  The remaining 2 s is
+    Calling ``force_flush`` **before** ``shutdown()`` ensures all queued records
+    are exported with a generous bound.  The remaining 2 s is
     then used for the provider ``shutdown()`` which cleans up the connection pool
     (preventing the ``AttributeError: 'NoneType' object has no attribute 'Empty'``
     at interpreter exit when urllib3 pool is finalised after queue module teardown).
@@ -1037,7 +1068,9 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
     Args:
         timeout_ms: Maximum milliseconds to wait for the full flush+shutdown
             sequence.  Defaults to 8000 (8 s): ~6 s for force_flush (HTTP POST
-            round-trip) + ~2 s for provider cleanup.
+            round-trip) + ~2 s for provider cleanup.  With a span pipeline
+            installed the flush half is split between the two pipelines, 3 s
+            each; without one the logs pipeline keeps all 6 s.
     """
     global _sdk_shutdown  # noqa: PLW0603
 
@@ -1047,14 +1080,26 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
         return
     _sdk_shutdown = True
 
-    # Reserve ~2 s for the provider.shutdown() cleanup call; the rest goes to
-    # force_flush.  At the default timeout_ms=8000 this gives 6 s for
-    # force_flush and 2 s for shutdown — both well within the daemon-thread
-    # join cap (timeout_ms/1000 + 0.5 s).  If timeout_ms were set below 4000
-    # the floor kicks in and both allocations become 2 s, which still fits
-    # inside the join cap because the daemon thread is killed when the main
-    # thread exits — the cap is a worst-case wall-clock bound, not a guarantee.
-    flush_timeout_ms = max(timeout_ms - 2000, 2000)
+    # Reserve ~2 s for the provider.shutdown() cleanup calls; the rest goes to
+    # force_flush.  At the default timeout_ms=8000 that is 6 s, and it is split
+    # in two ONLY when a span pipeline exists to spend half of it: the logs
+    # branch runs first, so without a split a slow network there could eat the
+    # whole budget and leave the last batch of spans unflushed.
+    #
+    # The condition is load-bearing, not tidiness.  The logs pipeline is the
+    # critical one — it carries every command_invoked and app_exited — and the
+    # App Insights POST typically takes 2 to 4 s.  Splitting unconditionally
+    # would halve that budget on the CLI, which has no span pipeline to protect
+    # and is the surface most exposed to a short-lived process.
+    #
+    # If timeout_ms were set below 4000 the floor kicks in, which still fits
+    # inside the daemon-thread join cap (timeout_ms/1000 + 0.5 s) because the
+    # thread is killed when the main thread exits — the cap is a worst-case
+    # wall-clock bound, not a guarantee.
+    flush_budget_ms = max(timeout_ms - 2000, 2000)
+    flush_timeout_ms = (
+        max(flush_budget_ms // 2, 1000) if _span_pipeline_installed else flush_budget_ms
+    )
 
     def _do_shutdown() -> None:
         # Each pipeline is flushed then shut down independently so a failure in
@@ -1078,17 +1123,26 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
             if callable(log_shutdown):
                 log_shutdown()
 
-        # Tracer provider — belt-and-suspenders.  With OTEL_TRACES_EXPORTER=none
-        # the global provider is the no-op ProxyTracerProvider and has no
-        # shutdown; the getattr guard handles that.  Verified, not assumed.  The
-        # branch stays so a future opt-in still tears the trace pipeline down.
-        with contextlib.suppress(Exception):
-            from opentelemetry import trace as _trace  # noqa: PLC0415
+        # Tracer provider — the MCP protocol spans, and only ours.  Guarded on
+        # _span_pipeline_installed: when a host application's provider won the
+        # race, shutting it down here would permanently kill the exporter of the
+        # process that embedded us.  The provider is created with
+        # shutdown_on_exit=False, so this call is the only thing that tears the
+        # trace pipeline down.
+        #
+        # force_flush first, for the same reason as the logs branch: the last
+        # batch of spans is otherwise at the mercy of the worker's schedule.
+        if _span_pipeline_installed:
+            with contextlib.suppress(Exception):
+                from opentelemetry import trace as _trace  # noqa: PLC0415
 
-            provider = _trace.get_tracer_provider()
-            shutdown_fn = getattr(provider, "shutdown", None)
-            if callable(shutdown_fn):
-                shutdown_fn()
+                provider = _trace.get_tracer_provider()
+                span_force_flush = getattr(provider, "force_flush", None)
+                if callable(span_force_flush):
+                    span_force_flush(timeout_millis=flush_timeout_ms)
+                shutdown_fn = getattr(provider, "shutdown", None)
+                if callable(shutdown_fn):
+                    shutdown_fn()
 
     t = threading.Thread(target=_do_shutdown, daemon=True)
     t.start()
@@ -1244,6 +1298,122 @@ def record_mcp_server_started() -> None:
     ``command_invoked`` events after the auth layer calls :func:`set_auth_mode`.
     """
     emit_event("mcp_server_started", {}, omit_keys={"auth_mode"})
+
+
+# ---------------------------------------------------------------------------
+# Connecting MCP client (#1048)
+# ---------------------------------------------------------------------------
+
+#: Value recorded when a client sends no ``clientInfo``, which the protocol
+#: permits, or sends one this code cannot read.
+MCP_CLIENT_UNKNOWN = "unknown"
+
+#: Value recorded once this process has seen more distinct client names than
+#: :data:`_MCP_CLIENT_LIMIT`.
+MCP_CLIENT_OTHER = "other"
+
+#: Longest client name recorded.
+_MCP_CLIENT_MAX_LEN = 64
+
+#: How many distinct client names one process records before collapsing the
+#: rest into :data:`MCP_CLIENT_OTHER`.
+#:
+#: The cap is not about hostile clients alone.  On protocol revision 2026-07-28
+#: the name rides every request's ``_meta`` rather than a handshake, so it can
+#: differ per message on one connection, and a client that appends a build hash
+#: or a session id to its name (an ordinary bug) would otherwise emit one
+#: ``mcp_client_connected`` per request against the daily ingestion cap and grow
+#: the seen-set without bound for the life of the process.  Eight keeps the
+#: long-tail signal the field exists for while making it useless as a channel.
+_MCP_CLIENT_LIMIT = 8
+
+# The connecting client for the request being handled.  A ContextVar rather
+# than a module global because one long-lived MCP server over streamable HTTP
+# serves several connections concurrently, each with its own client; a global
+# would report whichever connected last.
+_mcp_client_var: ContextVar[str | None] = ContextVar("fabric_dw_mcp_client", default=None)
+
+# Clients this process has already announced, so mcp_client_connected fires
+# once per distinct client rather than once per inbound message.  Bounded by
+# _MCP_CLIENT_LIMIT (+1 for the "other" bucket itself).
+_seen_mcp_clients: set[str] = set()
+
+
+def normalise_mcp_client(raw_name: object) -> str:
+    """Return a bounded client name for *raw_name*.
+
+    Recorded verbatim, bar the filtering below, rather than mapped onto a fixed
+    list of known clients: the question this field answers is which clients are
+    out there, and a fixed list can only ever confirm the ones already guessed,
+    turning every new or renamed client into ``other`` until somebody notices.
+
+    Verbatim still means vetted.  Non-printable characters are removed before
+    the length cap, because ``strip()`` leaves embedded newlines, tabs and NULs
+    in the middle of a name and those went into a custom dimension as-is.
+
+    Args:
+        raw_name: The ``clientInfo.name`` value, or anything at all.
+
+    Returns:
+        The filtered, trimmed, truncated name, or :data:`MCP_CLIENT_UNKNOWN`
+        when *raw_name* is not a usable string.
+    """
+    if not isinstance(raw_name, str):
+        return MCP_CLIENT_UNKNOWN
+    # str.isprintable() is False for control characters, newline, tab and NUL,
+    # and True for ordinary space and for the letters of any script.
+    name = "".join(char for char in raw_name if char.isprintable()).strip()
+    if not name:
+        return MCP_CLIENT_UNKNOWN
+    return name[:_MCP_CLIENT_MAX_LEN]
+
+
+def _bounded_mcp_client(name: str) -> str:
+    """Return *name*, or :data:`MCP_CLIENT_OTHER` once the per-process cap is full."""
+    if name in _seen_mcp_clients:
+        return name
+    if len(_seen_mcp_clients) >= _MCP_CLIENT_LIMIT:
+        return MCP_CLIENT_OTHER
+    return name
+
+
+def current_mcp_client() -> str | None:
+    """Return the MCP client handling the current request, or ``None``.
+
+    ``None`` on the CLI surface, and on any MCP code path reached outside a
+    request (nothing sets the context variable there).
+    """
+    return _mcp_client_var.get()
+
+
+@contextlib.contextmanager
+def mcp_client_scope(raw_name: object) -> Iterator[None]:
+    """Record *raw_name* as the connecting client for the enclosing block.
+
+    Emits ``mcp_client_connected`` the first time this process sees a given
+    client, and makes the name readable via :func:`current_mcp_client` for the
+    duration of the block so ``command_invoked`` can carry it.  Both use the
+    bounded name, so the two events always agree.
+
+    Fire-and-forget: nothing in here raises.
+
+    Args:
+        raw_name: The ``clientInfo.name`` the client sent, in whatever shape it
+            arrived.
+    """
+    name = _bounded_mcp_client(normalise_mcp_client(raw_name))
+    token = _mcp_client_var.set(name)
+    try:
+        if name not in _seen_mcp_clients:
+            _seen_mcp_clients.add(name)
+            # auth_mode is omitted for the same reason as the other lifecycle
+            # events: the first client connects before any token is acquired,
+            # so only the env heuristic would be available here.
+            emit_event("mcp_client_connected", {"mcp_client": name}, omit_keys={"auth_mode"})
+        yield
+    finally:
+        with contextlib.suppress(ValueError):
+            _mcp_client_var.reset(token)
 
 
 def maybe_print_first_run_notice() -> None:
