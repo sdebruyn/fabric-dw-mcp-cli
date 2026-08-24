@@ -994,8 +994,10 @@ class SqlResult(_FabricBase):
     """Result set returned by :func:`~fabric_dw.services.sql_exec.execute`.
 
     Attributes:
-        columns: Ordered list of column names from the last result set.
-            Empty for DDL/DML statements that produce no result set.
+        columns: Ordered list of column names from the last result set that
+            has a column list (i.e. the last query in the batch, not the
+            last statement). Empty when no statement in the batch produced a
+            result set (DDL/DML with nothing else in the batch).
         rows: Each element is one row; values are JSON-serialisable scalars
             (``str``, ``int``, ``float``, ``bool``, ``None``).
             ``datetime`` values are pre-serialised to ISO-8601 strings.
