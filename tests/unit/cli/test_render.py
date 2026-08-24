@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from datetime import UTC, datetime
 from io import StringIO
@@ -15,6 +16,7 @@ from fabric_dw.cli._render import (
     _format_nested,
     _is_guid_column,
     _make_bar,
+    _render_positional_table,
     confirm,
     render,
     render_permissions_table,
@@ -2230,3 +2232,37 @@ class TestRenderResultRowsEmptyRows:
         render_result_rows(["id", "name"], [], json_output=True)
         captured = capsys.readouterr()
         assert json.loads(captured.out) == []
+
+
+class TestPruneNullColumnsDefaultConsistency:
+    """``prune_null_columns`` must default the same way on both layers (issue #1041).
+
+    ``_render_positional_table`` used to default to *True* while its only
+    public wrapper, ``render_result_rows``, defaulted to *False*. Reading
+    either signature in isolation gave the wrong idea about what happens by
+    default. Both now default to *False*, matching what every current call
+    site already passes explicitly.
+    """
+
+    def test_defaults_match_across_both_functions(self) -> None:
+        render_result_rows_default = (
+            inspect.signature(render_result_rows).parameters["prune_null_columns"].default
+        )
+        positional_table_default = (
+            inspect.signature(_render_positional_table).parameters["prune_null_columns"].default
+        )
+        assert render_result_rows_default is positional_table_default is False
+
+    def test_positional_table_keeps_all_null_column_by_default(self) -> None:
+        """With no explicit flag, ``_render_positional_table`` must not prune."""
+        sio = StringIO()
+        console = Console(file=sio, width=200, highlight=False, no_color=True)
+        _render_positional_table(
+            ["a", "b"],
+            [[None, 5], [None, 10]],
+            console=console,
+            title=None,
+        )
+        output = sio.getvalue()
+        assert "a" in output
+        assert "b" in output

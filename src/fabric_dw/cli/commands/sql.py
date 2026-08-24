@@ -78,8 +78,11 @@ async def sql_exec_cmd(
     """Execute a SQL statement against ITEM (warehouse or SQL endpoint).
 
     Provide the query via -q/--query or -f/--file (not both).
-    Multi-statement batches are supported; only the last result set is returned.
-    DDL/DML statements return empty columns and rows.
+    Multi-statement batches are supported; the CLI keeps the last result set that
+    has a column list (i.e. the last query), not the last statement. A batch that
+    ends with DDL/DML after a query shows the query's result and does not
+    separately report that the DDL/DML ran. A statement with no result set at all
+    returns empty columns and rows.
 
     Output defaults to a Rich table (rows/columns).  Pass --json on the root command
     for machine-readable JSON ({columns: [...], rows: [...], rowcount: N}).

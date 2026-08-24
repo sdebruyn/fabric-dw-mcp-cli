@@ -639,7 +639,7 @@ def _render_positional_table(
     *,
     console: Console,
     title: str | None,
-    prune_null_columns: bool = True,
+    prune_null_columns: bool = False,
 ) -> None:
     """Render *columns* and *rows* as a Rich table using positional access.
 
@@ -648,13 +648,13 @@ def _render_positional_table(
     (e.g. ``SELECT 1 AS id, 2 AS id``) each keep their own header and value
     instead of being collapsed by dict keying.
 
-    When *prune_null_columns* is *True* (default), columns whose value is
-    ``None`` in every row are omitted.  Pass *False* to keep all columns,
-    e.g. for raw SQL output where every column must appear regardless of
-    nullability.  Pruning is always skipped when *rows* is empty: with no
-    rows, every column would vacuously look "all-None" and pruning would
-    drop every header, defeating the point of showing the empty result's
-    shape.
+    When *prune_null_columns* is *True*, columns whose value is ``None`` in
+    every row are omitted.  Defaults to *False* (matching the default on
+    :func:`render_result_rows`, this function's only caller) so raw SQL
+    output keeps every column regardless of nullability unless the caller
+    opts in.  Pruning is always skipped when *rows* is empty: with no rows,
+    every column would vacuously look "all-None" and pruning would drop
+    every header, defeating the point of showing the empty result's shape.
 
     When *rows* is empty, *columns* still go through the same horizontal-fit
     check as a non-empty result: if the headers fit, an empty table with
@@ -739,6 +739,23 @@ def render_result_rows(
     For JSON output the rows are zipped into per-row dicts; duplicate column
     names follow standard dict semantics (last value wins), which matches the
     behaviour of the previous dict-based rendering.
+
+    .. note::
+        On an empty result (``rows=[]``), the JSON branch always emits a bare
+        ``[]`` and *columns* is silently dropped — a zero-row result carries
+        no shape information in JSON, unlike the table path, which still
+        renders the column headers.  This is deliberate, not an oversight
+        (see issue #1041): every list-style ``--json`` CLI command backed by
+        this function emits a bare JSON array, and preserving the column
+        list on an empty result would require switching that one case to a
+        JSON object, which is a breaking type change for any script doing
+        ``for row in json.loads(output)``.  Consumers that need the column
+        shape of an empty result have it through ``sql exec --json``, which
+        bypasses this function entirely and dumps its own
+        ``{"columns": [...], "rows": [...], "rowcount": N}`` model, or
+        through the MCP tool surface (e.g. ``get_table_health_metrics``,
+        which always returns ``{"columns": ..., "rows": ...}`` regardless of
+        row count).
 
     Args:
         columns: Ordered list of column names as returned by the query.
