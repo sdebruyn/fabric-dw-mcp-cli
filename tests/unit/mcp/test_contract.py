@@ -64,8 +64,9 @@ from tests.unit.mcp.conftest import WS_ID, WS_NAME, make_item_entry
 
 # ---------------------------------------------------------------------------
 # Minimum tool count — guards against catastrophic registration drops.
-# Set just below the current count (~96) so adding tools never requires a
-# bump, while a whole-domain disappearance (≥6 tools) is still caught.
+# Set well below the current count (121 at time of writing) so adding tools
+# never requires a bump, while a whole-domain disappearance is still caught.
+# The exact number is deliberately not asserted; only a floor is.
 # ---------------------------------------------------------------------------
 
 MIN_TOOL_COUNT = 90
@@ -382,9 +383,14 @@ async def test_server_info_reports_fabric_dw_version(contract_ctx, client_mode) 
     explicitly, and this is the assertion that proves the client actually
     receives it.
 
-    ``serverInfo`` is only guaranteed on legacy connections; on modern ones it
-    is an optional ``_meta`` stamp, so an absent value is tolerated there but a
-    wrong one is not.
+    The SDK guarantees ``serverInfo`` only on legacy connections; on modern ones
+    it is an optional ``_meta`` stamp. This server populates it in both cases
+    (measured), so both modes assert unconditionally rather than tolerating
+    ``None``. A version of this test that skipped its assertions whenever
+    ``info`` happened to be ``None`` would assert nothing at all under ``auto``,
+    which is worse than not running it there. If a future SDK stops stamping
+    ``serverInfo`` on modern connections, this fails loudly and the decision to
+    accept that gets made deliberately.
     """
     from mcp.client import Client  # noqa: PLC0415
 
@@ -395,8 +401,10 @@ async def test_server_info_reports_fabric_dw_version(contract_ctx, client_mode) 
         async with Client(mcp, mode=client_mode) as client:
             info = client.server_info
 
-    if client_mode == "legacy":
-        assert info is not None, "legacy connections always carry serverInfo"
-    if info is not None:
-        assert info.name == "fabric-dw"
-        assert info.version == __version__
+    assert info is not None, (
+        f"no serverInfo on a {client_mode} connection; the client cannot tell "
+        "which server or version it is talking to"
+    )
+    assert info.name == "fabric-dw"
+    assert info.version == __version__
+    assert info.version, "server version must not be empty"

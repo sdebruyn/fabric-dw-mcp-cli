@@ -517,14 +517,21 @@ def test_run_http_forwards_host_and_port_to_run() -> None:
     raises.  Host and port are transport-specific ``run()`` kwargs instead, so
     this pins that they are actually forwarded rather than silently dropped,
     which would leave the server on the SDK's 127.0.0.1:8000 defaults.
+
+    Both values must differ from every default in play or the test cannot fail.
+    ``127.0.0.1`` is simultaneously the argparse default AND the SDK's own
+    ``run()`` default, so a hardcoded host would still satisfy an assertion
+    written against it.  ``localhost`` is used instead: still loopback, so the
+    guard does not demand ``FABRIC_MCP_ALLOW_REMOTE``, but distinct from both
+    defaults.  The port is likewise nowhere near 8000.
     """
     from fabric_dw.mcp import run  # noqa: PLC0415
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
     with patch.object(mcp, "run") as mock_run:
-        run(["--transport", "http", "--host", "127.0.0.1", "--port", "9123"])
+        run(["--transport", "http", "--host", "localhost", "--port", "9123"])
 
-    mock_run.assert_called_once_with(transport="streamable-http", host="127.0.0.1", port=9123)
+    mock_run.assert_called_once_with(transport="streamable-http", host="localhost", port=9123)
 
 
 def test_run_stdio_passes_no_transport_kwargs() -> None:
