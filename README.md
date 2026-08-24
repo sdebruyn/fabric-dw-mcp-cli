@@ -181,16 +181,7 @@ The MCP server can be started in HTTP mode for remote clients:
 fabric-dw-mcp --transport http [--host 127.0.0.1] [--port 8000]
 ```
 
-It binds to loopback by default, where Host and Origin validation is handled for you. Binding anywhere else requires `FABRIC_MCP_ALLOW_REMOTE=1`, and the endpoint has **no built-in authentication or TLS**, so always front it with an authenticating reverse proxy.
-
-On a non-loopback bind that validation is off, so every request is served without checking which name it was addressed to. Pass `--allowed-host` with the name clients use to reach the server to turn it back on:
-
-```bash
-FABRIC_MCP_ALLOW_REMOTE=1 fabric-dw-mcp --transport http \
-  --host 0.0.0.0 --allowed-host mcp.example.com
-```
-
-See [Hosting the MCP server](https://fdw.debruyn.dev/reference/hosting-mcp-server/) for the full setup.
+It binds to loopback by default, where Host and Origin validation is handled for you. Binding anywhere else requires `FABRIC_MCP_ALLOW_REMOTE=1` and `--allowed-host`, and the endpoint has **no built-in authentication or TLS**, so always front it with an authenticating reverse proxy. See [Hosting the MCP server](https://fdw.debruyn.dev/reference/hosting-mcp-server/) for that setup.
 
 Request bodies are capped at 4 MiB; anything larger is rejected with HTTP 413. In practice only a multi-megabyte `execute_sql` script or object definition can reach that. The stdio transport has no such limit.
 
