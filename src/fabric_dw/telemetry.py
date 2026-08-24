@@ -749,8 +749,10 @@ def _get_tracer() -> object | None:
       of its own.  The matching ``disable_tracing`` / ``disable_metrics`` kwargs
       do NOT work: the library overwrites caller-supplied values with its own
       defaults (see the long comment at the call site).  Verified by inspecting
-      the resulting global providers, which are the no-op ``ProxyTracerProvider``
-      and ``_ProxyMeterProvider``, not SDK providers with Azure exporters.
+      the global providers immediately after the call, which are the no-op
+      ``ProxyTracerProvider`` and ``_ProxyMeterProvider``, not SDK providers with
+      Azure exporters.  The meter provider stays that way; the tracer provider is
+      replaced below, on the MCP surface, by one this package builds itself.
 
       Metrics stay off entirely.  Traces do not: MCP Python SDK v2 installs an
       OpenTelemetry middleware on every server unconditionally, emitting one
