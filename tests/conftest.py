@@ -218,6 +218,9 @@ def _reset_telemetry_module_globals(
        - ``_sdk_initialised``, ``_tracer``, ``_otel_logger`` → initial values
          (prevents a test that calls ``_get_tracer()`` from leaving a live logger
          object that causes subsequent tests to skip the SDK init path entirely)
+       - ``_seen_mcp_clients`` → empty set
+         (``mcp_client_connected`` fires once per distinct client per process, so
+         an entry left behind silences the event in a later test)
 
     All resets are applied *before* and *after* each test (yield fixture) so state
     never leaks from a previous test even if it raised.
@@ -285,6 +288,14 @@ def _reset_telemetry_module_globals(
             ns["_sdk_initialised"] = False
             ns["_tracer"] = None
             ns["_otel_logger"] = None
+            # Clients already announced this process: mcp_client_connected fires
+            # once per distinct client, so a leftover entry would make a later
+            # test see no event at all.
+            assert "_seen_mcp_clients" in ns, (
+                "_seen_mcp_clients not found in fabric_dw.telemetry — "
+                "update both telemetry.py and tests/conftest.py"
+            )
+            ns["_seen_mcp_clients"] = set()
 
     _reset()
     yield

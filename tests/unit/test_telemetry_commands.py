@@ -6,6 +6,8 @@ Monitor SDK calls (every telemetry emission is mocked via monkeypatch).
 
 from __future__ import annotations
 
+import importlib
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import click
@@ -27,6 +29,16 @@ from tests.unit._tool_introspection import collect_live_mcp_tool_names
 # Telemetry patch targets (lazily imported inside emit_command_invoked).
 _TELEMETRY_ENABLED = "fabric_dw.telemetry.telemetry_enabled"
 _EMIT_EVENT = "fabric_dw.telemetry.emit_event"
+
+
+def _live_telemetry() -> Any:
+    """Return the telemetry module currently in ``sys.modules``.
+
+    ``emit_command_invoked`` imports it per call, and tests/unit/test_telemetry.py
+    replaces that entry with a freshly imported module, so anything bound at
+    collection time here would be a different object with different globals.
+    """
+    return importlib.import_module("fabric_dw.telemetry")
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +400,36 @@ class TestEmitCommandInvokedEnabled:
         )
         attrs: dict = mock.call_args[0][1]
         assert "destructive_op" not in attrs
+
+    def test_mcp_client_absent_outside_an_mcp_request(self) -> None:
+        """A CLI invocation has no connecting client, so the dimension must be absent.
+
+        An "unknown" placeholder would be worse than nothing here: it would look
+        like an MCP client that failed to identify itself.
+        """
+        mock = self._run(
+            name="warehouses.list",
+            status="success",
+            duration_ms=50.0,
+        )
+        attrs: dict = mock.call_args[0][1]
+        assert "mcp_client" not in attrs
+
+    def test_mcp_client_carried_from_the_request_scope(self) -> None:
+        """Inside an MCP request the tool call carries the client that sent it (#1048).
+
+        This is what makes usage breakable down per client: the connection event
+        alone cannot be joined to tool calls on a server serving several clients.
+        """
+        with (
+            patch(_TELEMETRY_ENABLED, return_value=True),
+            patch(_EMIT_EVENT) as mock_emit,
+            _live_telemetry().mcp_client_scope("claude-ai"),
+        ):
+            emit_command_invoked(name="list_warehouses", status="success", duration_ms=50.0)
+
+        attrs: dict = mock_emit.call_args[0][1]
+        assert attrs["mcp_client"] == "claude-ai"
 
     def test_no_identifiers_in_attributes(self) -> None:
         """The emitted attributes must not contain any identifier-like strings."""

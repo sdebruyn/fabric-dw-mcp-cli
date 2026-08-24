@@ -25,9 +25,12 @@ Every telemetry event includes a shared envelope of standard fields:
 |---|---|---|
 | `app_started` | Once per process | - (`auth_mode` omitted - see note below) |
 | `mcp_server_started` | When the MCP server boots | - (`auth_mode` omitted - see note below) |
+| `mcp_client_connected` | The first time each distinct MCP client identifies itself to a server process | `mcp_client` |
 | `app_exited` | On process exit | `duration_ms`, `exit_status` (ok / user_error / api_error), `error_category` |
 
-> **Note on `auth_mode` in lifecycle-start events:** `app_started` and `mcp_server_started` fire at process start, before any token is acquired. Emitting `auth_mode` at that point would produce a possibly-wrong value derived from environment-variable heuristics (e.g. `interactive` for a plain `az login`). The accurate value is only available after the first token acquisition and is emitted on `command_invoked` and `app_exited`.
+> **Note on `auth_mode` in lifecycle-start events:** `app_started`, `mcp_server_started` and `mcp_client_connected` fire before any token is acquired. Emitting `auth_mode` at that point would produce a possibly-wrong value derived from environment-variable heuristics (e.g. `interactive` for a plain `az login`). The accurate value is only available after the first token acquisition and is emitted on `command_invoked` and `app_exited`.
+
+> **Why the client is a separate event:** `mcp_server_started` fires when the process boots, which is before any client has connected, so the client cannot be a field on it. One long-lived server can also serve several clients over HTTP, which a single per-process field could not represent. The event fires once per distinct client rather than once per connection, so a client reconnecting all day does not produce an event per reconnect.
 
 ### `command_invoked`: per-command usage
 
@@ -41,6 +44,20 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 | `status` | `success`, `user_error` (validation/usage problems), or `api_error` (HTTP/driver/unexpected). |
 | `duration_ms_bucket` | Bucketed wall-clock duration: `<100ms`, `<1s`, `<10s`, or `>10s`. |
 | `destructive_op` | `true` only for permanently-destructive MCP tools (delete, clear, restore in-place). Omitted otherwise. |
+| `mcp_client` | Which MCP client made the call (see below). MCP only; absent on CLI commands. |
+
+#### Which MCP client is connected
+
+At connection setup a client sends `clientInfo`, a name and version describing itself. `fabric-dw` records the name, so usage can be broken down by client (Claude Desktop, VS Code, Cursor, a custom integration). The version is not recorded: it changes with every client release and answers no question this project has.
+
+This is the client software identifying itself, not user input travelling through the server, and that distinction is the line this project draws:
+
+| Value | Who decides the content | Collected |
+|---|---|---|
+| `clientInfo.name` | the client software, about itself | Yes. A small, self-describing set of values |
+| a prompt or tool name on a request | whoever composed the request, free text | No. Unfiltered outside input, stripped before export |
+
+The name is recorded as sent, trimmed and capped at 64 characters, rather than mapped onto a fixed list of known clients. A fixed list can only confirm the clients somebody already thought of, and would silently file every new or renamed client under `other`. A client that sends no `clientInfo`, which the protocol permits from revision 2026-07-28 on, is recorded as `unknown`.
 
 #### Domain rollup
 

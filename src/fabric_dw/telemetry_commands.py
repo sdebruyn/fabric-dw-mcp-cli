@@ -402,6 +402,10 @@ def emit_command_invoked(
     Fire-and-forget: all exceptions are swallowed and nothing is raised.
     When telemetry is disabled this is a guaranteed no-op (no work done).
 
+    On the MCP surface the event also carries ``mcp_client``, the name the
+    connecting client gave for itself, so usage can be broken down per client
+    (#1048).  The dimension is absent on the CLI surface.
+
     Args:
         name: The command name — for CLI: ``"<group>.<subcommand>"``,
               for MCP: the tool name.
@@ -410,7 +414,11 @@ def emit_command_invoked(
         destructive: Whether this is a permanently-destructive operation.
     """
     try:
-        from fabric_dw.telemetry import emit_event, telemetry_enabled  # noqa: PLC0415
+        from fabric_dw.telemetry import (  # noqa: PLC0415
+            current_mcp_client,
+            emit_event,
+            telemetry_enabled,
+        )
 
         if not telemetry_enabled():
             return
@@ -429,6 +437,12 @@ def emit_command_invoked(
         }
         if destructive:
             attrs["destructive_op"] = True
+        # Which MCP client sent this call (#1048).  Absent on the CLI surface,
+        # where nothing sets it, so the dimension only ever appears on events
+        # where it means something.
+        mcp_client = current_mcp_client()
+        if mcp_client is not None:
+            attrs["mcp_client"] = mcp_client
 
         emit_event("command_invoked", attrs)
     except Exception:

@@ -101,14 +101,20 @@ import os
 import sys
 import threading
 import uuid
+from collections.abc import Iterator
+from contextvars import ContextVar
 from pathlib import Path
 
 __all__ = [
+    "MCP_CLIENT_UNKNOWN",
     "cache_tenant_id_from_token",
+    "current_mcp_client",
     "decode_tid_from_token",
     "emit_event",
     "flush_telemetry",
     "maybe_print_first_run_notice",
+    "mcp_client_scope",
+    "normalise_mcp_client",
     "record_app_exited",
     "record_app_started",
     "record_mcp_server_started",
@@ -1255,6 +1261,91 @@ def record_mcp_server_started() -> None:
     ``command_invoked`` events after the auth layer calls :func:`set_auth_mode`.
     """
     emit_event("mcp_server_started", {}, omit_keys={"auth_mode"})
+
+
+# ---------------------------------------------------------------------------
+# Connecting MCP client (#1048)
+# ---------------------------------------------------------------------------
+
+#: Value recorded when a client sends no ``clientInfo``, which the protocol
+#: permits, or sends one this code cannot read.
+MCP_CLIENT_UNKNOWN = "unknown"
+
+#: Longest client name recorded.  ``clientInfo.name`` is chosen by the client
+#: software about itself, so it is a small set in practice, but nothing on the
+#: wire bounds it; truncating keeps one odd client from bloating every event.
+_MCP_CLIENT_MAX_LEN = 64
+
+# The connecting client for the request being handled.  A ContextVar rather
+# than a module global because one long-lived MCP server over streamable HTTP
+# serves several connections concurrently, each with its own client; a global
+# would report whichever connected last.
+_mcp_client_var: ContextVar[str | None] = ContextVar("fabric_dw_mcp_client", default=None)
+
+# Clients this process has already announced, so mcp_client_connected fires
+# once per distinct client rather than once per inbound message.
+_seen_mcp_clients: set[str] = set()
+
+
+def normalise_mcp_client(raw_name: object) -> str:
+    """Return a bounded client name for *raw_name*.
+
+    Recorded verbatim (bar the length cap) rather than mapped onto a fixed list
+    of known clients: the question this field answers is which clients are out
+    there, and a fixed list can only ever confirm the ones already guessed,
+    turning every new or renamed client into ``other`` until somebody notices.
+
+    Args:
+        raw_name: The ``clientInfo.name`` value, or anything at all.
+
+    Returns:
+        The trimmed, truncated name, or :data:`MCP_CLIENT_UNKNOWN` when
+        *raw_name* is not a usable string.
+    """
+    if not isinstance(raw_name, str):
+        return MCP_CLIENT_UNKNOWN
+    name = raw_name.strip()
+    if not name:
+        return MCP_CLIENT_UNKNOWN
+    return name[:_MCP_CLIENT_MAX_LEN]
+
+
+def current_mcp_client() -> str | None:
+    """Return the MCP client handling the current request, or ``None``.
+
+    ``None`` on the CLI surface, and on any MCP code path reached outside a
+    request (nothing sets the context variable there).
+    """
+    return _mcp_client_var.get()
+
+
+@contextlib.contextmanager
+def mcp_client_scope(raw_name: object) -> Iterator[None]:
+    """Record *raw_name* as the connecting client for the enclosing block.
+
+    Emits ``mcp_client_connected`` the first time this process sees a given
+    client, and makes the name readable via :func:`current_mcp_client` for the
+    duration of the block so ``command_invoked`` can carry it.
+
+    Fire-and-forget: nothing in here raises.
+
+    Args:
+        raw_name: The ``clientInfo.name`` the client sent, in whatever shape it
+            arrived.
+    """
+    name = normalise_mcp_client(raw_name)
+    token = _mcp_client_var.set(name)
+    try:
+        if name not in _seen_mcp_clients:
+            _seen_mcp_clients.add(name)
+            # auth_mode is omitted for the same reason as the other lifecycle
+            # events: the first client connects before any token is acquired,
+            # so only the env heuristic would be available here.
+            emit_event("mcp_client_connected", {"mcp_client": name}, omit_keys={"auth_mode"})
+        yield
+    finally:
+        with contextlib.suppress(ValueError):
+            _mcp_client_var.reset(token)
 
 
 def maybe_print_first_run_notice() -> None:

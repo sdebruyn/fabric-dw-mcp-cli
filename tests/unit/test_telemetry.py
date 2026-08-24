@@ -32,6 +32,16 @@ def _reload_telemetry() -> Any:
     return importlib.import_module("fabric_dw.telemetry")
 
 
+def _live_telemetry() -> Any:
+    """Return the telemetry module currently in ``sys.modules``.
+
+    A module-level ``import`` would bind whichever object existed at collection
+    time, and :func:`_reload_telemetry` replaces that entry with a fresh module
+    whose globals are the ones the rest of the process then uses.
+    """
+    return importlib.import_module("fabric_dw.telemetry")
+
+
 # ---------------------------------------------------------------------------
 # Opt-out: telemetry_enabled()
 # ---------------------------------------------------------------------------
@@ -1494,12 +1504,13 @@ def test_operator_can_re_enable_customer_sdkstats(
 def test_get_tracer_leaves_the_logs_pipeline_enabled(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    """Disabling traces and metrics must NOT disable logs.
+    """Switching off the library's trace and metric pipelines must NOT touch logs.
 
     customEvents are emitted as OTel log records, so the logs pipeline is the one
     that has to stay on. Without this, adding ``OTEL_LOGS_EXPORTER`` to the
-    hard-set block (an easy symmetry mistake) would silently kill all telemetry
-    rather than just the parts we do not want.
+    hard-set block (an easy symmetry mistake) would silently kill all telemetry:
+    every lifecycle event, every ``command_invoked``, and the
+    ``mcp_client_connected`` event too, leaving only the spans.
     """
     mod, at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request)
     try:
@@ -4068,3 +4079,97 @@ def test_azure_cli_without_azure_config_dir_env(
     # After override (simulating what record_auth_mode_from_default_credential does):
     mod.set_auth_mode("azure_cli")  # type: ignore[attr-defined]
     assert mod._build_envelope()["auth_mode"] == "azure_cli"
+
+
+# ---------------------------------------------------------------------------
+# Which MCP client is connected (#1048)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [None, "", "   ", 42, {"name": "claude-ai"}],
+)
+def test_an_unusable_client_name_falls_back_to_unknown(raw: object) -> None:
+    """The protocol lets a client send no client info at all, so this has a floor.
+
+    Recording ``unknown`` rather than dropping the field keeps the count of
+    anonymous clients visible instead of making them look like no client.
+    """
+    tel = _live_telemetry()
+
+    assert tel.normalise_mcp_client(raw) == tel.MCP_CLIENT_UNKNOWN
+
+
+def test_a_client_name_is_bounded_in_length() -> None:
+    """``clientInfo.name`` is client-chosen, so nothing on the wire bounds it."""
+    assert len(_live_telemetry().normalise_mcp_client("x" * 500)) == 64
+
+
+def test_a_client_name_is_recorded_verbatim() -> None:
+    """Deliberately not mapped onto a fixed list of known clients.
+
+    A fixed list can only confirm the clients somebody already thought of, and
+    turns every new or renamed one into ``other`` until a human notices.  The
+    long tail is the interesting part of this field.
+    """
+    assert (
+        _live_telemetry().normalise_mcp_client("  some-brand-new-client  ")
+        == "some-brand-new-client"
+    )
+
+
+def test_the_client_is_announced_once_per_process_and_readable_during_the_request() -> None:
+    """One event per distinct client, and the name available to command_invoked.
+
+    Once per client rather than once per message, because a busy server would
+    otherwise emit a connection event per inbound call.  The context variable is
+    what lets ``command_invoked`` attribute a tool call to the client that made
+    it, which is the question #1048 exists to answer.
+    """
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    with patch.object(tel, "emit_event") as emit:
+        assert tel.current_mcp_client() is None
+        with tel.mcp_client_scope("claude-ai"):
+            assert tel.current_mcp_client() == "claude-ai"
+            with tel.mcp_client_scope("claude-ai"):
+                pass
+        assert tel.current_mcp_client() is None
+
+    assert [call.args[0] for call in emit.call_args_list] == ["mcp_client_connected"]
+    assert emit.call_args.args[1] == {"mcp_client": "claude-ai"}
+
+
+def test_a_second_client_on_the_same_process_is_announced_too() -> None:
+    """One MCP server can serve several clients; each one is worth counting."""
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    with patch.object(tel, "emit_event") as emit:
+        with tel.mcp_client_scope("claude-ai"):
+            pass
+        with tel.mcp_client_scope("mcp-inspector"):
+            pass
+
+    assert [call.args[1]["mcp_client"] for call in emit.call_args_list] == [
+        "claude-ai",
+        "mcp-inspector",
+    ]
+
+
+def test_nothing_is_recorded_when_telemetry_is_opted_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The client field rides the existing opt-out; it adds no switch of its own."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("FABRIC_DW_TELEMETRY_OPT_OUT", "1")
+
+    mod = _reload_telemetry()
+    mod._seen_mcp_clients.clear()
+
+    with patch.object(mod, "_get_tracer") as get_tracer, mod.mcp_client_scope("claude-ai"):
+        pass
+
+    get_tracer.assert_not_called()
