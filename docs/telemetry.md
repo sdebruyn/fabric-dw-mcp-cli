@@ -23,14 +23,12 @@ Every telemetry event includes a shared envelope of standard fields:
 
 | Event | When | Extra fields |
 |---|---|---|
-| `app_started` | Once per process | - (`auth_mode` omitted - see note below) |
-| `mcp_server_started` | When the MCP server boots | - (`auth_mode` omitted - see note below) |
-| `mcp_client_connected` | The first time each distinct MCP client identifies itself to a server process | `mcp_client` |
+| `app_started` | Once per process | - |
+| `mcp_server_started` | When the MCP server boots | - |
+| `mcp_client_connected` | First time each distinct MCP client identifies itself | `mcp_client` |
 | `app_exited` | On process exit | `duration_ms`, `exit_status` (ok / user_error / api_error), `error_category` |
 
-> **Note on `auth_mode` in lifecycle-start events:** `app_started`, `mcp_server_started` and `mcp_client_connected` fire before any token is acquired. Emitting `auth_mode` at that point would produce a possibly-wrong value derived from environment-variable heuristics (e.g. `interactive` for a plain `az login`). The accurate value is only available after the first token acquisition and is emitted on `command_invoked` and `app_exited`.
-
-> **Why the client is a separate event:** `mcp_server_started` fires when the process boots, which is before any client has connected, so the client cannot be a field on it. One long-lived server can also serve several clients over HTTP, which a single per-process field could not represent. The event fires once per distinct client rather than once per connection, so a client reconnecting all day does not produce an event per reconnect.
+> `auth_mode` is omitted from the three start events: they fire before any sign-in, so there is nothing accurate to report yet. It appears on `command_invoked` and `app_exited`.
 
 ### `command_invoked`: per-command usage
 
@@ -44,20 +42,7 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 | `status` | `success`, `user_error` (validation/usage problems), or `api_error` (HTTP/driver/unexpected). |
 | `duration_ms_bucket` | Bucketed wall-clock duration: `<100ms`, `<1s`, `<10s`, or `>10s`. |
 | `destructive_op` | `true` only for permanently-destructive MCP tools (delete, clear, restore in-place). Omitted otherwise. |
-| `mcp_client` | Which MCP client made the call (see below). MCP only; absent on CLI commands. |
-
-#### Which MCP client is connected
-
-At connection setup a client sends `clientInfo`, a name and version describing itself. `fabric-dw` records the name, so usage can be broken down by client (Claude Desktop, VS Code, Cursor, a custom integration). The version is not recorded: it changes with every client release and answers no question this project has.
-
-This is the client software identifying itself, not user input travelling through the server, and that distinction is the line this project draws:
-
-| Value | Who decides the content | Collected |
-|---|---|---|
-| `clientInfo.name` | the client software, about itself | Yes. A small, self-describing set of values |
-| a prompt or tool name on a request | whoever composed the request, free text | No. Unfiltered outside input, stripped before export |
-
-The name is recorded as sent, trimmed and capped at 64 characters, rather than mapped onto a fixed list of known clients. A fixed list can only confirm the clients somebody already thought of, and would silently file every new or renamed client under `other`. A client that sends no `clientInfo`, which the protocol permits from revision 2026-07-28 on, is recorded as `unknown`.
+| `mcp_client` | The name the connected MCP client reports for itself (e.g. `claude-ai`), capped at 64 characters. MCP only; `unknown` when the client gives no name. |
 
 #### Domain rollup
 
@@ -83,116 +68,18 @@ The name is recorded as sent, trimmed and capped at 64 characters, rather than m
 | `config` | `config` | - |
 | `completion` | `completion` | - |
 
-### MCP protocol spans
+### MCP protocol messages
 
-When you run the MCP server, `fabric-dw` also collects the OpenTelemetry spans
-the MCP Python SDK produces: one span per inbound protocol message. This is
-instrumentation the SDK maintains, so it covers every message type and keeps
-covering new ones as the protocol grows, which hand-written events do not. Over
-`command_invoked` it adds the non-tool protocol methods (`initialize`,
-`tools/list`, `prompts/list`, ...), the negotiated protocol revision, exact
-timings rather than buckets, and a per-message error classification.
-
-The CLI produces no protocol spans and therefore installs no trace pipeline at
-all.
-
-Each exported span carries a fixed set of fields and nothing else:
+Running the MCP server also records one entry per protocol message it handles, which covers the messages that are not tool calls (`initialize`, `tools/list`, and so on).
 
 | Field | Description |
 |---|---|
-| span name | The protocol method, e.g. `tools/call`. |
-| span kind | Inbound message, or a request the server sent to the client. |
-| start and end time | The message's duration. |
-| `mcp.method.name` | The protocol method again, as a queryable field. |
-| `mcp.protocol.version` | The negotiated protocol revision, e.g. `2025-06-18`. |
-| `jsonrpc.request.id` | The request's numeric id, for correlating a request with its response. |
-| `gen_ai.operation.name` | `execute_tool` on a `tools/call`, absent otherwise. |
-| `error.type` | A JSON-RPC error code, `tool_error`, or the class name of a server-side exception. |
-| `rpc.response.status_code` | The JSON-RPC error code, when the message failed. |
-| trace and span IDs | Random identifiers, so a message's spans can be correlated with each other. |
+| method | The protocol method, e.g. `tools/call`. A method this server does not implement is recorded as `<unknown>`, never as the text that was sent. |
+| duration | How long the message took to handle. |
+| outcome | Whether it succeeded, and if not, the error code or the name of the error type. |
+| protocol version | The MCP revision the client and the server agreed on, e.g. `2025-06-18`. |
 
-Spans do not carry the event envelope listed at the top of this page. What they
-do carry alongside the table above is the same resource description every event
-carries: `anonymous_install_id`, `app_version`, and the surface (`mcp`).
-
-#### What is stripped before a span is exported
-
-Anything on a span that the client chose is removed. This is not hypothetical:
-several such values land on a span as produced, and the values are as free-form
-as whatever the sender typed.
-
-- **The client-supplied name on a request.** A `prompts/get` or `tools/call`
-  names what it wants, and the SDK copies that name into the span name and into
-  a `gen_ai.prompt.name` / `gen_ai.tool.name` attribute. Registering no prompts
-  is not protection: the resulting `Unknown prompt: <name>` error puts the same
-  value into the span's status description as well. The span name is rebuilt
-  from the method alone and both attributes are dropped. Which tool ran is
-  already recorded, by name, on `command_invoked`.
-- **Error messages and stack traces.** The status description is dropped and
-  span events are dropped entirely, which is what removes the exception message
-  and the full Python stack trace the SDK attaches on some failure paths. The
-  `error.type` classification above is kept in their place.
-- **A method name the protocol does not define.** The instrumentation covers
-  the "method not found" path too, so a client calling a made-up method would
-  otherwise have that string exported. Method names are checked against the
-  protocol's own list and anything else is recorded as `<unknown>`, which still
-  counts the call without quoting it.
-- **A non-numeric JSON-RPC request id.** The id is the client's to choose and
-  may be any string, so only an integer id is recorded.
-- **Everything else.** Spans are rebuilt from the allowlist in the table above
-  rather than filtered, so a field a future SDK release adds is dropped until it
-  has been looked at.
-
-#### Spans from anything other than the MCP SDK are never exported
-
-The export path drops every span that did not come from the MCP SDK's own
-tracer. All of OpenTelemetry's automatic instrumentation is switched off in this
-package, so nothing else produces spans in the first place, but the drop is
-unconditional so that stays true no matter what a future dependency starts
-doing. HTTP client instrumentation in particular would attach request URLs, and
-this project's URLs contain workspace and warehouse identifiers.
-
-One qualifier, because it is about this package and not about your process: if
-you embed `fabric-dw` in an application that has already set up its own
-OpenTelemetry `TracerProvider`, that provider keeps collecting spans and sending
-them wherever you configured, and `fabric-dw` leaves it alone rather than
-replacing it. Its own pipeline then stands down entirely, so in that case the
-MCP spans go to your destination and not to the maintainers.
-
-### `fabric-dw` exports no metrics
-
-`fabric-dw` forces `OTEL_METRICS_EXPORTER=none` around the Application Insights
-setup call, so no metric exporter is built. `OTEL_TRACES_EXPORTER` is forced to
-`none` there too, because the exporter that call would install ships spans
-exactly as produced, including everything listed above as stripped; the trace
-pipeline is built separately afterwards, with the filtering in front of it.
-
-Those two variables are set unconditionally rather than deferring to a value you
-may already have in your environment, and they are restored to whatever they were
-immediately afterwards, so nothing else in your process is affected. The reason
-they are not merely defaulted is that the Azure Monitor library reads them only
-to check for the exact string `none`: any other value, including an empty string
-or `otlp`, leaves the pipeline on and installs the **Azure Monitor** exporter
-rather than the one you asked for. Deferring would therefore have handed you no
-control while quietly turning an unfiltered export path back on.
-`OTEL_LOGS_EXPORTER` is left alone: setting it to `none` yourself switches off
-`fabric-dw`'s own events, which is a choice worth respecting.
-
-Both `disable_tracing=True` and `disable_metrics=True` are also passed to the
-Azure Monitor configuration, but neither works: the library overwrites
-caller-supplied values with its own defaults, which read only the environment
-variables. The environment variables are the mechanism; the arguments are a
-statement of intent.
-
-There is a second, separately gated pipeline that the exporter library starts on
-its own: **customer sdkstats**, a delivery-statistics channel that reports how
-many telemetry items succeeded, dropped, or were retried. Despite the name it is
-not covered by the statsbeat switch, and it builds its own metric exporter, meter
-provider, and a reader on a 15-minute timer, all pointed at the same connection
-string. A CLI command finishes long before the first export cycle, but an MCP
-server does not, and that is this project's main mode. `fabric-dw` therefore sets
-`APPLICATIONINSIGHTS_SDKSTATS_DISABLED=true` unless you have already given that
-variable a value of your own.
+Anything you choose the content of is removed first: prompt and tool names, error messages, stack traces, and request IDs that are not plain numbers never leave your machine.
 
 ### What is deliberately NOT collected
 
@@ -201,11 +88,8 @@ variable a value of your own.
 - Connection strings or any credentials
 - File paths or environment variable values
 - Any other personally-identifiable information
-- Any value chosen by whoever composed an MCP request: prompt names, the name on
-  a call for a tool that does not exist, unknown method names, or a string
-  JSON-RPC request id (see above)
-- Spans from anything other than the MCP SDK's protocol instrumentation
-- Metrics of any kind, including the SDK's own delivery-statistics counters
+- Prompt names, tool names, error messages and stack traces from MCP requests
+- Metrics of any kind
 
 ## Where telemetry data goes
 
