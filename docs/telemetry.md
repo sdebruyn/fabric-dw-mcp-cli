@@ -74,14 +74,21 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 - File paths or environment variable values
 - Any other personally-identifiable information
 - Distributed traces of any kind, including MCP protocol spans
-- Metrics of any kind
+- Metrics of any kind, including the SDK's own delivery-statistics counters
 
-### No spans or metrics are ever exported
+### `fabric-dw` exports no spans and no metrics
 
 `fabric-dw` emits telemetry as OpenTelemetry **log records**, never as spans. It
 forces `OTEL_TRACES_EXPORTER=none` and `OTEL_METRICS_EXPORTER=none` around the
 Application Insights setup call, so no span exporter and no metric exporter is
 built. Only the logs pipeline, which carries the `customEvents` above, is active.
+
+One qualifier on "no spans are exported", because it is about this package and
+not about your process: if you embed `fabric-dw` in an application that has
+already set up its own OpenTelemetry `TracerProvider`, that provider keeps
+collecting spans and sending them wherever you configured. That is intended. What
+`fabric-dw` guarantees is that it never adds an export path of its own, and never
+points one at the maintainers.
 
 Those two variables are set unconditionally rather than deferring to a value you
 may already have in your environment, and they are restored to whatever they were
@@ -93,6 +100,16 @@ rather than the one you asked for. Deferring would therefore have handed you no
 control while quietly turning the export path back on. `OTEL_LOGS_EXPORTER` is
 left alone: setting it to `none` yourself switches off `fabric-dw`'s own events,
 which is a choice worth respecting.
+
+There is a second, separately gated pipeline that the exporter library starts on
+its own: **customer sdkstats**, a delivery-statistics channel that reports how
+many telemetry items succeeded, dropped, or were retried. Despite the name it is
+not covered by the statsbeat switch, and it builds its own metric exporter, meter
+provider, and a reader on a 15-minute timer, all pointed at the same connection
+string. A CLI command finishes long before the first export cycle, but an MCP
+server does not, and that is this project's main mode. `fabric-dw` therefore sets
+`APPLICATIONINSIGHTS_SDKSTATS_DISABLED=true` unless you have already given that
+variable a value of your own.
 
 This matters because the MCP Python SDK installs an OpenTelemetry middleware on
 every server it creates, and that middleware emits one span per inbound protocol

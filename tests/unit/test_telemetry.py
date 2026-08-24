@@ -32,39 +32,6 @@ def _reload_telemetry() -> Any:
     return importlib.import_module("fabric_dw.telemetry")
 
 
-# Environment variables that ``_get_tracer()`` writes to ``os.environ``. Tests in
-# this module call it for real, so without a restore these escape into the rest
-# of the pytest process.
-_SDK_ENV_VARS = (
-    "OTEL_TRACES_EXPORTER",
-    "OTEL_METRICS_EXPORTER",
-    "OTEL_LOGS_EXPORTER",
-    "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
-)
-
-
-@pytest.fixture(autouse=True)
-def _restore_sdk_env() -> Generator[None, None, None]:
-    """Snapshot and restore the env vars ``_get_tracer()`` writes.
-
-    ``monkeypatch.delenv(..., raising=False)`` records nothing when the key is
-    already absent, so a subsequent real assignment inside ``_get_tracer()`` has
-    no teardown and leaks process-globally. Nothing breaks today, but it is
-    state escaping a test, and it would mask a future test written without its
-    own defence. Autouse so the pre-existing tests that call ``_get_tracer()``
-    are covered too, not just the ones added for #1043.
-    """
-    saved = {k: os.environ.get(k) for k in _SDK_ENV_VARS}
-    try:
-        yield
-    finally:
-        for key, value in saved.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-
 # ---------------------------------------------------------------------------
 # Opt-out: telemetry_enabled()
 # ---------------------------------------------------------------------------
@@ -1180,6 +1147,7 @@ _WATCHED_OTEL_VARS = (
     "OTEL_TRACES_EXPORTER",
     "OTEL_METRICS_EXPORTER",
     "OTEL_LOGS_EXPORTER",
+    "APPLICATIONINSIGHTS_SDKSTATS_DISABLED",
 )
 #
 # The real-process check was run by hand against the locked versions: point
@@ -1381,6 +1349,62 @@ def test_get_tracer_restores_the_exporter_env_when_it_was_unset(
         assert at_call["OTEL_TRACES_EXPORTER"] == "none", "set during the call"
         assert after["OTEL_TRACES_EXPORTER"] is None, "and removed again afterwards"
         assert after["OTEL_METRICS_EXPORTER"] is None
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_get_tracer_disables_customer_sdkstats(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Customer sdkstats must be off, or we run a metrics pipeline we deny running.
+
+    ``AzureMonitorLogExporter.__init__`` calls ``collect_customer_sdkstats()``
+    unconditionally, which stands up its own ``AzureMonitorMetricExporter`` on our
+    connection string, a private ``MeterProvider``, and a
+    ``PeriodicExportingMetricReader`` on a 15-minute timer. Measured without the
+    env var, even with ``OTEL_METRICS_EXPORTER=none``:
+
+        customer sdkstats: enabled=True initialized=True shutdown=False
+        reader: PeriodicExportingMetricReader
+
+    Note the variable is NOT the statsbeat one; that switch does not gate this.
+    A CLI run ends before the first export cycle, but a long-lived MCP server does
+    not, and that is this project's main mode.
+    """
+    mod, at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request)
+    try:
+        assert at_call["APPLICATIONINSIGHTS_SDKSTATS_DISABLED"] == "true", (
+            "customer sdkstats left enabled; docs/telemetry.md promises no metrics "
+            "of any kind are exported (#1043)."
+        )
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_operator_can_re_enable_customer_sdkstats(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """The sdkstats switch is a setdefault, so an explicit value wins.
+
+    Unlike the OTEL_*_EXPORTER pair, the library honours this variable properly
+    (its check is ``!= "true"``), so deferring to an operator's value is a real
+    override rather than a discarded one. The failure direction is benign too:
+    more Microsoft-internal telemetry, opted into deliberately.
+    """
+    mod, at_call, _after = _run_get_tracer(
+        monkeypatch,
+        tmp_path,
+        request,
+        preset={"APPLICATIONINSIGHTS_SDKSTATS_DISABLED": "false"},
+    )
+    try:
+        assert at_call["APPLICATIONINSIGHTS_SDKSTATS_DISABLED"] == "false", (
+            "an explicit operator value must survive"
+        )
     finally:
         mod._sdk_initialised = False
         mod._tracer = None

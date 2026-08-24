@@ -24,13 +24,20 @@ Architecture notes
   ``cache_tenant_id_from_token()`` (#366).
 - Auto-HTTP instrumentation is explicitly disabled to prevent MSAL OAuth
   request URLs (containing tenant IDs) from leaking as span attributes.
-- No span or metric exporter is ever installed, so spans emitted by code this
-  project does not own are never exported.  This is not hypothetical: MCP Python
-  SDK v2 installs an OpenTelemetry middleware on every server unconditionally,
-  which emits one span per inbound protocol message.  ``OTEL_TRACES_EXPORTER``
-  and ``OTEL_METRICS_EXPORTER`` are hard-set to ``none`` around the
-  ``configure_azure_monitor`` call and restored afterwards; the matching kwargs
-  are silently overwritten by the library and do not work.
+- This package installs no span or metric exporter of its own, so spans emitted
+  by code it does not own are never exported *to Application Insights*.  This is
+  not hypothetical: MCP Python SDK v2 installs an OpenTelemetry middleware on
+  every server unconditionally, which emits one span per inbound protocol
+  message.  ``OTEL_TRACES_EXPORTER`` and ``OTEL_METRICS_EXPORTER`` are hard-set
+  to ``none`` around the ``configure_azure_monitor`` call and restored
+  afterwards; the matching kwargs are silently overwritten by the library and do
+  not work.  Note the qualifier: a host process that embeds fabric-dw and has
+  already installed its own ``TracerProvider`` still collects those spans and
+  sends them wherever it chose.  That is correct and desirable; what this
+  prevents is *this package* adding an export path the user did not ask for.
+- ``APPLICATIONINSIGHTS_SDKSTATS_DISABLED`` suppresses the customer-sdkstats
+  channel, which is separate from statsbeat and would otherwise run its own
+  metrics pipeline on our connection string.
 - ``shutdown_on_exit`` is disabled; a bounded ``force_flush`` + ``provider.shutdown()``
   (≤8 s total) is performed at app exit in a daemon thread so the CLI never hangs.
   The explicit ``force_flush`` call before ``shutdown()`` is required to reliably
@@ -799,6 +806,31 @@ def _get_tracer() -> object | None:
             # respected.
             os.environ.setdefault("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "true")
 
+            # Customer sdkstats: a SECOND, separately-gated telemetry-about-telemetry
+            # channel.  Note the different variable name; the statsbeat one above does
+            # NOT gate this.
+            #
+            # AzureMonitorLogExporter.__init__ calls collect_customer_sdkstats()
+            # unconditionally, which stands up a singleton manager holding its own
+            # AzureMonitorMetricExporter on OUR connection string, a private
+            # MeterProvider, and a PeriodicExportingMetricReader on a 15-minute
+            # interval.  It exports item.success.count / item.drop.count /
+            # item.retry.count with language, exporter version and compute type.
+            # Measured without this line, and even with OTEL_METRICS_EXPORTER=none,
+            # the manager reports enabled and initialised, holds a live
+            # PeriodicExportingMetricReader, and the process carries an
+            # "AzureMonitorMetricExporter Storage" thread alongside the reader's own.
+            # That is a metrics pipeline, which contradicts docs/telemetry.md.  A CLI
+            # run shorter than the 15-minute interval never reaches an export cycle,
+            # but a long-lived MCP server does, and that is this project's main mode.
+            #
+            # setdefault, not a hard set: the gate is `disabled.lower() != "true"`, so
+            # an operator setting it to "false" genuinely re-enables collection.  That
+            # makes it a real override rather than a discarded value (unlike the
+            # OTEL_*_EXPORTER pair below), and the failure direction is benign: more
+            # Microsoft-internal telemetry, opted into deliberately.
+            os.environ.setdefault("APPLICATIONINSIGHTS_SDKSTATS_DISABLED", "true")
+
             # Build the OTel Resource that populates native Part A fields and prevents
             # hostname fallback for cloud_RoleInstance / ai.device.id (#477).
             resource = _build_otel_resource(_current_surface)
@@ -867,6 +899,10 @@ def _get_tracer() -> object | None:
             #
             # Scoped and restored, because fabric-dw can be embedded as a library
             # and must not mutate the host process environment beyond this call.
+            # Mutating os.environ is process-global, but the window is safe: it sits
+            # inside the double-checked _sdk_init_lock so it runs exactly once, and
+            # both entry points (the CLI and the MCP server) reach it on the main
+            # thread before any transport or worker concurrency starts.
             # OTEL_LOGS_EXPORTER is deliberately NOT touched: a user setting it to
             # "none" disables our own customEvents, which is the safe direction.
             _prev_otel = {k: os.environ.get(k) for k in _OTEL_EXPORTERS_OFF}
