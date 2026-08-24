@@ -57,17 +57,20 @@ request without validating either header.  ``--allowed-host`` (repeatable)
 supplies the allowlist explicitly so protection can be switched on for exactly
 the deployment that needs it; ``--allowed-origin`` (repeatable) does the same
 for the Origin header.  Neither option changes anything when it is not passed:
-the loopback bind keeps the SDK's automatic protection untouched.
+the loopback bind keeps the SDK's automatic protection untouched.  Passing
+``--allowed-host`` **replaces** that automatic allowlist rather than adding to
+it, on every bind address including loopback.
 """
 
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import logging
 import os
 import sys
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, NoReturn
 
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -145,53 +148,161 @@ register_all(mcp)
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
+# Default ports a browser omits from an Origin header, per scheme.  An origin
+# written with one of these is normalised down to the port-less form the
+# browser actually sends, so `--allowed-origin https://app.example.com:443`
+# matches instead of silently matching nothing.
+_DEFAULT_PORTS: dict[str, str] = {"http": "80", "https": "443", "ws": "80", "wss": "443"}
+
+_MAX_PORT = 65535
+
+
+def _reject(reason: str) -> NoReturn:
+    """Raise the error argparse reports as a CLI usage failure.
+
+    argparse already prefixes its output with ``argument --allowed-host:``, so
+    these messages never repeat the option name; they describe the value.
+    """
+    raise argparse.ArgumentTypeError(reason)
+
+
+def _normalise_ipv6(text: str, original: str) -> str:
+    """Return the canonical compressed form of an IPv6 literal, or reject it."""
+    try:
+        return str(ipaddress.IPv6Address(text))
+    except ValueError:
+        _reject(f"{original!r} is not a valid IPv6 address")
+
+
+def _split_authority(value: str) -> tuple[str, str | None]:
+    """Split ``host[:port]`` into a normalised host and its port.
+
+    Normalisation exists because the SDK compares allowlist entries to header
+    values with ``==``.  Every deviation therefore matches nothing and fails
+    closed, which is safe but produces an opaque HTTP 421 and a startup log
+    that reads like success.  Case, a trailing root dot and a zero-padded port
+    are all differences a client never sends, so they are folded away here
+    rather than left to surprise the operator.
+
+    Anything that could not match a header no matter how it is normalised is
+    rejected instead, because accepting it would build exactly that misleading
+    allowlist.
+    """
+    # `*` and `*.example.com` are the obvious guesses for "any host", and the
+    # SDK supports neither: they would produce a server that refuses every
+    # request, the opposite of what the operator wrote.  Only the trailing
+    # port wildcard the SDK does understand survives.
+    if "*" in value and (not value.endswith(":*") or value.count("*") > 1):
+        _reject(f"{value!r} contains a wildcard; only a trailing ':*' port wildcard is supported")
+
+    port: str | None = None
+    if value.startswith("["):
+        # Bracketed IPv6 literal.  Anything after the closing bracket must be
+        # a port, since an Origin or Host header allows nothing else there.
+        inner, sep, rest = value[1:].partition("]")
+        if not sep:
+            _reject(f"{value!r} opens a bracketed IPv6 literal that is never closed")
+        if rest and not rest.startswith(":"):
+            _reject(f"{value!r} has trailing text after the IPv6 literal")
+        port = rest[1:] if rest else None
+        host = f"[{_normalise_ipv6(inner, value)}]"
+    elif value.count(":") > 1:
+        # A bare IPv6 literal.  It cannot carry a port without brackets, so the
+        # whole value is the address.
+        host = f"[{_normalise_ipv6(value, value)}]"
+    else:
+        host, sep, port_text = value.partition(":")
+        port = port_text if sep else None
+        # DNS names are case-insensitive and clients send them lowercased, and
+        # a trailing root dot is legal in a Host header but never sent.
+        host = host.lower().rstrip(".")
+        if not host:
+            _reject(f"{value!r} has no host part")
+
+    if port is not None and port != "*":
+        if not port.isdigit():
+            _reject(f"{value!r} has a non-numeric port")
+        if not 1 <= int(port) <= _MAX_PORT:
+            _reject(f"{value!r} has a port outside 1-{_MAX_PORT}")
+        port = str(int(port))  # fold 0-padding, which no client sends
+    return host, port
+
+
+def _normalise_allowed_host(value: str) -> str:
+    """Validate and normalise one ``--allowed-host`` value.  argparse ``type=``."""
+    raw = value.strip()
+    if not raw:
+        # The realistic source of this is `--allowed-host "$MCP_PUBLIC_HOST"`
+        # in a unit file with the variable unset.  Left alone it starts a
+        # server that refuses every request while logging what reads like a
+        # successful allowlist.
+        _reject("value may not be empty")
+    if "://" in raw:
+        _reject(f"{raw!r} is a URL; write the host on its own, e.g. 'mcp.example.com'")
+    if "/" in raw:
+        _reject(f"{raw!r} has a path; a Host header never carries one")
+    host, port = _split_authority(raw)
+    return host if port is None else f"{host}:{port}"
+
+
+def _normalise_allowed_origin(value: str) -> str:
+    """Validate and normalise one ``--allowed-origin`` value.  argparse ``type=``."""
+    raw = value.strip()
+    if not raw:
+        _reject("value may not be empty")
+    scheme, sep, authority = raw.partition("://")
+    if not sep or not scheme:
+        _reject(f"{raw!r} has no scheme; write e.g. 'https://client.example.com'")
+    scheme = scheme.lower()
+    # A copy-pasted origin often keeps the browser's trailing slash; an Origin
+    # header never carries one, nor any other path.
+    authority = authority.rstrip("/")
+    if "/" in authority:
+        _reject(f"{raw!r} has a path; an Origin header never carries one")
+    if not authority:
+        _reject(f"{raw!r} has no host")
+    host, port = _split_authority(authority)
+    if port == "*":
+        # Deliberately not supported.  A web origin is scheme plus host plus
+        # port, so another port on the same host is a different security
+        # principal: a dev server or a second app there would become an origin
+        # allowed to drive every tool.  Naming each port is the whole point.
+        _reject(
+            "a ':*' port wildcard is not supported: a different port is a different web "
+            "origin. Repeat --allowed-origin once per port instead."
+        )
+    if port is not None and _DEFAULT_PORTS.get(scheme) == port:
+        port = None  # browsers omit the default port for the scheme
+    return f"{scheme}://{host}" if port is None else f"{scheme}://{host}:{port}"
+
+
 def _expand_allowed_host(value: str) -> list[str]:
-    """Return the ``allowed_hosts`` patterns a single ``--allowed-host`` stands for.
+    """Return the ``allowed_hosts`` patterns one normalised host stands for.
 
     The SDK matches a pattern against the raw ``Host`` header: either exactly,
     or, for a pattern ending in ``:*``, against any ``<base>:<port>`` header.
     Those two forms do **not** overlap, so ``mcp.example.com:*`` rejects a
-    port-less ``Host: mcp.example.com`` (what a reverse proxy on 80/443 sends)
-    and a bare ``mcp.example.com`` rejects ``Host: mcp.example.com:8000`` (what
-    a direct client sends).  A value without an explicit port therefore expands
-    to both forms so the operator does not have to know which one their clients
-    will produce.
+    port-less ``Host: mcp.example.com`` (what a reverse proxy on 80 or 443
+    sends) and a bare ``mcp.example.com`` rejects ``Host: mcp.example.com:8000``
+    (what a direct client sends).  A value without an explicit port therefore
+    expands to both forms so the operator does not have to know which one their
+    clients will produce.
 
-    A value that already carries a port (``host:8000``) or an explicit port
-    wildcard (``host:*``) is passed through untouched.  An IPv6 literal is
-    normalised to the bracketed form the ``Host`` header uses, so both ``::1``
-    and ``[::1]`` are accepted here.
+    This widening is safe for a ``Host`` header, which only ever names the
+    server the client meant to reach, and it is deliberately **not** applied to
+    origins: see :func:`_normalise_allowed_origin`.
+
+    A value that carries a port or an explicit ``:*`` is already exactly what
+    the operator asked for and is returned unchanged.
     """
-    value = value.strip()
-    if value.startswith("["):
-        # Bracketed IPv6 literal.  Anything after the closing bracket is a port
-        # (or port wildcard) the caller wrote deliberately.
-        base, _, rest = value.partition("]")
-        base = f"{base}]"
-        return [value] if rest else [base, f"{base}:*"]
-    if value.count(":") > 1:
-        # Bare IPv6 literal: the Host header always brackets it.
-        base = f"[{value}]"
-        return [base, f"{base}:*"]
-    if ":" in value:
+    if value.endswith(":*"):
+        return [value]
+    # A bracketed IPv6 literal contains colons of its own, so the port has to
+    # be looked for after the closing bracket.
+    tail = value.rpartition("]")[2] if value.startswith("[") else value
+    if ":" in tail:
         return [value]
     return [value, f"{value}:*"]
-
-
-def _expand_allowed_origin(value: str) -> list[str]:
-    """Return the ``allowed_origins`` patterns a single ``--allowed-origin`` stands for.
-
-    An Origin header is ``<scheme>://<host>[:<port>]`` and the SDK matches it
-    with the same exact-or-``:*`` rule it uses for hosts, so the authority part
-    gets the same treatment as :func:`_expand_allowed_host`.  A value with no
-    ``://`` cannot match an Origin header at all and is passed through
-    unchanged rather than guessed at.
-    """
-    value = value.strip()
-    scheme, sep, authority = value.partition("://")
-    if not sep:
-        return [value]
-    return [f"{scheme}{sep}{host}" for host in _expand_allowed_host(authority)]
 
 
 def _dedupe(values: Sequence[str]) -> list[str]:
@@ -231,7 +342,9 @@ def _resolve_transport_security(
         return None
 
     allowed_hosts = _dedupe([p for v in args.allowed_host for p in _expand_allowed_host(v)])
-    allowed_origins = _dedupe([p for v in args.allowed_origin for p in _expand_allowed_origin(v)])
+    # Origins are used exactly as given: no port widening, see
+    # _normalise_allowed_origin.
+    allowed_origins = _dedupe(args.allowed_origin)
     logger.info(
         "Host and Origin validation enabled: allowed_hosts=%s allowed_origins=%s",
         allowed_hosts,
@@ -309,11 +422,15 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="append",
         default=[],
         metavar="HOST",
+        type=_normalise_allowed_host,
         help=(
             "Host header value clients use to reach this server, e.g. "
-            "mcp.example.com or 192.0.2.1:8000. Repeatable. Enables Host-header "
-            "validation (DNS-rebinding protection) with this allowlist. Without "
-            "it, a non-loopback bind serves every request unvalidated."
+            "mcp.example.com or 192.0.2.1:8000. Repeatable, requires "
+            "--transport http. Enables Host-header validation (DNS-rebinding "
+            "protection) with this allowlist, replacing any the SDK would apply "
+            "on its own. Written without a port it accepts the host on any port. "
+            "Without this option a non-loopback bind serves every request "
+            "unvalidated."
         ),
     )
     parser.add_argument(
@@ -321,14 +438,24 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="append",
         default=[],
         metavar="ORIGIN",
+        type=_normalise_allowed_origin,
         help=(
-            "Origin header value to accept, e.g. https://mcp.example.com. "
-            "Repeatable, requires --allowed-host. Only needed for browser-based "
-            "clients: with --allowed-host alone, every request carrying an "
-            "Origin header is refused."
+            "Origin header value to accept, e.g. https://client.example.com. "
+            "Repeatable, requires --allowed-host. Matched exactly, since a "
+            "different port is a different web origin; name each one. Needed "
+            "only for browser-based clients, which includes Electron and webview "
+            "hosts: with --allowed-host alone, every request carrying an Origin "
+            "header is refused."
         ),
     )
     args = parser.parse_args(argv)
+
+    if args.transport != "http" and (args.allowed_host or args.allowed_origin):
+        # Neither option can be honoured without an HTTP server to apply them
+        # to, and silently ignoring them would leave an operator who forgot
+        # `--transport http` with no diagnostics at all.  Nobody can be relying
+        # on the current silence: both options are new.
+        parser.error("--allowed-host and --allowed-origin require --transport http")
 
     if args.allowed_origin and not args.allowed_host:
         # allowed_origins is only consulted once DNS-rebinding protection is on,
@@ -362,15 +489,18 @@ def run(argv: Sequence[str] | None = None) -> None:
     ``--port PORT``
         TCP port for HTTP transport (default ``8000``).
     ``--allowed-host HOST``
-        Repeatable.  Turns Host-header validation (DNS-rebinding protection) on
-        with this allowlist.  Omitted, the SDK's own behaviour applies
-        unchanged: automatic loopback-only protection on a loopback bind, none
-        at all on a non-loopback bind (a WARNING is logged in that case).
+        Repeatable, requires ``--transport http``.  Turns Host-header
+        validation (DNS-rebinding protection) on with this allowlist,
+        **replacing** whatever the SDK would have applied on its own.  Omitted,
+        the SDK's own behaviour applies unchanged: automatic loopback-only
+        protection on a loopback bind, none at all on a non-loopback bind (a
+        WARNING is logged in that case).
     ``--allowed-origin ORIGIN``
         Repeatable, requires ``--allowed-host``.  Adds to the Origin-header
-        allowlist.  With ``--allowed-host`` but no ``--allowed-origin`` every
-        request that carries an Origin header is refused, which is what a
-        non-browser MCP client wants; pass this only for a browser-based client.
+        allowlist, matched exactly.  With ``--allowed-host`` but no
+        ``--allowed-origin`` every request that carries an Origin header is
+        refused, which is what most non-browser MCP clients want; pass this for
+        a browser-based client, Electron renderer or webview host.
 
     Host and port are passed straight through to ``MCPServer.run()``, which is
     overloaded per transport; the stdio overload takes no keyword arguments at
