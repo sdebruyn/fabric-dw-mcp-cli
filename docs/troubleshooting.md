@@ -189,3 +189,16 @@ The client automatically retries on each 429 and waits exactly as long as the se
 **Cause:** The streamable-HTTP transport caps request bodies at 4 MiB. Only a very large payload reaches that: a multi-megabyte `execute_sql` script, or a procedure or view definition passed to `create_procedure` / `create_view`.
 
 **Fix:** Split the statement, or load the script from storage with `load_table_from_url` / `import_table_from_url` rather than sending it inline. If neither fits, use the stdio transport, which has no body limit.
+
+## HTTP 421 or 403 from the HTTP transport
+
+**Symptom:** Every call over `--transport http` fails with HTTP 421 (`Invalid Host header`) or HTTP 403 (`Invalid Origin header`), even though the port is reachable.
+
+**Cause:** Host and Origin validation is on and the request was addressed to a name that is not in the allowlist. This happens in two situations:
+
+- You passed `--allowed-host` but the value does not match what the client sends. A reverse proxy on port 443 forwards `Host: mcp.example.com`, while a client talking straight to the port sends `Host: mcp.example.com:8000`. A value written without a port covers both; a value written with one covers only that port.
+- You are on the default loopback bind, which the SDK protects with a loopback-only allowlist, but something in front of the server rewrites the header to a different name.
+
+HTTP 403 specifically means the request carried an `Origin` header and no `--allowed-origin` matched it. Only browser-based clients send that header.
+
+**Fix:** Pass `--allowed-host` with the exact name clients use, repeating the option per name, and `--allowed-origin` for a browser-based client. Both are described under [Host and Origin validation](install.md#host-and-origin-validation). To see what the server is actually enforcing, read its startup output: the allowlist it applied is logged at INFO level as `Host and Origin validation enabled`.
