@@ -6,6 +6,7 @@ no real network calls (every Azure Monitor SDK interaction is mocked).
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import os
@@ -2646,6 +2647,8 @@ def test_shutdown_telemetry_calls_provider_shutdown(
     mod._tracer = _fake_logger  # type: ignore[attr-defined]
     mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
     mod._sdk_shutdown = False  # type: ignore[attr-defined]
+    # The tracer branch only runs for a provider this package installed.
+    mod._span_pipeline_installed = True  # type: ignore[attr-defined]
 
     shutdown_called: list[bool] = []
     fake_provider = types.SimpleNamespace(shutdown=lambda: shutdown_called.append(True))
@@ -2703,6 +2706,7 @@ def test_shutdown_telemetry_is_idempotent(monkeypatch: pytest.MonkeyPatch, tmp_p
     mod._tracer = _fake_logger  # type: ignore[attr-defined]
     mod._otel_logger = _fake_logger  # type: ignore[attr-defined]
     mod._sdk_shutdown = False  # type: ignore[attr-defined]
+    mod._span_pipeline_installed = True  # type: ignore[attr-defined]
 
     shutdown_call_count: list[int] = []
     fake_provider = types.SimpleNamespace(shutdown=lambda: shutdown_call_count.append(1))
@@ -4173,3 +4177,162 @@ def test_nothing_is_recorded_when_telemetry_is_opted_out(
         pass
 
     get_tracer.assert_not_called()
+
+
+def test_shutdown_never_touches_a_provider_this_package_did_not_install(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A host application's TracerProvider must survive our exit.
+
+    When ``install_mcp_span_pipeline`` correctly stands down because the host
+    already installed a provider, that provider is the host's. Shutting it down
+    here would close the host's own exporter permanently, which is the exact
+    opposite of the guarantee this package makes about embedding.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    fake_logger = object()
+    mod._sdk_initialised = True
+    mod._tracer = fake_logger
+    mod._otel_logger = fake_logger
+    mod._sdk_shutdown = False
+    mod._span_pipeline_installed = False  # the host's provider won
+
+    touched: list[str] = []
+    host_provider = types.SimpleNamespace(
+        shutdown=lambda: touched.append("shutdown"),
+        force_flush=lambda **_kw: touched.append("force_flush"),
+    )
+    _install_fake_otel_trace(monkeypatch, host_provider)
+
+    mod.shutdown_telemetry()
+    mod.flush_telemetry()
+
+    assert touched == [], f"the host's provider was {touched}"
+
+
+def test_flush_reaches_our_own_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The other half of the same rule: our provider does get flushed."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    fake_logger = object()
+    mod._sdk_initialised = True
+    mod._tracer = fake_logger
+    mod._otel_logger = fake_logger
+    mod._span_pipeline_installed = True
+
+    flushed: list[int] = []
+    provider = types.SimpleNamespace(force_flush=lambda **kw: flushed.append(kw["timeout_millis"]))
+    _install_fake_otel_trace(monkeypatch, provider)
+
+    mod.flush_telemetry(timeout_ms=1500)
+
+    assert flushed == [1500]
+
+
+# ---------------------------------------------------------------------------
+# The client name is a channel unless it is bounded (#1048 review)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("a\nb\r\nc\x00d", "abcd"),
+        ("\x00\x01\x02", "unknown"),
+        ("claude-ai", "claude-ai"),
+        ("  claude-ai  ", "claude-ai"),
+        ("clau\tde", "claude"),
+    ],
+)
+def test_control_characters_are_removed_from_a_client_name(raw: str, expected: str) -> None:
+    """``strip()`` only touches the ends, so embedded control bytes went straight through.
+
+    A newline or a NUL in the middle of a custom dimension is not something a
+    dashboard, a log query, or whoever reads it downstream should have to deal
+    with, and it is trivially client-controlled.
+    """
+    assert _live_telemetry().normalise_mcp_client(raw) == expected
+
+
+def test_the_number_of_distinct_client_names_is_bounded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One process records a handful of clients, then stops keeping names.
+
+    On protocol revision 2026-07-28 the name rides every request's ``_meta``
+    rather than a handshake, so it can differ per message on a single
+    connection. Without a cap, a client appending a counter or a session id to
+    its name (an ordinary bug, and a trivial exfiltration channel) emits one
+    ``mcp_client_connected`` per request and grows the seen-set forever.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    with patch.object(tel, "emit_event") as emit:
+        recorded = []
+        for index in range(50):
+            with tel.mcp_client_scope(f"EXFIL-CHUNK-{index:04d}"):
+                recorded.append(tel.current_mcp_client())
+
+    assert recorded[: tel._MCP_CLIENT_LIMIT] == [
+        f"EXFIL-CHUNK-{index:04d}" for index in range(tel._MCP_CLIENT_LIMIT)
+    ]
+    assert set(recorded[tel._MCP_CLIENT_LIMIT :]) == {tel.MCP_CLIENT_OTHER}
+
+    # One event per distinct recorded name, and the set cannot grow past the
+    # cap plus the "other" bucket itself.
+    assert emit.call_count == tel._MCP_CLIENT_LIMIT + 1
+    assert len(tel._seen_mcp_clients) == tel._MCP_CLIENT_LIMIT + 1
+
+
+def test_a_client_already_seen_is_still_reported_by_name_after_the_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The cap must not start relabelling the clients it already knows."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    with patch.object(tel, "emit_event"):
+        with tel.mcp_client_scope("claude-ai"):
+            pass
+        for index in range(20):
+            with tel.mcp_client_scope(f"noise-{index}"):
+                pass
+        with tel.mcp_client_scope("claude-ai") as _:
+            still_named = tel.current_mcp_client()
+
+    assert still_named == "claude-ai"
+
+
+async def test_concurrent_requests_do_not_cross_contaminate_the_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Several clients are served at once over HTTP, so this is not theoretical.
+
+    A module global here would report whichever client connected last. The
+    ContextVar is the reason that does not happen, and this pins it: each task
+    interleaves awaits inside its own scope and must still see its own name.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    async def _serve(name: str) -> list[str | None]:
+        seen: list[str | None] = []
+        with tel.mcp_client_scope(name):
+            for _ in range(20):
+                await asyncio.sleep(0)
+                seen.append(tel.current_mcp_client())
+        return seen
+
+    with patch.object(tel, "emit_event"):
+        results = await asyncio.gather(*(_serve(f"client-{index}") for index in range(6)))
+
+    for index, seen in enumerate(results):
+        assert set(seen) == {f"client-{index}"}
+    assert tel.current_mcp_client() is None

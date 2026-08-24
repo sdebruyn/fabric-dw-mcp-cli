@@ -106,6 +106,7 @@ from contextvars import ContextVar
 from pathlib import Path
 
 __all__ = [
+    "MCP_CLIENT_OTHER",
     "MCP_CLIENT_UNKNOWN",
     "cache_tenant_id_from_token",
     "current_mcp_client",
@@ -637,6 +638,10 @@ _sdk_initialised: bool = False
 # inside the lock makes init idempotent under concurrent first calls.
 _sdk_init_lock: threading.Lock = threading.Lock()
 _current_surface: str = "cli"
+# True only when install_mcp_span_pipeline() actually claimed the process-wide
+# TracerProvider.  False when a host application had already installed one, in
+# which case that provider is theirs to flush and shut down, not ours.
+_span_pipeline_installed: bool = False
 
 # Instrumentation options passed to configure_azure_monitor.
 # ALL auto-HTTP / Azure SDK instrumentors are DISABLED so that MSAL's OAuth
@@ -780,7 +785,7 @@ def _get_tracer() -> object | None:
     - ``_harden_azure_sdk_logging()`` is called before ``configure_azure_monitor``
       so the SDK's own logger tree is silenced before any network attempt (#411).
     """
-    global _otel_logger, _tracer, _sdk_initialised  # noqa: PLW0603
+    global _otel_logger, _tracer, _sdk_initialised, _span_pipeline_installed  # noqa: PLW0603
 
     # Fast path (no lock): already initialised by a previous call.
     if _sdk_initialised:
@@ -935,7 +940,14 @@ def _get_tracer() -> object | None:
                     install_mcp_span_pipeline,
                 )
 
-                install_mcp_span_pipeline(_DEFAULT_CONNECTION_STRING, resource)
+                # Load-bearing, not bookkeeping: flush_telemetry and
+                # shutdown_telemetry must not touch a TracerProvider this
+                # package did not install.  When a host application already had
+                # one, shutting it down at our exit would kill the host's own
+                # exporter for the rest of its life.
+                _span_pipeline_installed = install_mcp_span_pipeline(
+                    _DEFAULT_CONNECTION_STRING, resource
+                )
             # Obtain the OTel Logger via the global LoggerProvider set up by
             # configure_azure_monitor.  This logger is used in emit_event to fire
             # customEvents as log records (not spans).
@@ -978,17 +990,18 @@ def flush_telemetry(timeout_ms: int = 2000) -> None:
         # Each pipeline is flushed independently so a failure in one does
         # not prevent the other from running.
 
-        # Tracer provider — carries the MCP protocol spans on the MCP surface.
-        # On the CLI surface no provider is installed, so the global one is the
-        # no-op ProxyTracerProvider, which has no force_flush; the getattr guard
-        # handles that.
-        with contextlib.suppress(Exception):
-            from opentelemetry import trace as _trace  # noqa: PLC0415
+        # Tracer provider — carries the MCP protocol spans, and only ours.
+        # _span_pipeline_installed is False on the CLI surface and whenever a
+        # host application's provider won, and the global provider is then not
+        # this package's to flush.
+        if _span_pipeline_installed:
+            with contextlib.suppress(Exception):
+                from opentelemetry import trace as _trace  # noqa: PLC0415
 
-            provider = _trace.get_tracer_provider()
-            force_flush = getattr(provider, "force_flush", None)
-            if callable(force_flush):
-                force_flush(timeout_millis=timeout_ms)
+                provider = _trace.get_tracer_provider()
+                force_flush = getattr(provider, "force_flush", None)
+                if callable(force_flush):
+                    force_flush(timeout_millis=timeout_ms)
 
         # Logger provider — this is the primary pipeline for customEvents.
         with contextlib.suppress(Exception):
@@ -1011,10 +1024,10 @@ _sdk_shutdown: bool = False
 def shutdown_telemetry(timeout_ms: int = 8000) -> None:
     """Shut down the OpenTelemetry providers with a bounded timeout.
 
-    Calls ``force_flush`` then ``shutdown()`` on both the tracer provider and
-    the logger provider.  The logger provider path is critical: it must export
-    all pending customEvents (``command_invoked``, ``app_exited``) that were
-    enqueued just before shutdown is called.
+    Calls ``force_flush`` then ``shutdown()`` on the logger provider, and on the
+    tracer provider when this package installed it.  The logger provider path is
+    critical: it must export all pending customEvents (``command_invoked``,
+    ``app_exited``) that were enqueued just before shutdown is called.
 
     Why force_flush before shutdown?
     ---------------------------------
@@ -1027,8 +1040,8 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
     shorter than the HTTP round-trip to the App Insights ingestion endpoint
     (typically 2-4 s), the daemon thread is killed before the POST completes.
 
-    Calling ``force_flush(timeout_ms - 2000)`` **before** ``shutdown()`` ensures
-    all queued records are exported with a generous bound.  The remaining 2 s is
+    Calling ``force_flush`` **before** ``shutdown()`` ensures all queued records
+    are exported with a generous bound.  The remaining 2 s is
     then used for the provider ``shutdown()`` which cleans up the connection pool
     (preventing the ``AttributeError: 'NoneType' object has no attribute 'Empty'``
     at interpreter exit when urllib3 pool is finalised after queue module teardown).
@@ -1065,14 +1078,16 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
         return
     _sdk_shutdown = True
 
-    # Reserve ~2 s for the provider.shutdown() cleanup call; the rest goes to
-    # force_flush.  At the default timeout_ms=8000 this gives 6 s for
-    # force_flush and 2 s for shutdown — both well within the daemon-thread
-    # join cap (timeout_ms/1000 + 0.5 s).  If timeout_ms were set below 4000
-    # the floor kicks in and both allocations become 2 s, which still fits
-    # inside the join cap because the daemon thread is killed when the main
-    # thread exits — the cap is a worst-case wall-clock bound, not a guarantee.
-    flush_timeout_ms = max(timeout_ms - 2000, 2000)
+    # Reserve ~2 s for the provider.shutdown() cleanup calls; the rest goes to
+    # force_flush, split between the two pipelines that have one.  At the
+    # default timeout_ms=8000 that is 3 s each — both well within the
+    # daemon-thread join cap (timeout_ms/1000 + 0.5 s).  Splitting matters: the
+    # logs branch runs first, and before the split a slow network there could
+    # eat the whole budget and leave the last batch of spans unflushed.  If
+    # timeout_ms were set below 4000 the floor kicks in, which still fits inside
+    # the join cap because the daemon thread is killed when the main thread
+    # exits — the cap is a worst-case wall-clock bound, not a guarantee.
+    flush_timeout_ms = max((timeout_ms - 2000) // 2, 1000)
 
     def _do_shutdown() -> None:
         # Each pipeline is flushed then shut down independently so a failure in
@@ -1096,18 +1111,26 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
             if callable(log_shutdown):
                 log_shutdown()
 
-        # Tracer provider — the MCP protocol spans.  On the CLI surface the
-        # global provider is the no-op ProxyTracerProvider and has no shutdown;
-        # the getattr guard handles that.  The provider is created with
+        # Tracer provider — the MCP protocol spans, and only ours.  Guarded on
+        # _span_pipeline_installed: when a host application's provider won the
+        # race, shutting it down here would permanently kill the exporter of the
+        # process that embedded us.  The provider is created with
         # shutdown_on_exit=False, so this call is the only thing that tears the
         # trace pipeline down.
-        with contextlib.suppress(Exception):
-            from opentelemetry import trace as _trace  # noqa: PLC0415
+        #
+        # force_flush first, for the same reason as the logs branch: the last
+        # batch of spans is otherwise at the mercy of the worker's schedule.
+        if _span_pipeline_installed:
+            with contextlib.suppress(Exception):
+                from opentelemetry import trace as _trace  # noqa: PLC0415
 
-            provider = _trace.get_tracer_provider()
-            shutdown_fn = getattr(provider, "shutdown", None)
-            if callable(shutdown_fn):
-                shutdown_fn()
+                provider = _trace.get_tracer_provider()
+                span_force_flush = getattr(provider, "force_flush", None)
+                if callable(span_force_flush):
+                    span_force_flush(timeout_millis=flush_timeout_ms)
+                shutdown_fn = getattr(provider, "shutdown", None)
+                if callable(shutdown_fn):
+                    shutdown_fn()
 
     t = threading.Thread(target=_do_shutdown, daemon=True)
     t.start()
@@ -1273,10 +1296,24 @@ def record_mcp_server_started() -> None:
 #: permits, or sends one this code cannot read.
 MCP_CLIENT_UNKNOWN = "unknown"
 
-#: Longest client name recorded.  ``clientInfo.name`` is chosen by the client
-#: software about itself, so it is a small set in practice, but nothing on the
-#: wire bounds it; truncating keeps one odd client from bloating every event.
+#: Value recorded once this process has seen more distinct client names than
+#: :data:`_MCP_CLIENT_LIMIT`.
+MCP_CLIENT_OTHER = "other"
+
+#: Longest client name recorded.
 _MCP_CLIENT_MAX_LEN = 64
+
+#: How many distinct client names one process records before collapsing the
+#: rest into :data:`MCP_CLIENT_OTHER`.
+#:
+#: The cap is not about hostile clients alone.  On protocol revision 2026-07-28
+#: the name rides every request's ``_meta`` rather than a handshake, so it can
+#: differ per message on one connection, and a client that appends a build hash
+#: or a session id to its name (an ordinary bug) would otherwise emit one
+#: ``mcp_client_connected`` per request against the daily ingestion cap and grow
+#: the seen-set without bound for the life of the process.  Eight keeps the
+#: long-tail signal the field exists for while making it useless as a channel.
+_MCP_CLIENT_LIMIT = 8
 
 # The connecting client for the request being handled.  A ContextVar rather
 # than a module global because one long-lived MCP server over streamable HTTP
@@ -1285,31 +1322,47 @@ _MCP_CLIENT_MAX_LEN = 64
 _mcp_client_var: ContextVar[str | None] = ContextVar("fabric_dw_mcp_client", default=None)
 
 # Clients this process has already announced, so mcp_client_connected fires
-# once per distinct client rather than once per inbound message.
+# once per distinct client rather than once per inbound message.  Bounded by
+# _MCP_CLIENT_LIMIT (+1 for the "other" bucket itself).
 _seen_mcp_clients: set[str] = set()
 
 
 def normalise_mcp_client(raw_name: object) -> str:
     """Return a bounded client name for *raw_name*.
 
-    Recorded verbatim (bar the length cap) rather than mapped onto a fixed list
-    of known clients: the question this field answers is which clients are out
-    there, and a fixed list can only ever confirm the ones already guessed,
+    Recorded verbatim, bar the filtering below, rather than mapped onto a fixed
+    list of known clients: the question this field answers is which clients are
+    out there, and a fixed list can only ever confirm the ones already guessed,
     turning every new or renamed client into ``other`` until somebody notices.
+
+    Verbatim still means vetted.  Non-printable characters are removed before
+    the length cap, because ``strip()`` leaves embedded newlines, tabs and NULs
+    in the middle of a name and those went into a custom dimension as-is.
 
     Args:
         raw_name: The ``clientInfo.name`` value, or anything at all.
 
     Returns:
-        The trimmed, truncated name, or :data:`MCP_CLIENT_UNKNOWN` when
-        *raw_name* is not a usable string.
+        The filtered, trimmed, truncated name, or :data:`MCP_CLIENT_UNKNOWN`
+        when *raw_name* is not a usable string.
     """
     if not isinstance(raw_name, str):
         return MCP_CLIENT_UNKNOWN
-    name = raw_name.strip()
+    # str.isprintable() is False for control characters, newline, tab and NUL,
+    # and True for ordinary space and for the letters of any script.
+    name = "".join(char for char in raw_name if char.isprintable()).strip()
     if not name:
         return MCP_CLIENT_UNKNOWN
     return name[:_MCP_CLIENT_MAX_LEN]
+
+
+def _bounded_mcp_client(name: str) -> str:
+    """Return *name*, or :data:`MCP_CLIENT_OTHER` once the per-process cap is full."""
+    if name in _seen_mcp_clients:
+        return name
+    if len(_seen_mcp_clients) >= _MCP_CLIENT_LIMIT:
+        return MCP_CLIENT_OTHER
+    return name
 
 
 def current_mcp_client() -> str | None:
@@ -1327,7 +1380,8 @@ def mcp_client_scope(raw_name: object) -> Iterator[None]:
 
     Emits ``mcp_client_connected`` the first time this process sees a given
     client, and makes the name readable via :func:`current_mcp_client` for the
-    duration of the block so ``command_invoked`` can carry it.
+    duration of the block so ``command_invoked`` can carry it.  Both use the
+    bounded name, so the two events always agree.
 
     Fire-and-forget: nothing in here raises.
 
@@ -1335,7 +1389,7 @@ def mcp_client_scope(raw_name: object) -> Iterator[None]:
         raw_name: The ``clientInfo.name`` the client sent, in whatever shape it
             arrived.
     """
-    name = normalise_mcp_client(raw_name)
+    name = _bounded_mcp_client(normalise_mcp_client(raw_name))
     token = _mcp_client_var.set(name)
     try:
         if name not in _seen_mcp_clients:

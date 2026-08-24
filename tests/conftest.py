@@ -127,6 +127,7 @@ _SDK_ENV_VARS = (
     "OTEL_LOGS_EXPORTER",
     "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
     "APPLICATIONINSIGHTS_SDKSTATS_DISABLED",
+    "APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED",
 )
 
 
@@ -200,10 +201,9 @@ def _reset_telemetry_module_globals(
     Two tiers of reset are applied:
 
     1. **All tests** — the per-process caches added in #844 (``_install_method_cache``
-       and ``_config_disabled_cache``) are always reset.  Any test that calls
-       ``telemetry_enabled()`` on the shared module instance can set these caches;
-       without a universal teardown they bleed into subsequent tests regardless of
-       which module file those tests live in.
+       and ``_config_disabled_cache``) are always reset, and so is
+       ``_seen_mcp_clients``: any test that drives an MCP server populates it, and
+       a leftover entry silences ``mcp_client_connected`` in a later test.
 
     2. **Self-managed telemetry modules only** (``test_telemetry.py``,
        ``test_telemetry_commands.py``, ``test_app_exited_emission.py``) — the
@@ -218,9 +218,6 @@ def _reset_telemetry_module_globals(
        - ``_sdk_initialised``, ``_tracer``, ``_otel_logger`` → initial values
          (prevents a test that calls ``_get_tracer()`` from leaving a live logger
          object that causes subsequent tests to skip the SDK init path entirely)
-       - ``_seen_mcp_clients`` → empty set
-         (``mcp_client_connected`` fires once per distinct client per process, so
-         an entry left behind silences the event in a later test)
 
     All resets are applied *before* and *after* each test (yield fixture) so state
     never leaks from a previous test even if it raised.
@@ -276,6 +273,16 @@ def _reset_telemetry_module_globals(
             )
             ns["_install_method_cache"] = None
             ns["_config_disabled_cache"] = None
+            # Clients already announced this process: mcp_client_connected fires
+            # once per distinct client, so a leftover entry makes a later test
+            # see no event at all.  Reset for EVERY test, not only the
+            # self-managed ones: tests/unit/mcp/test_client_info.py drives a real
+            # server and populates this set without being in that list.
+            assert "_seen_mcp_clients" in ns, (
+                "_seen_mcp_clients not found in fabric_dw.telemetry — "
+                "update both telemetry.py and tests/conftest.py"
+            )
+            ns["_seen_mcp_clients"] = set()
             if not is_self_managed:
                 continue
             # Heavier globals: only needed for tests that exercise the telemetry
@@ -288,14 +295,6 @@ def _reset_telemetry_module_globals(
             ns["_sdk_initialised"] = False
             ns["_tracer"] = None
             ns["_otel_logger"] = None
-            # Clients already announced this process: mcp_client_connected fires
-            # once per distinct client, so a leftover entry would make a later
-            # test see no event at all.
-            assert "_seen_mcp_clients" in ns, (
-                "_seen_mcp_clients not found in fabric_dw.telemetry — "
-                "update both telemetry.py and tests/conftest.py"
-            )
-            ns["_seen_mcp_clients"] = set()
 
     _reset()
     yield

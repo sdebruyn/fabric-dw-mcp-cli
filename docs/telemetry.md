@@ -42,7 +42,7 @@ One `command_invoked` event is emitted after every CLI command and every MCP too
 | `status` | `success`, `user_error` (validation/usage problems), or `api_error` (HTTP/driver/unexpected). |
 | `duration_ms_bucket` | Bucketed wall-clock duration: `<100ms`, `<1s`, `<10s`, or `>10s`. |
 | `destructive_op` | `true` only for permanently-destructive MCP tools (delete, clear, restore in-place). Omitted otherwise. |
-| `mcp_client` | The name the connected MCP client reports for itself (e.g. `claude-ai`), capped at 64 characters. MCP only; `unknown` when the client gives no name. |
+| `mcp_client` | The name the connected MCP client reports for itself (e.g. `claude-ai`), capped at 64 characters. MCP only; `unknown` when the client gives no name, and `other` past the first 8 distinct names a server process sees. |
 
 #### Domain rollup
 
@@ -74,12 +74,12 @@ Running the MCP server also records one entry per protocol message it handles, w
 
 | Field | Description |
 |---|---|
-| method | The protocol method, e.g. `tools/call`. A method this server does not implement is recorded as `<unknown>`, never as the text that was sent. |
+| method | The protocol method, e.g. `tools/call`. A method the MCP protocol does not define is recorded as `<unknown>`, never as the text that was sent. |
 | duration | How long the message took to handle. |
 | outcome | Whether it succeeded, and if not, the error code or the name of the error type. |
 | protocol version | The MCP revision the client and the server agreed on, e.g. `2025-06-18`. |
 
-Anything you choose the content of is removed first: prompt and tool names, error messages, stack traces, and request IDs that are not plain numbers never leave your machine.
+Anything you choose the content of is removed from these entries first: prompt and tool names, error messages, stack traces, request IDs that are not plain numbers, and the trace IDs a client can put in a request.
 
 ### What is deliberately NOT collected
 
@@ -88,7 +88,8 @@ Anything you choose the content of is removed first: prompt and tool names, erro
 - Connection strings or any credentials
 - File paths or environment variable values
 - Any other personally-identifiable information
-- Prompt names, tool names, error messages and stack traces from MCP requests
+- Names you put in an MCP request: prompt names, and the tool name on a call for a tool that does not exist
+- Error messages, stack traces, and trace IDs taken off the wire
 - Metrics of any kind
 
 ## Where telemetry data goes

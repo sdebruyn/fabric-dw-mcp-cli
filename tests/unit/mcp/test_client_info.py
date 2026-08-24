@@ -207,3 +207,40 @@ def test_the_initialize_params_win_over_a_stale_session_value() -> None:
         session = _Session()
 
     assert client_name_from_context(_Ctx()) == "fresh-client"  # ty: ignore[invalid-argument-type]
+
+
+async def test_the_client_name_can_change_per_message_on_one_connection(
+    server: MCPServer[Any],
+) -> None:
+    """From 2026-07-28 on, the name is per message, not per connection.
+
+    It rides each request's ``_meta`` envelope rather than a handshake, so a
+    client can send a different one every time, with no reconnect. That is what
+    makes the name a channel rather than an identity, and why the recorded value
+    is bounded per process (see tests/unit/test_telemetry.py).
+    """
+    with patch(_SCOPE) as scope:
+        await exchange(
+            server,
+            [
+                modern_request(index, "tools/list", client_name=f"EXFIL-CHUNK-{index:04d}")
+                for index in range(3)
+            ],
+        )
+
+    assert _recorded(scope) == ["EXFIL-CHUNK-0000", "EXFIL-CHUNK-0001", "EXFIL-CHUNK-0002"]
+
+
+async def test_a_client_name_with_control_characters_is_recorded_clean(
+    server: MCPServer[Any],
+) -> None:
+    """End to end, since the filtering happens a layer below the middleware."""
+    tel = _live_telemetry()
+    tel._seen_mcp_clients.clear()
+
+    with patch(_EMIT_EVENT) as emit:
+        await exchange(server, handshake("claude\n\r\x00-ai"))
+
+    connected = [call for call in emit.call_args_list if call.args[0] == "mcp_client_connected"]
+    assert connected
+    assert connected[0].args[1] == {"mcp_client": "claude-ai"}

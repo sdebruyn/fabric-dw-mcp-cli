@@ -16,19 +16,26 @@ execution order.
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from types import SimpleNamespace
 from typing import Any
 
 import mcp.shared._otel
 import pytest
+from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
+from azure.monitor.opentelemetry.exporter.export._base import ExportResult
+from azure.monitor.opentelemetry.exporter.statsbeat.customer._state import (
+    get_customer_stats_manager,
+)
 from mcp.server.mcpserver import MCPServer
 from mcp_types import JSONRPCRequest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from opentelemetry.sdk.util.instrumentation import InstrumentationScope
-from opentelemetry.trace import SpanKind, StatusCode
+from opentelemetry.trace import SpanContext, SpanKind, StatusCode, TraceState
+from opentelemetry.trace.status import Status
 
 from fabric_dw import telemetry_spans
 from fabric_dw.telemetry_spans import (
@@ -81,13 +88,39 @@ def _install_test_tracer(monkeypatch: pytest.MonkeyPatch) -> _CapturingExporter:
 
 
 def _blob(spans: list[ReadableSpan]) -> str:
-    """Render every field of every span into one string, for marker searching."""
-    return "\n".join(
-        f"{s.name} {s.status.status_code} {s.status.description} "
-        f"{dict(s.attributes or {})} {[(e.name, dict(e.attributes or {})) for e in s.events]} "
-        f"{list(s.links)}"
-        for s in spans
-    )
+    """Render every field of every span into one string, for marker searching.
+
+    Identity is in here as well as payload, and that is not decoration: a
+    client picks the trace id and the parent span id through the `traceparent`
+    it sends, so a sweep over names and attributes alone would have called the
+    first version of this sanitiser clean while it was exporting 24 bytes of
+    the client's choosing per message.  Rendering the ids as hex is how a
+    marker smuggled in as bytes shows up as text.
+    """
+    parts = []
+    for span in spans:
+        context = span.get_span_context()
+        identity = ""
+        if context is not None:
+            identity = (
+                f"{context.trace_id:032x} {context.span_id:016x} "
+                f"{bytes.fromhex(f'{context.trace_id:032x}')!r} "
+                f"{bytes.fromhex(f'{context.span_id:016x}')!r} "
+                f"{dict(context.trace_state.items() if context.trace_state else {})}"
+            )
+        parent = ""
+        if span.parent is not None:
+            parent = (
+                f"{span.parent.trace_id:032x} {span.parent.span_id:016x} "
+                f"{bytes.fromhex(f'{span.parent.span_id:016x}')!r}"
+            )
+        parts.append(
+            f"{span.name} {span.status.status_code} {span.status.description} "
+            f"{dict(span.attributes or {})} "
+            f"{[(e.name, dict(e.attributes or {})) for e in span.events]} "
+            f"{list(span.links)} {identity} {parent}"
+        )
+    return "\n".join(parts)
 
 
 async def _exchange(messages: list[Any]) -> list[dict[str, Any]]:
@@ -334,8 +367,14 @@ def test_only_a_plain_decimal_request_id_is_kept(request_id: str) -> None:
     assert "jsonrpc.request.id" not in (sanitised.attributes or {})
 
 
-def test_the_span_identity_is_preserved() -> None:
-    """Trace and span ids survive, so exported spans still correlate."""
+def test_the_span_id_is_kept_and_the_trace_id_is_remapped() -> None:
+    """Only the locally minted half of the span's identity survives as-is.
+
+    The span id is minted by the SDK. The trace id is not: the middleware
+    parents every inbound span on the W3C context in the request's `_meta`, so
+    the client picks it, and Azure exports it as `ai.operation.id`. Remapping
+    keeps spans of one trace grouped without the client choosing the value.
+    """
     span = _make_span(MCP_SDK_SCOPE, "ping", {"mcp.method.name": "ping"})
     sanitised = sanitise_span(span)
 
@@ -344,9 +383,76 @@ def test_the_span_identity_is_preserved() -> None:
     kept = sanitised.get_span_context()
     assert original is not None
     assert kept is not None
-    assert kept.trace_id == original.trace_id
     assert kept.span_id == original.span_id
+    assert kept.trace_id != original.trace_id
     assert sanitised.resource is span.resource
+
+
+def test_the_trace_id_remap_is_stable_within_the_process() -> None:
+    """Two spans of one trace must still land in one operation.
+
+    Minting a fresh random id per span would be just as safe and would throw
+    away the grouping the field exists for, so the mapping has to be a function
+    of the incoming id, not of the call.
+    """
+    first = _make_span(MCP_SDK_SCOPE, "ping", {"mcp.method.name": "ping"})
+    context = first.get_span_context()
+    assert context is not None
+    second = ReadableSpan(
+        name="ping",
+        context=SpanContext(trace_id=context.trace_id, span_id=99, is_remote=False),
+        instrumentation_scope=InstrumentationScope(MCP_SDK_SCOPE),
+        attributes={"mcp.method.name": "ping"},
+    )
+
+    one = sanitise_span(first)
+    two = sanitise_span(second)
+
+    assert one is not None
+    assert two is not None
+    one_context = one.get_span_context()
+    two_context = two.get_span_context()
+    assert one_context is not None
+    assert two_context is not None
+    assert one_context.trace_id == two_context.trace_id
+
+
+def test_the_parent_link_and_tracestate_are_dropped() -> None:
+    """Both are lifted off the wire, and both reach Application Insights.
+
+    `ai.operation.parentId` is exported straight from the parent span id, and
+    `trace_state` only fails to arrive because the current exporter happens not
+    to serialise it. Neither is left to chance.
+    """
+    remote_parent = SpanContext(
+        trace_id=int("74656e616e742d7365637265742d3031", 16),
+        span_id=int("3862797465735858", 16),
+        is_remote=True,
+        trace_state=TraceState([("client", "secret-value")]),
+    )
+    span = ReadableSpan(
+        name="ping",
+        context=SpanContext(
+            trace_id=remote_parent.trace_id,
+            span_id=7,
+            is_remote=False,
+            trace_state=remote_parent.trace_state,
+        ),
+        parent=remote_parent,
+        instrumentation_scope=InstrumentationScope(MCP_SDK_SCOPE),
+        attributes={"mcp.method.name": "ping"},
+    )
+
+    sanitised = sanitise_span(span)
+
+    assert sanitised is not None
+    assert sanitised.parent is None
+    kept = sanitised.get_span_context()
+    assert kept is not None
+    assert not list(kept.trace_state.items())
+    # The trace id decoded to `tenant-secret-01` before the remap existed.
+    assert b"secret" not in bytes.fromhex(f"{kept.trace_id:032x}")
+    assert "secret-value" not in _blob([sanitised])
 
 
 # ---------------------------------------------------------------------------
@@ -437,13 +543,13 @@ def test_a_host_installed_tracer_provider_keeps_winning(
         monkeypatch, setter=lambda _provider: None, getter=lambda: host_provider
     )
 
-    built: list[object] = []
-    monkeypatch.setattr(
-        telemetry_spans, "_AzureMonitorTraceExporter", lambda **kw: built.append(kw)
-    )
+    captured = _CapturingExporter()
+    monkeypatch.setattr(telemetry_spans, "_AzureMonitorTraceExporter", lambda **_kw: captured)
 
     assert install_mcp_span_pipeline(_CONNECTION_STRING, None) is False
-    assert built == [], "no exporter may be built when the host provider won"
+    # The exporter is built before the global is claimed, so losing the race
+    # means there is a batch worker and an exporter to close again.
+    assert captured.shutdown_calls == 1, "the provider we built and lost must be shut down"
 
 
 def test_installing_the_pipeline_wires_the_sanitiser_in_front_of_azure(
@@ -496,7 +602,7 @@ def test_an_unreadable_method_map_degrades_to_unknown_rather_than_passing_it_thr
     client sent.
     """
     monkeypatch.setitem(sys.modules, "mcp_types.methods", None)
-    telemetry_spans._known_methods.cache_clear()
+    telemetry_spans._methods_cache = None
     try:
         span = _make_span(MCP_SDK_SCOPE, "ping", {"mcp.method.name": "ping"})
         sanitised = sanitise_span(span)
@@ -504,7 +610,7 @@ def test_an_unreadable_method_map_degrades_to_unknown_rather_than_passing_it_thr
         assert sanitised is not None
         assert sanitised.name == UNKNOWN_METHOD
     finally:
-        telemetry_spans._known_methods.cache_clear()
+        telemetry_spans._methods_cache = None
 
 
 def test_an_unreadable_version_list_drops_the_protocol_version(
@@ -512,7 +618,7 @@ def test_an_unreadable_version_list_drops_the_protocol_version(
 ) -> None:
     """Same failure direction for the protocol revision."""
     monkeypatch.setitem(sys.modules, "mcp_types.version", None)
-    telemetry_spans._known_protocol_versions.cache_clear()
+    telemetry_spans._versions_cache = None
     try:
         span = _make_span(
             MCP_SDK_SCOPE,
@@ -524,7 +630,7 @@ def test_an_unreadable_version_list_drops_the_protocol_version(
         assert sanitised is not None
         assert "mcp.protocol.version" not in (sanitised.attributes or {})
     finally:
-        telemetry_spans._known_protocol_versions.cache_clear()
+        telemetry_spans._versions_cache = None
 
 
 def test_a_span_without_attributes_is_reduced_rather_than_rejected() -> None:
@@ -536,6 +642,7 @@ def test_a_span_without_attributes_is_reduced_rather_than_rejected() -> None:
     """
     span = ReadableSpan(
         name="something",
+        context=SpanContext(trace_id=1, span_id=2, is_remote=False),
         instrumentation_scope=InstrumentationScope(MCP_SDK_SCOPE),
         attributes=None,
     )
@@ -554,3 +661,195 @@ def test_installing_the_pipeline_never_raises(monkeypatch: pytest.MonkeyPatch) -
     _patch_global_provider_hooks(monkeypatch, setter=_explode, getter=lambda: None)
 
     assert install_mcp_span_pipeline(_CONNECTION_STRING, None) is False
+
+
+# ---------------------------------------------------------------------------
+# Bounded values
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("request_id", "kept"),
+    [
+        ("7", True),
+        ("-7", True),
+        ("9" * 19, True),
+        ("9" * 20, False),
+        ("0" * 400, False),
+        ("1" * 4000, False),
+    ],
+)
+def test_a_request_id_is_capped_at_the_int64_range(request_id: str, kept: bool) -> None:  # noqa: FBT001
+    """Digits alone are still a channel, so length is bounded as well as shape.
+
+    The attributes handed to the exporter are a plain dict rather than
+    ``BoundedAttributes``, so no OpenTelemetry attribute limit applies either,
+    and the only remaining ceiling was Azure's 8192-character field cap. A
+    4000-digit id measured 4824 bytes on the wire. Every SDK client counts small
+    integers.
+    """
+    span = _make_span(
+        MCP_SDK_SCOPE,
+        "ping",
+        {"mcp.method.name": "ping", "jsonrpc.request.id": request_id},
+    )
+    sanitised = sanitise_span(span)
+
+    assert sanitised is not None
+    assert ("jsonrpc.request.id" in (sanitised.attributes or {})) is kept
+
+
+@pytest.mark.parametrize(
+    ("value", "kept"),
+    [
+        ("tool_error", True),
+        ("-32601", True),
+        ("ValueError", True),
+        ("mcp.shared.exceptions.MCPError", True),
+        ("Unknown prompt: " + MARKER, False),
+        ("a" * 65, False),
+        ("", False),
+    ],
+)
+def test_error_type_is_checked_rather_than_assumed_safe(value: str, kept: bool) -> None:  # noqa: FBT001
+    """The three shapes the middleware writes are a property of the SDK, not of us.
+
+    Today `error.type` is a JSON-RPC code, the literal `tool_error`, or a
+    server-side exception class name, none of which can carry client input. That
+    holds only while this server sends no requests to the client; the
+    server-to-client direction would put a peer's error text here. Checking the
+    shape costs one comparison and makes the invariant ours.
+    """
+    span = _make_span(MCP_SDK_SCOPE, "ping", {"mcp.method.name": "ping", "error.type": value})
+    sanitised = sanitise_span(span)
+
+    assert sanitised is not None
+    assert ("error.type" in (sanitised.attributes or {})) is kept
+
+
+# ---------------------------------------------------------------------------
+# What the Azure exporter would actually put on the wire
+# ---------------------------------------------------------------------------
+
+
+def _envelopes_for(monkeypatch: pytest.MonkeyPatch, spans: list[ReadableSpan]) -> list[Any]:
+    """Run *spans* through the real Azure exporter and capture the envelopes.
+
+    Everything but the HTTP call is genuine: the real exporter, the real
+    envelope conversion, the real resource-metric branch. Only `_transmit` is
+    replaced, so nothing leaves the process.
+    """
+    monkeypatch.setenv("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "true")
+    monkeypatch.setenv("APPLICATIONINSIGHTS_SDKSTATS_DISABLED", "true")
+
+    # The resource-metric branch reads `tracer_provider.resource`, so it only
+    # fires when a real provider is in play, which is exactly the production
+    # situation: install_mcp_span_pipeline builds one and claims the global.
+    exporter = AzureMonitorTraceExporter(
+        connection_string=_CONNECTION_STRING,
+        disable_offline_storage=True,
+        tracer_provider=TracerProvider(),
+    )
+    captured: list[Any] = []
+
+    def _transmit(envelopes: Any) -> Any:
+        captured.extend(envelopes)
+        return ExportResult.SUCCESS
+
+    monkeypatch.setattr(exporter, "_transmit", _transmit)
+    try:
+        SanitisingSpanExporter(exporter).export(spans)
+    finally:
+        exporter.shutdown()
+        # Constructing a real exporter can start the customer-sdkstats metric
+        # reader, which then tries to POST to the connection string's endpoint
+        # on its own thread. Production never reaches that (telemetry.py sets
+        # APPLICATIONINSIGHTS_SDKSTATS_DISABLED before the first exporter
+        # exists), but in a test the manager may already be a live singleton
+        # from an earlier module, and a unit test must make no network calls.
+        with contextlib.suppress(Exception):
+            get_customer_stats_manager().shutdown()
+    return captured
+
+
+def test_a_span_batch_produces_no_metric_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The trace exporter smuggles a metric in unless an env var says otherwise.
+
+    It appends an `_OTELRESOURCE_` `MetricData` envelope to every non-empty
+    export batch, so switching spans on would have started sending metrics while
+    the docs promise none. The variable is read at export time, so it cannot be
+    scoped around construction the way the OTEL_*_EXPORTER pair is.
+    """
+    monkeypatch.delenv("APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED", raising=False)
+    span = _make_span(MCP_SDK_SCOPE, "ping", {"mcp.method.name": "ping"})
+
+    # Without the setting, to show the envelope is real and not hypothetical.
+    leaky = _envelopes_for(monkeypatch, [span])
+    assert any(e.data.base_type == "MetricData" for e in leaky)
+
+    # With it, as install_mcp_span_pipeline sets it.
+    monkeypatch.setenv("APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED", "true")
+    clean = _envelopes_for(monkeypatch, [span])
+    assert clean, "the span itself must still be exported"
+    assert not [e for e in clean if e.data.base_type == "MetricData"]
+
+
+def test_nothing_client_chosen_survives_into_the_azure_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The end of the line: what the exporter would put on the wire.
+
+    `ai.operation.id` and `ai.operation.parentId` are written straight from the
+    span's trace id and parent span id, both of which the client controls
+    through `traceparent`, and neither is truncated or validated on the way.
+    """
+    monkeypatch.setenv("APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED", "true")
+    # "tenant-secret-01" and "8bytesXX" as hex, which is how a client sends them.
+    remote = SpanContext(
+        trace_id=int(b"tenant-secret-01".hex(), 16),
+        span_id=int(b"8bytesXX".hex(), 16),
+        is_remote=True,
+    )
+    span = ReadableSpan(
+        name=f"prompts/get {MARKER}",
+        context=SpanContext(trace_id=remote.trace_id, span_id=4242, is_remote=False),
+        parent=remote,
+        instrumentation_scope=InstrumentationScope(MCP_SDK_SCOPE),
+        attributes={"mcp.method.name": "prompts/get", "gen_ai.prompt.name": MARKER},
+        status=Status(StatusCode.ERROR, f"Unknown prompt: {MARKER}"),
+        start_time=1,
+        end_time=2,
+    )
+
+    envelopes = _envelopes_for(monkeypatch, [span])
+
+    assert len(envelopes) == 1
+    rendered = str(envelopes[0].as_dict())
+    assert MARKER not in rendered
+    operation_id = envelopes[0].tags["ai.operation.id"]
+    assert b"tenant-secret" not in bytes.fromhex(operation_id)
+    assert "ai.operation.parentId" not in envelopes[0].tags
+
+
+def test_a_failed_exporter_build_never_claims_the_global(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Claiming the global before the pipeline is whole is unrecoverable.
+
+    ``set_tracer_provider`` spends OpenTelemetry's one-shot ``Once``. If the
+    exporter then failed to build, an empty provider stayed installed for the
+    life of the process: every span fully recorded into nothing, the host locked
+    out for good, and the caller told the install had failed.
+    """
+    claimed: list[object] = []
+    _patch_global_provider_hooks(
+        monkeypatch, setter=claimed.append, getter=lambda: claimed[-1] if claimed else None
+    )
+
+    def _explode(**_kw: Any) -> Any:
+        raise RuntimeError("no exporter for you")
+
+    monkeypatch.setattr(telemetry_spans, "_AzureMonitorTraceExporter", _explode)
+
+    assert install_mcp_span_pipeline(_CONNECTION_STRING, None) is False
+    assert claimed == [], "the global was claimed despite the install failing"

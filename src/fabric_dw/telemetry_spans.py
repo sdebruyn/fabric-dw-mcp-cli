@@ -60,9 +60,13 @@ down, leaving the host's spans going to the host's own destination.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import hmac
 import logging
+import os
+import secrets
 from collections.abc import Mapping
-from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from azure.monitor.opentelemetry.exporter import (
@@ -72,6 +76,7 @@ from opentelemetry import trace as _trace
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
+from opentelemetry.trace import DEFAULT_TRACE_STATE, SpanContext, TraceFlags
 from opentelemetry.trace.status import Status
 
 if TYPE_CHECKING:
@@ -111,21 +116,64 @@ UNKNOWN_METHOD = "<unknown>"
 #: SDK ever starts deriving it from the request.
 _GEN_AI_OPERATION = "execute_tool"
 
-#: Attributes copied through untouched.  Both are server-side classifications:
-#: a JSON-RPC error code, the string ``tool_error``, or the qualified name of
-#: an exception class raised inside this process.  None can carry client input.
-_PASSTHROUGH_ATTRIBUTES = frozenset({"error.type", "rpc.response.status_code"})
+#: The one non-numeric ``error.type`` the middleware writes itself.
+_TOOL_ERROR = "tool_error"
+
+#: Longest ``jsonrpc.request.id`` recorded, in digits: the int64 range.  The id
+#: is client-chosen, and the attributes handed to the exporter are a plain dict,
+#: so no OpenTelemetry attribute limit applies and nothing else bounds this.  A
+#: 4000-digit id measured at 4824 bytes on the wire before this cap existed.
+_MAX_REQUEST_ID_DIGITS = 19
+
+#: Longest ``error.type`` recorded.  Server-side exception class names are far
+#: shorter; the cap exists so the invariant does not rest on that.
+_MAX_ERROR_TYPE_LEN = 64
+
+# Per-process key for remapping trace ids.  The MCP SDK parents every inbound
+# span on trace context lifted off the wire, so the trace id and the parent span
+# id are chosen by the client, and Azure exports them as `ai.operation.id` and
+# `ai.operation.parentId`.  Measured before this existed: a `traceparent` of
+# `00-74656e616e742d7365637265742d3031-3862797465735858-01` put the bytes
+# `tenant-secret-01` into `ai.operation.id`, on any message including a
+# notification, which needs no response.
+#
+# An HMAC keyed on a value the client cannot see keeps spans that genuinely
+# belong to one trace grouped, while making the exported id something the client
+# neither chooses nor can predict.  It is not stored and dies with the process.
+_TRACE_ID_SECRET = secrets.token_bytes(32)
 
 
-@lru_cache(maxsize=1)
+def _remap_trace_id(trace_id: int) -> int:
+    """Return a trace id derived from *trace_id* that the client cannot choose."""
+    digest = hmac.new(
+        _TRACE_ID_SECRET, trace_id.to_bytes(16, "big", signed=False), hashlib.sha256
+    ).digest()
+    # A trace id of 0 is invalid per the spec; the odds are negligible but the
+    # fallback costs one comparison.
+    return int.from_bytes(digest[:16], "big") or 1
+
+
+# Caches for the two lookups below.  Deliberately not ``lru_cache``: the first
+# call happens on the BatchSpanProcessor worker thread, and caching a failure
+# there would pin every span in the process to UNKNOWN_METHOD until restart,
+# announced only at debug level.  Only a successful read is remembered.
+_methods_cache: frozenset[str] | None = None
+_versions_cache: frozenset[str] | None = None
+
+
 def _known_methods() -> frozenset[str]:
     """Return every method name the MCP protocol defines, in both directions.
 
     Read from ``mcp_types``, which is documented as supported public API and
     is updated upstream when the protocol gains a method.  Returns an empty set
     if the import fails, which degrades to every method being reported as
-    :data:`UNKNOWN_METHOD` rather than to leaking an unvetted string.
+    :data:`UNKNOWN_METHOD` rather than to leaking an unvetted string, and
+    retries on the next span rather than caching the failure.
     """
+    global _methods_cache  # noqa: PLW0603
+
+    if _methods_cache is not None:
+        return _methods_cache
     try:
         from mcp_types.methods import (  # noqa: PLC0415
             SERVER_NOTIFICATIONS,
@@ -139,18 +187,26 @@ def _known_methods() -> frozenset[str]:
 
     server_side = {method for method, _version in SERVER_REQUESTS}
     server_side |= {method for method, _version in SERVER_NOTIFICATIONS}
-    return frozenset(SPEC_CLIENT_METHODS | SPEC_CLIENT_NOTIFICATION_METHODS | server_side)
+    _methods_cache = frozenset(SPEC_CLIENT_METHODS | SPEC_CLIENT_NOTIFICATION_METHODS | server_side)
+    return _methods_cache
 
 
-@lru_cache(maxsize=1)
 def _known_protocol_versions() -> frozenset[str]:
-    """Return the protocol revisions the SDK knows, or an empty set on failure."""
+    """Return the protocol revisions the SDK knows, or an empty set on failure.
+
+    Same no-caching-of-failures rule as :func:`_known_methods`.
+    """
+    global _versions_cache  # noqa: PLW0603
+
+    if _versions_cache is not None:
+        return _versions_cache
     try:
         from mcp_types.version import KNOWN_PROTOCOL_VERSIONS  # noqa: PLC0415
     except Exception:
         _log.debug("Could not read the MCP protocol versions", exc_info=True)
         return frozenset()
-    return frozenset(KNOWN_PROTOCOL_VERSIONS)
+    _versions_cache = frozenset(KNOWN_PROTOCOL_VERSIONS)
+    return _versions_cache
 
 
 def _safe_method(value: object) -> str:
@@ -161,18 +217,54 @@ def _safe_method(value: object) -> str:
 
 
 def _safe_request_id(value: object) -> str | None:
-    """Return *value* when it is an integer JSON-RPC id, else ``None``.
+    """Return *value* when it is a small integer JSON-RPC id, else ``None``.
 
     JSON-RPC allows a string id, and the client picks it, so a string id is
-    free text and is dropped.  Every SDK client counts integers.
+    free text and is dropped.  The digit test is used rather than ``int(value)``,
+    which also accepts surrounding whitespace, digit separators (``1_000``) and
+    non-ASCII numerals.
 
-    The check is a digit test rather than ``int(value)``, which also accepts
-    surrounding whitespace, digit separators (``1_000``) and non-ASCII numerals.
+    Length is capped at the int64 range.  Digits alone are still a channel: a
+    4000-digit id is 4 KB of client-chosen base-10 data, and leading zeros
+    encode too.  Every SDK client counts small integers, so the cap costs
+    nothing real.
     """
     if not isinstance(value, str):
         return None
     digits = value.removeprefix("-")
-    if digits.isascii() and digits.isdigit():
+    if not digits.isascii() or not digits.isdigit():
+        return None
+    if len(digits) > _MAX_REQUEST_ID_DIGITS:
+        return None
+    return value
+
+
+def _safe_status_code(value: object) -> str | None:
+    """Return *value* when it is a JSON-RPC error code, else ``None``."""
+    if not isinstance(value, str):
+        return None
+    digits = value.removeprefix("-")
+    if digits.isascii() and digits.isdigit() and len(digits) <= _MAX_ERROR_TYPE_LEN:
+        return value
+    return None
+
+
+def _safe_error_type(value: object) -> str | None:
+    """Return *value* when it is a server-side error classification, else ``None``.
+
+    The middleware writes one of three things here: a JSON-RPC error code, the
+    literal ``tool_error``, or the qualified name of an exception class raised
+    inside this process.  None of those can carry client input **today**, but
+    that is a property of the current SDK rather than of this code, and the
+    server-to-client direction (``sampling/createMessage`` and friends) would
+    put a peer's error on a span.  So the invariant is checked rather than
+    assumed: a numeric code, the known literal, or a dotted Python identifier.
+    """
+    if not isinstance(value, str) or not value or len(value) > _MAX_ERROR_TYPE_LEN:
+        return None
+    if value == _TOOL_ERROR or _safe_status_code(value) is not None:
+        return value
+    if value.isascii() and all(part.isidentifier() for part in value.split(".")):
         return value
     return None
 
@@ -199,10 +291,13 @@ def _sanitise_attributes(attributes: object) -> dict[str, Any]:
     if attributes.get("gen_ai.operation.name") == _GEN_AI_OPERATION:
         out["gen_ai.operation.name"] = _GEN_AI_OPERATION
 
-    for key in _PASSTHROUGH_ATTRIBUTES:
-        value = attributes.get(key)
-        if value is not None:
-            out[key] = value
+    error_type = _safe_error_type(attributes.get("error.type"))
+    if error_type is not None:
+        out["error.type"] = error_type
+
+    status_code = _safe_status_code(attributes.get("rpc.response.status_code"))
+    if status_code is not None:
+        out["rpc.response.status_code"] = status_code
 
     return out
 
@@ -211,8 +306,10 @@ def sanitise_span(span: ReadableSpan) -> ReadableSpan | None:
     """Return a replacement span safe to export, or ``None`` to drop it.
 
     ``None`` is returned for any span that did not come from the MCP SDK's
-    tracer.  A span from that tracer whose shape this code does not recognise
-    is still exported, but reduced to :data:`UNKNOWN_METHOD` and a status code.
+    tracer, and for one carrying no span context, which the exporter could not
+    serialise anyway.  A span from that tracer whose shape this code does not
+    recognise is still exported, but reduced to :data:`UNKNOWN_METHOD` and a
+    status code.
 
     Args:
         span: The ended span handed to the exporter.
@@ -225,6 +322,10 @@ def sanitise_span(span: ReadableSpan) -> ReadableSpan | None:
     if scope is None or scope.name != MCP_SDK_SCOPE:
         return None
 
+    context = span.get_span_context()
+    if context is None:
+        return None
+
     attributes = _sanitise_attributes(span.attributes)
     method = attributes["mcp.method.name"]
 
@@ -234,14 +335,30 @@ def sanitise_span(span: ReadableSpan) -> ReadableSpan | None:
     # and `error.type` carries the machine-readable classification.
     status = Status(span.status.status_code)
 
+    # The span's identity is rebuilt, not copied.  The SDK parents each inbound
+    # span on the W3C context in the request's `_meta`, so the trace id, the
+    # parent span id and the tracestate all come off the wire, and Azure exports
+    # the first two as `ai.operation.id` and `ai.operation.parentId`.  Only the
+    # span id is minted locally, so only the span id is kept as-is; the trace id
+    # is remapped so spans of one trace stay grouped without the client choosing
+    # the value, the parent link is cut, and the tracestate is dropped rather
+    # than relying on the exporter continuing not to serialise it.
+    safe_context = SpanContext(
+        trace_id=_remap_trace_id(context.trace_id),
+        span_id=context.span_id,
+        is_remote=False,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+        trace_state=DEFAULT_TRACE_STATE,
+    )
+
     return ReadableSpan(
         # The client-supplied target is a suffix on the SDK's span name, so the
         # name is rebuilt from the vetted method instead.  The span kind, which
         # is preserved, is what distinguishes an inbound message (SERVER, the
         # `requests` table) from a server-initiated one (CLIENT, `dependencies`).
         name=method,
-        context=span.get_span_context(),
-        parent=span.parent,
+        context=safe_context,
+        parent=None,
         resource=span.resource,
         attributes=attributes,
         # Dropped: the SDK's `record_exception` branch puts the exception
@@ -305,9 +422,11 @@ def install_mcp_span_pipeline(connection_string: str, resource: object | None) -
 
     A host application that already installed a ``TracerProvider`` keeps it.
     OpenTelemetry refuses to override an existing global provider, so this
-    function sets one and then checks whether the set took effect, standing
-    down when it did not.  The provider is built before the exporter so that
-    losing the race costs nothing.
+    function claims the global **last**, after the provider is fully built, and
+    checks whether the claim took effect.  Order matters: claiming first and
+    then failing to build the exporter would leave an empty provider installed
+    permanently, recording every span in the process into nothing and locking
+    the host out for good, while still reporting failure to the caller.
 
     Args:
         connection_string: The Application Insights connection string.
@@ -317,9 +436,31 @@ def install_mcp_span_pipeline(connection_string: str, resource: object | None) -
 
     Returns:
         ``True`` when this process now exports MCP protocol spans, ``False``
-        when a host provider won the race or setup failed.  Never raises.
+        when a host provider won the race or setup failed.  The caller records
+        this: ``flush_telemetry`` and ``shutdown_telemetry`` must only tear down
+        a provider this function installed.  Never raises.
     """
+    provider = None
     try:
+        # A host that configured OTEL_PYTHON_TRACER_PROVIDER rather than calling
+        # set_tracer_provider() has not claimed the global yet; this read is what
+        # makes OpenTelemetry load and install it, so the check below sees it.
+        _trace.get_tracer_provider()
+
+        # The Azure trace exporter appends an `_OTELRESOURCE_` MetricData
+        # envelope to every non-empty export unless this is set, so switching
+        # spans on would otherwise start sending metrics that docs/telemetry.md
+        # says are never sent.  It is read at export time, not at construction,
+        # so it cannot be scoped and restored the way the OTEL_*_EXPORTER pair
+        # is.  setdefault, like APPLICATIONINSIGHTS_SDKSTATS_DISABLED: the gate
+        # is `!= "true"`, so an operator's explicit value is a real override.
+        #
+        # Third one of these now (statsbeat, customer sdkstats, this): assume
+        # any Azure Monitor exporter has a side channel behind an environment
+        # variable until proven otherwise.
+        os.environ.setdefault("APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED", "true")
+
+        exporter = _AzureMonitorTraceExporter(connection_string=connection_string)
         provider = TracerProvider(
             resource=resource,  # ty: ignore[invalid-argument-type]
             # ALWAYS_ON rather than the default ParentBased sampler: an MCP
@@ -332,14 +473,18 @@ def install_mcp_span_pipeline(connection_string: str, resource: object | None) -
             # tears this provider down with a bounded timeout instead.
             shutdown_on_exit=False,
         )
+        provider.add_span_processor(BatchSpanProcessor(SanitisingSpanExporter(exporter)))
+
         _trace.set_tracer_provider(provider)
         if _trace.get_tracer_provider() is not provider:
             _log.debug("A TracerProvider was already installed; leaving it alone")
+            # Stop the batch worker and close the exporter we built but lost.
+            provider.shutdown()
             return False
-
-        exporter = _AzureMonitorTraceExporter(connection_string=connection_string)
-        provider.add_span_processor(BatchSpanProcessor(SanitisingSpanExporter(exporter)))
     except Exception:
         _log.debug("Failed to install the MCP span pipeline", exc_info=True)
+        if provider is not None:
+            with contextlib.suppress(Exception):
+                provider.shutdown()
         return False
     return True
