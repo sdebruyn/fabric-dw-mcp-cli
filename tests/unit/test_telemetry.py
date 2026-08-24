@@ -1121,88 +1121,208 @@ def test_get_tracer_passes_enable_performance_counters_false(
 
 
 # ---------------------------------------------------------------------------
-# Privacy: no span exporter is ever installed (#1043)
+# Privacy: no span or metric exporter is ever installed (#1043)
 # ---------------------------------------------------------------------------
+#
+# What these tests can and cannot do
+# ----------------------------------
+# ``_mock_configure_azure_monitor`` in tests/conftest.py is autouse for this
+# module and no-ops ``configure_azure_monitor``, deliberately: a real call would
+# reach the production App Insights resource. So a test here CANNOT assert on
+# the resulting global TracerProvider, because in this process no provider is
+# ever installed and every such assertion would pass vacuously. That is the same
+# false assurance as asserting on the kwarg, just relocated.
+#
+# What they assert instead is the decisive fact, end to end and without a
+# network: the environment ``_get_tracer()`` establishes, fed through the REAL
+# azure-monitor-opentelemetry decision functions, resolves to "tracing off" and
+# "metrics off". That composition is what determines whether an exporter gets
+# built, so it cannot pass while the pipeline is live.
+#
+# The real-process check was run by hand against the locked versions: point
+# telemetry._DEFAULT_CONNECTION_STRING at an unroutable IngestionEndpoint, call
+# _get_tracer(), then inspect the global provider. Before the fix that yields an
+# SDK TracerProvider carrying a BatchSpanProcessor and an
+# AzureMonitorTraceExporter; after it, the no-op ProxyTracerProvider with no
+# force_flush and no span processors. That check cannot live in this module
+# because of the autouse mock described above.
 
 
-def test_get_tracer_passes_disable_tracing_true(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """_get_tracer must pass disable_tracing=True to configure_azure_monitor.
+def _env_after_get_tracer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
+    """Run ``_get_tracer()`` and return the module, leaving its env vars in place.
 
-    This project emits customEvents as OTel *log records* and authors no spans
-    of its own, so the trace pipeline has no legitimate producer here.  It does
-    have an illegitimate one: MCP Python SDK v2 installs an OpenTelemetry
-    middleware on every server unconditionally, and that middleware emits a
-    SERVER span per inbound message carrying ``mcp.method.name``,
-    ``jsonrpc.request.id`` and ``gen_ai.tool.name``, then calls
-    ``span.record_exception(e)`` and ``set_status(ERROR, str(e))`` on failure.
-
-    If a TracerProvider with an Application Insights exporter were installed,
-    Fabric API error text, SQL error messages, workspace names and warehouse
-    names would be exported on every failed tool call.  Passing
-    ``disable_tracing=True`` means no exporter exists to carry them.
-
-    Do not relax this without a deliberate privacy review: the SDK middleware is
-    on by default and the leak is silent.
+    ``configure_azure_monitor`` is mocked by the autouse fixture, but the
+    ``os.environ.setdefault`` calls under test run before it, so the environment
+    this leaves behind is exactly the one the real library would have read.
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.delenv("FABRIC_DW_TELEMETRY_OPT_OUT", raising=False)
+    monkeypatch.delenv("DO_NOT_TRACK", raising=False)
+    # setdefault means a pre-existing value would win, which would make these
+    # tests pass for the wrong reason. Clear all three first.
+    monkeypatch.delenv("OTEL_TRACES_EXPORTER", raising=False)
+    monkeypatch.delenv("OTEL_METRICS_EXPORTER", raising=False)
+    monkeypatch.delenv("OTEL_LOGS_EXPORTER", raising=False)
 
     mod = _reload_telemetry()
-
-    captured_kwargs: dict[str, object] = {}
-
-    def fake_configure(**kwargs: object) -> None:
-        captured_kwargs.update(kwargs)
-
-    fake_otel_logger = object()
-
-    fake_azure_mod: Any = types.ModuleType("azure.monitor.opentelemetry")
-    fake_azure_mod.configure_azure_monitor = fake_configure
-
-    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs")
-    fake_logs_mod.get_logger = lambda *_a, **_kw: fake_otel_logger
-    fake_logs_mod.LogRecord = object
-    fake_logs_mod.SeverityNumber = object
-
     mod._sdk_initialised = False
     mod._tracer = None
     mod._otel_logger = None
-
-    monkeypatch.setitem(sys.modules, "azure.monitor.opentelemetry", fake_azure_mod)
-    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
-
     mod._get_tracer()
+    return mod
 
-    assert captured_kwargs.get("disable_tracing") is True, (
-        "configure_azure_monitor must receive disable_tracing=True. Without it the "
-        "MCP SDK v2 OpenTelemetry middleware exports protocol spans, including "
-        "exception text (Fabric API errors, SQL error messages) and identifiers "
-        "(workspace and warehouse names), to Application Insights (#1043)."
+
+def test_get_tracer_disables_the_trace_pipeline_effectively(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The environment _get_tracer() sets must make the real library disable tracing.
+
+    Asserting that ``configure_azure_monitor`` merely RECEIVES
+    ``disable_tracing=True`` would be worthless: the library throws that value
+    away. ``_get_configurations`` copies caller kwargs into a dict and then runs
+    ``_default_disable_tracing``, which assigns unconditionally and consults only
+    ``OTEL_TRACES_EXPORTER``. So this feeds our environment through that real
+    decision function and asserts the outcome.
+
+    Why it matters: MCP Python SDK v2 installs an OpenTelemetry middleware on
+    every server unconditionally, emitting one SERVER span per inbound protocol
+    message with ``mcp.method.name``, ``jsonrpc.request.id``,
+    ``gen_ai.tool.name``, ``error.type`` and timings. That is metadata the
+    documented collection list in docs/telemetry.md does not cover.
+
+    Do not "simplify" this into an assertion about kwargs.
+    """
+    from azure.monitor.opentelemetry._utils.configurations import (  # noqa: PLC0415
+        _default_disable_tracing,
     )
 
-    # Reset SDK state so the module is clean for any subsequent tests.
-    mod._sdk_initialised = False
-    mod._tracer = None
-    mod._otel_logger = None
+    mod = _env_after_get_tracer(monkeypatch, tmp_path)
+    try:
+        assert os.environ.get("OTEL_TRACES_EXPORTER") == "none", (
+            "_get_tracer must set OTEL_TRACES_EXPORTER=none; it is the only thing "
+            "that actually disables the trace pipeline (#1043)."
+        )
+        effective: dict[str, Any] = {"disable_tracing": True}
+        _default_disable_tracing(effective)
+        assert effective["disable_tracing"] is True, (
+            "The real library resolves tracing as ENABLED under the environment "
+            "_get_tracer() leaves behind, so MCP protocol spans would be exported "
+            "to Application Insights."
+        )
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_get_tracer_disables_the_metrics_pipeline_effectively(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Same for metrics, which has been silently enabled all along.
+
+    ``disable_metrics=True`` has never worked, for the identical reason, so this
+    project has been starting a metrics pipeline it documents as disabled.
+    """
+    from azure.monitor.opentelemetry._utils.configurations import (  # noqa: PLC0415
+        _default_disable_metrics,
+    )
+
+    mod = _env_after_get_tracer(monkeypatch, tmp_path)
+    try:
+        assert os.environ.get("OTEL_METRICS_EXPORTER") == "none", (
+            "_get_tracer must set OTEL_METRICS_EXPORTER=none; the disable_metrics "
+            "kwarg is discarded by the library (#1043)."
+        )
+        effective: dict[str, Any] = {"disable_metrics": True}
+        _default_disable_metrics(effective)
+        assert effective["disable_metrics"] is True, (
+            "The real library resolves metrics as ENABLED under the environment "
+            "_get_tracer() leaves behind."
+        )
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_get_tracer_leaves_the_logs_pipeline_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Disabling traces and metrics must NOT disable logs.
+
+    customEvents are emitted as OTel log records, so the logs pipeline is the one
+    that has to stay on. Without this, adding ``OTEL_LOGS_EXPORTER=none`` to the
+    block above (an easy symmetry mistake) would silently kill all telemetry
+    rather than just the parts we do not want.
+    """
+    from azure.monitor.opentelemetry._utils.configurations import (  # noqa: PLC0415
+        _default_disable_logging,
+    )
+
+    mod = _env_after_get_tracer(monkeypatch, tmp_path)
+    try:
+        assert os.environ.get("OTEL_LOGS_EXPORTER") != "none", (
+            "_get_tracer must NOT disable the logs exporter; customEvents ride on it."
+        )
+        effective: dict[str, Any] = {"disable_logging": False}
+        _default_disable_logging(effective)
+        assert effective["disable_logging"] is False, (
+            "The logs pipeline resolved to DISABLED, which would drop every "
+            "customEvent this project emits."
+        )
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_configure_azure_monitor_still_ignores_the_disable_kwargs() -> None:
+    """Pin the upstream bug that makes the OTEL_* env vars necessary.
+
+    If a future azure-monitor-opentelemetry release starts honouring the
+    ``disable_tracing`` / ``disable_metrics`` kwargs, this test fails. That is a
+    prompt to simplify telemetry.py back to plain kwargs, not a regression.
+
+    The targeted ``_default_*`` helpers are called directly rather than
+    ``_get_configurations`` because the latter runs OTel resource detectors,
+    which probe the network and trip pytest-socket.
+    """
+    from azure.monitor.opentelemetry._utils.configurations import (  # noqa: PLC0415
+        _default_disable_metrics,
+        _default_disable_tracing,
+    )
+
+    for name, fn in (
+        ("disable_tracing", _default_disable_tracing),
+        ("disable_metrics", _default_disable_metrics),
+    ):
+        env_var = f"OTEL_{'TRACES' if 'tracing' in name else 'METRICS'}_EXPORTER"
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(env_var, None)
+            passed: dict[str, Any] = {name: True}
+            fn(passed)
+            assert passed[name] is False, (
+                f"azure-monitor-opentelemetry now honours {name}=True. The "
+                f"{env_var}=none workaround in fabric_dw/telemetry.py can be "
+                "removed in favour of the kwarg."
+            )
 
 
 def test_mcp_server_otel_middleware_is_installed_by_the_sdk() -> None:
-    """Pin the upstream fact that makes disable_tracing=True load-bearing.
+    """Pin the upstream fact that makes disabling the trace pipeline load-bearing.
 
     MCP Python SDK v2 appends an ``OpenTelemetryMiddleware`` to every low-level
-    ``Server`` in ``__init__``, with no opt-out short of mutating the private
-    ``middleware`` list.  If a future SDK release makes that opt-in instead,
-    this test fails and the ``disable_tracing=True`` rationale in
-    ``telemetry.py`` can be revisited.  Until then it must stay.
+    ``Server`` in ``__init__``. The only producer-side opt-out is mutating
+    ``MCPServer.middleware``, a public but explicitly "Provisional" property. If
+    a future SDK release makes the middleware opt-in instead, this test fails and
+    the rationale in ``telemetry.py`` can be revisited. Until then it must stay.
     """
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-    middleware_types = {type(m).__name__ for m in mcp._lowlevel_server.middleware}
+    middleware_types = {type(m).__name__ for m in mcp.middleware}
     assert "OpenTelemetryMiddleware" in middleware_types, (
         "The MCP SDK no longer installs OpenTelemetryMiddleware unconditionally. "
-        "Re-read the disable_tracing=True rationale in fabric_dw/telemetry.py "
+        "Re-read the tracing rationale in fabric_dw/telemetry.py "
         f"before changing anything. Installed middleware: {sorted(middleware_types)}"
     )
 
