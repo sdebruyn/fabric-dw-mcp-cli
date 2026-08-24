@@ -199,6 +199,6 @@ The client automatically retries on each 429 and waits exactly as long as the se
 - You passed `--allowed-host` but the value does not match what the client sends. A reverse proxy on port 443 forwards `Host: mcp.example.com`, while a client talking straight to the port sends `Host: mcp.example.com:8000`. A value written without a port covers both; a value written with one covers only that port.
 - You are on the default loopback bind, which the SDK protects with a loopback-only allowlist, but something in front of the server rewrites the header to a different name.
 
-HTTP 403 specifically means the request carried an `Origin` header and no `--allowed-origin` matched it. Only browser-based clients send that header.
+HTTP 403 specifically means the request carried an `Origin` header and no `--allowed-origin` matched it. Browser-based clients send that header, and so do Electron renderers, VS Code webviews and `fetch`-based Deno or Node clients. Note that an origin is matched exactly, so a different port counts as a different origin.
 
 **Fix:** Pass `--allowed-host` with the exact name clients use, repeating the option per name, and `--allowed-origin` for a browser-based client. Both are described under [Host and Origin validation](install.md#host-and-origin-validation). To see what the server is actually enforcing, read its startup output: the allowlist it applied is logged at INFO level as `Host and Origin validation enabled`.
