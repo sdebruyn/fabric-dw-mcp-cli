@@ -47,6 +47,17 @@ Security environment variables
 ``FABRIC_MCP_ALLOW_REMOTE``
     Set to ``1``, ``true``, or ``yes`` to allow the HTTP transport to bind
     on a non-loopback address.  A prominent WARNING is logged when set.
+
+DNS-rebinding protection
+------------------------
+The SDK turns Host and Origin validation on automatically, but only when the
+HTTP transport binds on a loopback address.  A non-loopback bind leaves
+``transport_security`` unset and the middleware then fails open, serving every
+request without validating either header.  ``--allowed-host`` (repeatable)
+supplies the allowlist explicitly so protection can be switched on for exactly
+the deployment that needs it; ``--allowed-origin`` (repeatable) does the same
+for the Origin header.  Neither option changes anything when it is not passed:
+the loopback bind keeps the SDK's automatic protection untouched.
 """
 
 from __future__ import annotations
@@ -57,6 +68,8 @@ import os
 import sys
 from collections.abc import Sequence
 from typing import Literal
+
+from mcp.server.transport_security import TransportSecuritySettings
 
 from fabric_dw import __version__
 from fabric_dw.config import load_config
@@ -132,6 +145,105 @@ register_all(mcp)
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
+def _expand_allowed_host(value: str) -> list[str]:
+    """Return the ``allowed_hosts`` patterns a single ``--allowed-host`` stands for.
+
+    The SDK matches a pattern against the raw ``Host`` header: either exactly,
+    or, for a pattern ending in ``:*``, against any ``<base>:<port>`` header.
+    Those two forms do **not** overlap, so ``mcp.example.com:*`` rejects a
+    port-less ``Host: mcp.example.com`` (what a reverse proxy on 80/443 sends)
+    and a bare ``mcp.example.com`` rejects ``Host: mcp.example.com:8000`` (what
+    a direct client sends).  A value without an explicit port therefore expands
+    to both forms so the operator does not have to know which one their clients
+    will produce.
+
+    A value that already carries a port (``host:8000``) or an explicit port
+    wildcard (``host:*``) is passed through untouched.  An IPv6 literal is
+    normalised to the bracketed form the ``Host`` header uses, so both ``::1``
+    and ``[::1]`` are accepted here.
+    """
+    value = value.strip()
+    if value.startswith("["):
+        # Bracketed IPv6 literal.  Anything after the closing bracket is a port
+        # (or port wildcard) the caller wrote deliberately.
+        base, _, rest = value.partition("]")
+        base = f"{base}]"
+        return [value] if rest else [base, f"{base}:*"]
+    if value.count(":") > 1:
+        # Bare IPv6 literal: the Host header always brackets it.
+        base = f"[{value}]"
+        return [base, f"{base}:*"]
+    if ":" in value:
+        return [value]
+    return [value, f"{value}:*"]
+
+
+def _expand_allowed_origin(value: str) -> list[str]:
+    """Return the ``allowed_origins`` patterns a single ``--allowed-origin`` stands for.
+
+    An Origin header is ``<scheme>://<host>[:<port>]`` and the SDK matches it
+    with the same exact-or-``:*`` rule it uses for hosts, so the authority part
+    gets the same treatment as :func:`_expand_allowed_host`.  A value with no
+    ``://`` cannot match an Origin header at all and is passed through
+    unchanged rather than guessed at.
+    """
+    value = value.strip()
+    scheme, sep, authority = value.partition("://")
+    if not sep:
+        return [value]
+    return [f"{scheme}{sep}{host}" for host in _expand_allowed_host(authority)]
+
+
+def _dedupe(values: Sequence[str]) -> list[str]:
+    """Return *values* without duplicates, preserving first-seen order."""
+    return list(dict.fromkeys(values))
+
+
+def _resolve_transport_security(
+    args: argparse.Namespace, logger: logging.Logger
+) -> TransportSecuritySettings | None:
+    """Return the DNS-rebinding settings for an HTTP bind, or ``None``.
+
+    ``None`` means "pass nothing to ``run()``", which is what happened before
+    ``--allowed-host`` existed: the SDK then applies its own heuristic, which
+    switches protection on for a loopback bind and leaves it off, fail-open,
+    for anything else.  So the default invocation is unaffected on every host,
+    and the loopback path in particular keeps the automatic allowlist it has
+    always had.
+
+    Without ``--allowed-host`` a non-loopback bind additionally gets a warning:
+    that combination is the one that serves every request unvalidated.
+    """
+    if not args.allowed_host:
+        if args.host not in _LOOPBACK_HOSTS:
+            logger.warning(
+                "WARNING: Host and Origin validation is OFF for the bind on %s:%s. "
+                "The SDK enables it automatically for loopback binds only, so every "
+                "request reaching this port is served without checking which name it "
+                "was addressed to. A page in a browser on this network can then point "
+                "its own domain at this address and drive every tool, execute_sql "
+                "included, under this server's Fabric credentials. "
+                "Pass --allowed-host with the host name clients use to reach this "
+                "server (repeatable) to turn validation on.",
+                args.host,
+                args.port,
+            )
+        return None
+
+    allowed_hosts = _dedupe([p for v in args.allowed_host for p in _expand_allowed_host(v)])
+    allowed_origins = _dedupe([p for v in args.allowed_origin for p in _expand_allowed_origin(v)])
+    logger.info(
+        "Host and Origin validation enabled: allowed_hosts=%s allowed_origins=%s",
+        allowed_hosts,
+        allowed_origins or "[] (every request carrying an Origin header is refused)",
+    )
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+    )
+
+
 def _resolve_log_level() -> int:
     """Return the effective log level integer.
 
@@ -165,40 +277,12 @@ def _resolve_log_level() -> int:
     return logging.INFO
 
 
-def run(argv: Sequence[str] | None = None) -> None:
-    """Parse CLI arguments and start the MCP server.
+def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
+    """Build the CLI parser, parse *argv*, and reject unusable combinations.
 
-    Args:
-        argv: Argument list (defaults to ``sys.argv[1:]`` when ``None``).
-
-    Transport options
-    -----------------
-    ``--transport stdio`` (default)
-        Communicate over stdin/stdout — standard for Claude Desktop and similar.
-    ``--transport http``
-        Expose a streamable-HTTP endpoint.
-
-    HTTP-transport options
-    ----------------------
-    ``--host HOST``
-        Bind address for HTTP transport (default ``127.0.0.1``).  Binding to
-        a non-loopback address requires ``FABRIC_MCP_ALLOW_REMOTE=1``.
-    ``--port PORT``
-        TCP port for HTTP transport (default ``8000``).
-
-    Both are passed straight through to ``MCPServer.run()``, which is overloaded
-    per transport; the stdio overload takes no keyword arguments at all.
-
-    The HTTP transport caps request bodies at 4 MiB and answers anything larger
-    with HTTP 413.  The default is kept: for this server the only realistic way
-    to reach it is a single ``execute_sql`` script or a procedure or view
-    definition of several megabytes.  ``max_request_body_size`` on ``run()`` is
-    the escape hatch if that ever becomes a real constraint.
+    Split out of :func:`run` so the option list can grow without pushing the
+    entry point past its complexity budget.
     """
-    setup_logging(_resolve_log_level())
-
-    logger = logging.getLogger(__name__)
-
     parser = argparse.ArgumentParser(
         prog="fabric-dw-mcp",
         description="Microsoft Fabric Data Warehouse MCP server",
@@ -220,7 +304,91 @@ def run(argv: Sequence[str] | None = None) -> None:
         default=8000,
         help="TCP port for HTTP transport (default: 8000).",
     )
+    parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        metavar="HOST",
+        help=(
+            "Host header value clients use to reach this server, e.g. "
+            "mcp.example.com or 192.0.2.1:8000. Repeatable. Enables Host-header "
+            "validation (DNS-rebinding protection) with this allowlist. Without "
+            "it, a non-loopback bind serves every request unvalidated."
+        ),
+    )
+    parser.add_argument(
+        "--allowed-origin",
+        action="append",
+        default=[],
+        metavar="ORIGIN",
+        help=(
+            "Origin header value to accept, e.g. https://mcp.example.com. "
+            "Repeatable, requires --allowed-host. Only needed for browser-based "
+            "clients: with --allowed-host alone, every request carrying an "
+            "Origin header is refused."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.allowed_origin and not args.allowed_host:
+        # allowed_origins is only consulted once DNS-rebinding protection is on,
+        # and protection is only switched on by --allowed-host.  Worse, turning
+        # it on with an empty allowed_hosts would reject every request, since no
+        # Host header can match an empty allowlist.  Fail at parse time rather
+        # than start a server that answers nothing.
+        parser.error("--allowed-origin requires --allowed-host")
+
+    return args
+
+
+def run(argv: Sequence[str] | None = None) -> None:
+    """Parse CLI arguments and start the MCP server.
+
+    Args:
+        argv: Argument list (defaults to ``sys.argv[1:]`` when ``None``).
+
+    Transport options
+    -----------------
+    ``--transport stdio`` (default)
+        Communicate over stdin/stdout — standard for Claude Desktop and similar.
+    ``--transport http``
+        Expose a streamable-HTTP endpoint.
+
+    HTTP-transport options
+    ----------------------
+    ``--host HOST``
+        Bind address for HTTP transport (default ``127.0.0.1``).  Binding to
+        a non-loopback address requires ``FABRIC_MCP_ALLOW_REMOTE=1``.
+    ``--port PORT``
+        TCP port for HTTP transport (default ``8000``).
+    ``--allowed-host HOST``
+        Repeatable.  Turns Host-header validation (DNS-rebinding protection) on
+        with this allowlist.  Omitted, the SDK's own behaviour applies
+        unchanged: automatic loopback-only protection on a loopback bind, none
+        at all on a non-loopback bind (a WARNING is logged in that case).
+    ``--allowed-origin ORIGIN``
+        Repeatable, requires ``--allowed-host``.  Adds to the Origin-header
+        allowlist.  With ``--allowed-host`` but no ``--allowed-origin`` every
+        request that carries an Origin header is refused, which is what a
+        non-browser MCP client wants; pass this only for a browser-based client.
+
+    Host and port are passed straight through to ``MCPServer.run()``, which is
+    overloaded per transport; the stdio overload takes no keyword arguments at
+    all.  ``transport_security`` is passed only when ``--allowed-host`` is
+    given, so the default call is byte-for-byte the one made before this option
+    existed.
+
+    The HTTP transport caps request bodies at 4 MiB and answers anything larger
+    with HTTP 413.  The default is kept: for this server the only realistic way
+    to reach it is a single ``execute_sql`` script or a procedure or view
+    definition of several megabytes.  ``max_request_body_size`` on ``run()`` is
+    the escape hatch if that ever becomes a real constraint.
+    """
+    setup_logging(_resolve_log_level())
+
+    logger = logging.getLogger(__name__)
+
+    args = _parse_args(argv)
 
     transport: Literal["stdio", "streamable-http"] = (
         "streamable-http" if args.transport == "http" else "stdio"
@@ -250,6 +418,10 @@ def run(argv: Sequence[str] | None = None) -> None:
             args.port,
         )
 
+    transport_security = (
+        _resolve_transport_security(args, logger) if transport == "streamable-http" else None
+    )
+
     # A2: print first-run notice to stderr before stdio transport starts so
     # the notice never pollutes the MCP stdio protocol stream.
     maybe_print_first_run_notice()
@@ -264,7 +436,17 @@ def run(argv: Sequence[str] | None = None) -> None:
         # `.settings.port` and assigning to them raises.  run() is overloaded
         # per transport and the stdio overload accepts no kwargs at all, hence
         # the two branches.
-        if transport == "streamable-http":
+        # transport_security is passed only when it was actually built, so the
+        # default HTTP call is identical to the one made before --allowed-host
+        # existed rather than an explicit `transport_security=None`.
+        if transport == "streamable-http" and transport_security is not None:
+            mcp.run(
+                transport="streamable-http",
+                host=args.host,
+                port=args.port,
+                transport_security=transport_security,
+            )
+        elif transport == "streamable-http":
             mcp.run(transport="streamable-http", host=args.host, port=args.port)
         else:
             mcp.run(transport="stdio")

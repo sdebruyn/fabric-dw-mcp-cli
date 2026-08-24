@@ -9,16 +9,22 @@ Coverage
 5. ``execute_sql`` max_rows row-cap and truncated flag
 6. ``run()`` HTTP host refusal when FABRIC_MCP_ALLOW_REMOTE is not set
 7. ``run()`` logs WARNING when FABRIC_MCP_ALLOW_REMOTE is set with non-loopback host
+8. ``--allowed-host`` / ``--allowed-origin`` DNS-rebinding protection (issue #1046),
+   including the pins that the default loopback path is untouched
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
+
+if TYPE_CHECKING:
+    from mcp.server.transport_security import TransportSecuritySettings
 
 from tests.unit._call import call_tool
 
@@ -1785,3 +1791,465 @@ class TestMixedNameGuidAllowlist:
                 resolved_id=None,
                 config_allowlist=[_CANONICAL_GUID, "finance"],
             )
+
+
+# ---------------------------------------------------------------------------
+# 10. DNS-rebinding protection (--allowed-host / --allowed-origin), issue #1046
+# ---------------------------------------------------------------------------
+#
+# The SDK enables Host and Origin validation automatically, but only when the
+# HTTP transport binds on a loopback address; a non-loopback bind leaves
+# `transport_security` unset and the middleware then fails open.  --allowed-host
+# supplies the allowlist explicitly.
+#
+# The first four tests below pin the half of this that must NOT have changed:
+# without --allowed-host, `run()` calls `MCPServer.run()` with exactly the
+# arguments it passed before the option existed, and says nothing new.
+
+
+class TestLoopbackPathUnchanged:
+    """Nothing about a default (no --allowed-host) invocation may change.
+
+    ``transport_security`` is absent from the call rather than passed as
+    ``None`` so these assertions are exact-match: an accidental
+    ``transport_security=None`` would fail them, even though it would behave
+    identically, which keeps the "unchanged" claim mechanical rather than
+    a judgement call.
+    """
+
+    def test_stdio_call_is_unchanged(self) -> None:
+        """The stdio branch still forwards nothing but the transport."""
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with patch.object(mcp, "run") as mock_run:
+            run([])
+
+        mock_run.assert_called_once_with(transport="stdio")
+
+    def test_stdio_ignores_allowed_host(self) -> None:
+        """--allowed-host is HTTP-only and must not leak into the stdio call.
+
+        The stdio ``run()`` overload accepts no keyword arguments at all, so
+        forwarding anything here would be a type error.
+        """
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with patch.object(mcp, "run") as mock_run:
+            run(["--allowed-host", "mcp.example.com"])
+
+        mock_run.assert_called_once_with(transport="stdio")
+
+    def test_loopback_http_call_is_unchanged(self) -> None:
+        """A loopback HTTP bind still gets host and port only.
+
+        With no ``transport_security`` argument the SDK applies its own
+        heuristic, which is what produced the automatic loopback allowlist
+        before this option existed.
+        """
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with patch.object(mcp, "run") as mock_run:
+            run(["--transport", "http", "--host", "127.0.0.1", "--port", "8123"])
+
+        mock_run.assert_called_once_with(transport="streamable-http", host="127.0.0.1", port=8123)
+        assert "transport_security" not in mock_run.call_args.kwargs
+
+    @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+    def test_loopback_http_emits_no_new_output(
+        self, host: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """No loopback bind may gain a warning about Host validation."""
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with patch.object(mcp, "run"):
+            run(["--transport", "http", "--host", host])
+
+        captured = capsys.readouterr()
+        assert "Host and Origin validation is OFF" not in captured.err
+        assert "allowed-host" not in captured.err
+
+
+class TestAllowedHostReachesRun:
+    """--allowed-host must build TransportSecuritySettings and pass them on."""
+
+    @staticmethod
+    def _settings_from(argv: list[str]) -> TransportSecuritySettings:
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with (
+            patch.dict(os.environ, {"FABRIC_MCP_ALLOW_REMOTE": "1"}),
+            patch.object(mcp, "run") as mock_run,
+        ):
+            run(argv)
+
+        settings = mock_run.call_args.kwargs["transport_security"]
+        assert settings is not None
+        return settings
+
+    def test_settings_reach_run_with_protection_on(self) -> None:
+        """The settings object arrives at run() with protection enabled."""
+        settings = self._settings_from(
+            ["--transport", "http", "--host", _REMOTE_HOST, "--allowed-host", "mcp.example.com"]
+        )
+
+        assert settings.enable_dns_rebinding_protection is True
+
+    def test_host_and_port_still_forwarded_alongside_settings(self) -> None:
+        """Adding transport_security must not displace the existing kwargs."""
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with (
+            patch.dict(os.environ, {"FABRIC_MCP_ALLOW_REMOTE": "1"}),
+            patch.object(mcp, "run") as mock_run,
+        ):
+            run(
+                [
+                    "--transport",
+                    "http",
+                    "--host",
+                    _REMOTE_HOST,
+                    "--port",
+                    "9123",
+                    "--allowed-host",
+                    "mcp.example.com",
+                ]
+            )
+
+        kwargs = mock_run.call_args.kwargs
+        assert kwargs["host"] == _REMOTE_HOST
+        assert kwargs["port"] == 9123
+
+    def test_bare_host_expands_to_both_matchable_forms(self) -> None:
+        """A value with no port must cover a Host header with and without one.
+
+        The SDK's ``host:*`` pattern only matches a header that actually
+        carries a port, and a bare pattern only matches one that does not, so
+        neither form alone covers both a direct client and a reverse proxy on
+        port 80 or 443.
+        """
+        settings = self._settings_from(
+            ["--transport", "http", "--host", _REMOTE_HOST, "--allowed-host", "mcp.example.com"]
+        )
+
+        assert settings.allowed_hosts == ["mcp.example.com", "mcp.example.com:*"]
+
+    def test_explicit_port_is_passed_through(self) -> None:
+        """A value the operator ported deliberately is not widened."""
+        settings = self._settings_from(
+            [
+                "--transport",
+                "http",
+                "--host",
+                _REMOTE_HOST,
+                "--allowed-host",
+                "mcp.example.com:8000",
+            ]
+        )
+
+        assert settings.allowed_hosts == ["mcp.example.com:8000"]
+
+    def test_explicit_port_wildcard_is_passed_through(self) -> None:
+        """An operator-written ``:*`` is left exactly as written."""
+        settings = self._settings_from(
+            ["--transport", "http", "--host", _REMOTE_HOST, "--allowed-host", "mcp.example.com:*"]
+        )
+
+        assert settings.allowed_hosts == ["mcp.example.com:*"]
+
+    def test_option_is_repeatable_and_deduplicated(self) -> None:
+        """Repeats accumulate in order; overlapping expansions collapse."""
+        settings = self._settings_from(
+            [
+                "--transport",
+                "http",
+                "--host",
+                _REMOTE_HOST,
+                "--allowed-host",
+                "a.example.com",
+                "--allowed-host",
+                "b.example.com",
+                "--allowed-host",
+                "a.example.com",
+            ]
+        )
+
+        assert settings.allowed_hosts == [
+            "a.example.com",
+            "a.example.com:*",
+            "b.example.com",
+            "b.example.com:*",
+        ]
+
+    @pytest.mark.parametrize("value", ["::1", "[::1]"])
+    def test_ipv6_is_normalised_to_the_bracketed_header_form(self, value: str) -> None:
+        """Both spellings produce the bracketed form a Host header carries."""
+        settings = self._settings_from(
+            ["--transport", "http", "--host", _REMOTE_HOST, "--allowed-host", value]
+        )
+
+        assert settings.allowed_hosts == ["[::1]", "[::1]:*"]
+
+    def test_allowed_host_on_loopback_is_honoured(self) -> None:
+        """Passing the option explicitly overrides the SDK's loopback allowlist.
+
+        The unchanged-loopback guarantee is about the default invocation.  An
+        operator who names an allowlist on a loopback bind, typically because a
+        same-host reverse proxy forwards a different Host header, gets what
+        they asked for instead of a silently ignored flag.
+        """
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with patch.object(mcp, "run") as mock_run:
+            run(["--transport", "http", "--allowed-host", "mcp.example.com"])
+
+        settings = mock_run.call_args.kwargs["transport_security"]
+        assert settings.allowed_hosts == ["mcp.example.com", "mcp.example.com:*"]
+
+
+class TestAllowedOrigin:
+    """Origin control is separate from host control and defaults to deny."""
+
+    def test_allowed_host_alone_leaves_origins_empty(self) -> None:
+        """--allowed-host must not imply an Origin allowlist.
+
+        An empty ``allowed_origins`` with protection on is the strict setting,
+        not an absent one: the SDK passes a request with no Origin header (a
+        non-browser MCP client) and refuses every request that carries one.
+        Deriving origins from hosts would instead newly admit browser traffic
+        from that origin, which is the exact traffic this protects against.
+        """
+        settings = TestAllowedHostReachesRun._settings_from(
+            ["--transport", "http", "--host", _REMOTE_HOST, "--allowed-host", "mcp.example.com"]
+        )
+
+        assert settings.allowed_origins == []
+
+    def test_origin_expands_like_a_host(self) -> None:
+        """The authority half of an origin gets the same port treatment."""
+        settings = TestAllowedHostReachesRun._settings_from(
+            [
+                "--transport",
+                "http",
+                "--host",
+                _REMOTE_HOST,
+                "--allowed-host",
+                "mcp.example.com",
+                "--allowed-origin",
+                "https://mcp.example.com",
+            ]
+        )
+
+        assert settings.allowed_origins == [
+            "https://mcp.example.com",
+            "https://mcp.example.com:*",
+        ]
+
+    def test_origin_with_explicit_port_is_passed_through(self) -> None:
+        """An origin the operator ported deliberately is not widened."""
+        settings = TestAllowedHostReachesRun._settings_from(
+            [
+                "--transport",
+                "http",
+                "--host",
+                _REMOTE_HOST,
+                "--allowed-host",
+                "mcp.example.com",
+                "--allowed-origin",
+                "https://mcp.example.com:8443",
+            ]
+        )
+
+        assert settings.allowed_origins == ["https://mcp.example.com:8443"]
+
+    def test_origin_without_allowed_host_is_rejected_at_parse_time(self) -> None:
+        """--allowed-origin alone would build a server that answers nothing.
+
+        Origins are only consulted once protection is on, and only
+        --allowed-host switches it on; turning it on with an empty host
+        allowlist would refuse every request instead.  argparse exits 2.
+        """
+        from fabric_dw.mcp import run  # noqa: PLC0415
+
+        with (
+            patch.dict(os.environ, {"FABRIC_MCP_ALLOW_REMOTE": "1"}),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            run(
+                [
+                    "--transport",
+                    "http",
+                    "--host",
+                    _REMOTE_HOST,
+                    "--allowed-origin",
+                    "https://mcp.example.com",
+                ]
+            )
+
+        assert exc_info.value.code == 2
+
+
+class TestRemoteWithoutAllowedHost:
+    """A non-loopback bind with no allowlist warns loudly but still starts."""
+
+    def test_server_still_starts(self) -> None:
+        """Refusing here would break operators who already run this way.
+
+        Remote binding is already behind FABRIC_MCP_ALLOW_REMOTE and its own
+        warning; this adds a second warning rather than a second hard stop.
+        """
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with (
+            patch.dict(os.environ, {"FABRIC_MCP_ALLOW_REMOTE": "1"}),
+            patch.object(mcp, "run") as mock_run,
+        ):
+            run(["--transport", "http", "--host", _REMOTE_HOST])
+
+        mock_run.assert_called_once()
+
+    def test_behaviour_is_unchanged_from_before_the_option(self) -> None:
+        """Without the option the call must stay exactly as it was.
+
+        This is the fail-open case the issue describes.  The warning is the
+        only thing this change adds to it.
+        """
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with (
+            patch.dict(os.environ, {"FABRIC_MCP_ALLOW_REMOTE": "1"}),
+            patch.object(mcp, "run") as mock_run,
+        ):
+            run(["--transport", "http", "--host", _REMOTE_HOST])
+
+        mock_run.assert_called_once_with(transport="streamable-http", host=_REMOTE_HOST, port=8000)
+
+    def test_warning_names_the_risk_and_the_fix(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """The warning has to be actionable, not just alarming."""
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with (
+            patch.dict(os.environ, {"FABRIC_MCP_ALLOW_REMOTE": "1"}),
+            patch.object(mcp, "run"),
+        ):
+            run(["--transport", "http", "--host", _REMOTE_HOST])
+
+        captured = capsys.readouterr()
+        assert "Host and Origin validation is OFF" in captured.err
+        assert "--allowed-host" in captured.err
+
+    def test_no_warning_once_the_option_is_passed(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Fixing the configuration must silence the warning."""
+        from fabric_dw.mcp import run  # noqa: PLC0415
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        with (
+            patch.dict(os.environ, {"FABRIC_MCP_ALLOW_REMOTE": "1"}),
+            patch.object(mcp, "run"),
+        ):
+            run(
+                [
+                    "--transport",
+                    "http",
+                    "--host",
+                    _REMOTE_HOST,
+                    "--allowed-host",
+                    "mcp.example.com",
+                ]
+            )
+
+        captured = capsys.readouterr()
+        assert "Host and Origin validation is OFF" not in captured.err
+
+    def test_remote_flag_guard_is_unaffected(self) -> None:
+        """--allowed-host does not become a way around FABRIC_MCP_ALLOW_REMOTE."""
+        from fabric_dw.mcp import run  # noqa: PLC0415
+
+        env_copy = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_ALLOW_REMOTE"}
+        with (
+            patch.dict(os.environ, env_copy, clear=True),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            run(
+                [
+                    "--transport",
+                    "http",
+                    "--host",
+                    _REMOTE_HOST,
+                    "--allowed-host",
+                    "mcp.example.com",
+                ]
+            )
+
+        assert exc_info.value.code == 1
+
+
+class TestSettingsActuallyValidate:
+    """End-to-end through the SDK middleware the settings are handed to.
+
+    The tests above assert the shape of the allowlist; these assert the shape
+    is the one the SDK's matcher actually accepts, which is the part that would
+    silently regress if the SDK changed its pattern rules.
+    """
+
+    @staticmethod
+    def _middleware(argv: list[str]):
+        from mcp.server.transport_security import TransportSecurityMiddleware  # noqa: PLC0415
+
+        return TransportSecurityMiddleware(TestAllowedHostReachesRun._settings_from(argv))
+
+    def test_named_host_is_accepted_with_and_without_a_port(self) -> None:
+        mw = self._middleware(
+            ["--transport", "http", "--host", _REMOTE_HOST, "--allowed-host", "mcp.example.com"]
+        )
+
+        assert mw._validate_host("mcp.example.com") is True
+        assert mw._validate_host("mcp.example.com:8000") is True
+
+    def test_rebinding_host_is_refused(self) -> None:
+        """The attacker-controlled name in the scenario from issue #1046."""
+        mw = self._middleware(
+            ["--transport", "http", "--host", _REMOTE_HOST, "--allowed-host", "mcp.example.com"]
+        )
+
+        assert mw._validate_host("evil.example.net") is False
+        assert mw._validate_host(_REMOTE_HOST + ":8000") is False
+        assert mw._validate_host(None) is False
+
+    def test_browser_origin_is_refused_by_default(self) -> None:
+        """With no --allowed-origin, an Origin-carrying request cannot pass."""
+        mw = self._middleware(
+            ["--transport", "http", "--host", _REMOTE_HOST, "--allowed-host", "mcp.example.com"]
+        )
+
+        assert mw._validate_origin("https://evil.example.net") is False
+        assert mw._validate_origin("https://mcp.example.com") is False
+        # A non-browser MCP client sends no Origin header and is unaffected.
+        assert mw._validate_origin(None) is True
+
+    def test_named_origin_is_accepted_once_allowed(self) -> None:
+        mw = self._middleware(
+            [
+                "--transport",
+                "http",
+                "--host",
+                _REMOTE_HOST,
+                "--allowed-host",
+                "mcp.example.com",
+                "--allowed-origin",
+                "https://mcp.example.com",
+            ]
+        )
+
+        assert mw._validate_origin("https://mcp.example.com") is True
+        assert mw._validate_origin("https://mcp.example.com:8443") is True
+        assert mw._validate_origin("https://evil.example.net") is False
