@@ -1068,7 +1068,9 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
     Args:
         timeout_ms: Maximum milliseconds to wait for the full flush+shutdown
             sequence.  Defaults to 8000 (8 s): ~6 s for force_flush (HTTP POST
-            round-trip) + ~2 s for provider cleanup.
+            round-trip) + ~2 s for provider cleanup.  With a span pipeline
+            installed the flush half is split between the two pipelines, 3 s
+            each; without one the logs pipeline keeps all 6 s.
     """
     global _sdk_shutdown  # noqa: PLW0603
 
@@ -1079,15 +1081,25 @@ def shutdown_telemetry(timeout_ms: int = 8000) -> None:
     _sdk_shutdown = True
 
     # Reserve ~2 s for the provider.shutdown() cleanup calls; the rest goes to
-    # force_flush, split between the two pipelines that have one.  At the
-    # default timeout_ms=8000 that is 3 s each — both well within the
-    # daemon-thread join cap (timeout_ms/1000 + 0.5 s).  Splitting matters: the
-    # logs branch runs first, and before the split a slow network there could
-    # eat the whole budget and leave the last batch of spans unflushed.  If
-    # timeout_ms were set below 4000 the floor kicks in, which still fits inside
-    # the join cap because the daemon thread is killed when the main thread
-    # exits — the cap is a worst-case wall-clock bound, not a guarantee.
-    flush_timeout_ms = max((timeout_ms - 2000) // 2, 1000)
+    # force_flush.  At the default timeout_ms=8000 that is 6 s, and it is split
+    # in two ONLY when a span pipeline exists to spend half of it: the logs
+    # branch runs first, so without a split a slow network there could eat the
+    # whole budget and leave the last batch of spans unflushed.
+    #
+    # The condition is load-bearing, not tidiness.  The logs pipeline is the
+    # critical one — it carries every command_invoked and app_exited — and the
+    # App Insights POST typically takes 2 to 4 s.  Splitting unconditionally
+    # would halve that budget on the CLI, which has no span pipeline to protect
+    # and is the surface most exposed to a short-lived process.
+    #
+    # If timeout_ms were set below 4000 the floor kicks in, which still fits
+    # inside the daemon-thread join cap (timeout_ms/1000 + 0.5 s) because the
+    # thread is killed when the main thread exits — the cap is a worst-case
+    # wall-clock bound, not a guarantee.
+    flush_budget_ms = max(timeout_ms - 2000, 2000)
+    flush_timeout_ms = (
+        max(flush_budget_ms // 2, 1000) if _span_pipeline_installed else flush_budget_ms
+    )
 
     def _do_shutdown() -> None:
         # Each pipeline is flushed then shut down independently so a failure in

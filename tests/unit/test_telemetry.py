@@ -4336,3 +4336,54 @@ async def test_concurrent_requests_do_not_cross_contaminate_the_client(
     for index, seen in enumerate(results):
         assert set(seen) == {f"client-{index}"}
     assert tel.current_mcp_client() is None
+
+
+@pytest.mark.parametrize(
+    ("span_pipeline_installed", "expected_logs_budget"),
+    [(False, 6000), (True, 3000)],
+)
+def test_the_logs_flush_budget_is_only_split_when_there_are_two_pipelines(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    span_pipeline_installed: bool,  # noqa: FBT001
+    expected_logs_budget: int,
+) -> None:
+    """The CLI must not pay for a span pipeline it does not have.
+
+    The logs pipeline is the critical one: it carries every ``command_invoked``
+    and ``app_exited``, and the App Insights POST typically takes 2 to 4 s.
+    Halving its budget unconditionally to make room for spans would be a pure
+    loss on the CLI surface, where no span pipeline exists and processes are
+    short-lived.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mod = _reload_telemetry()
+
+    fake_logger = object()
+    mod._sdk_initialised = True
+    mod._tracer = fake_logger
+    mod._otel_logger = fake_logger
+    mod._sdk_shutdown = False
+    mod._span_pipeline_installed = span_pipeline_installed
+
+    logs_budgets: list[int] = []
+    span_budgets: list[int] = []
+
+    fake_logs_mod: Any = types.ModuleType("opentelemetry._logs_fake")
+    fake_logs_mod.get_logger_provider = lambda: types.SimpleNamespace(
+        force_flush=lambda **kw: logs_budgets.append(kw["timeout_millis"]),
+        shutdown=lambda: None,
+    )
+    monkeypatch.setitem(sys.modules, "opentelemetry._logs", fake_logs_mod)
+    _install_fake_otel_trace(
+        monkeypatch,
+        types.SimpleNamespace(
+            force_flush=lambda **kw: span_budgets.append(kw["timeout_millis"]),
+            shutdown=lambda: None,
+        ),
+    )
+
+    mod.shutdown_telemetry()
+
+    assert logs_budgets == [expected_logs_budget]
+    assert span_budgets == ([3000] if span_pipeline_installed else [])

@@ -53,6 +53,16 @@ from tests.unit._mcp_session import HANDSHAKE_VERSION, exchange, handshake
 # the test.
 MARKER = "GEHEIM-wachtwoord-hunter2-klant-ACME"
 
+# The same marker in the two places a client puts bytes of its own choosing into
+# a span's *identity* rather than its payload: the trace id and the parent span
+# id of the `traceparent` it sends, which Azure exports as `ai.operation.id` and
+# `ai.operation.parentId`. A traceparent is fixed-width hex, so the marker is
+# carried 16 and 8 bytes at a time.
+MARKER_TRACE_BYTES = MARKER.encode()[:16]
+MARKER_PARENT_BYTES = MARKER.encode()[16:24]
+MARKER_TRACEPARENT = f"00-{MARKER_TRACE_BYTES.hex()}-{MARKER_PARENT_BYTES.hex()}-01"
+MARKER_TRACESTATE = f"leak={MARKER_TRACE_BYTES.decode()}"
+
 _CONNECTION_STRING = (
     "InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint=https://127.0.0.1:1/"
 )
@@ -160,13 +170,29 @@ async def test_client_supplied_values_never_reach_the_exporter(
     Each of those is a request that the server *rejects*, which is exactly why
     registering no prompts and no unknown tools is not protection: the error
     text is what carries the value.
+
+    The `traceparent` and `tracestate` carry the same marker through the span's
+    identity rather than its payload. They are here rather than only in the
+    dedicated tests below because this is the test that advertises itself as the
+    guarantee: reverting the identity rebuild has to fail *this* one.
     """
     captured = _install_test_tracer(monkeypatch)
 
     responses = await _exchange(
         [
             *_handshake(),
-            JSONRPCRequest(jsonrpc="2.0", id=2, method="prompts/get", params={"name": MARKER}),
+            JSONRPCRequest(
+                jsonrpc="2.0",
+                id=2,
+                method="prompts/get",
+                params={
+                    "name": MARKER,
+                    "_meta": {
+                        "traceparent": MARKER_TRACEPARENT,
+                        "tracestate": MARKER_TRACESTATE,
+                    },
+                },
+            ),
             JSONRPCRequest(
                 jsonrpc="2.0",
                 id=3,
@@ -183,7 +209,15 @@ async def test_client_supplied_values_never_reach_the_exporter(
     assert MARKER in str(responses), "the marker never reached the server"
     assert captured.spans, "no spans were exported at all"
 
-    assert MARKER not in _blob(captured.spans)
+    blob = _blob(captured.spans)
+    assert MARKER not in blob
+    # As sent, as hex, and as the bytes the hex decodes back to.
+    assert MARKER_TRACEPARENT not in blob
+    assert MARKER_TRACESTATE not in blob
+    assert MARKER_TRACE_BYTES.hex() not in blob
+    assert MARKER_PARENT_BYTES.hex() not in blob
+    assert MARKER_TRACE_BYTES.decode() not in blob
+    assert MARKER_PARENT_BYTES.decode() not in blob
 
 
 async def test_the_useful_fields_survive_sanitising(monkeypatch: pytest.MonkeyPatch) -> None:
