@@ -198,7 +198,7 @@ The equivalent `.mcp.json` snippet (project scope, `default` auth):
 }
 ```
 
-After adding, verify with `/mcp` inside a Claude Code session. You should see 27 tools including `list_workspaces`, `get_warehouse`, `kill_session`, and `clear_cache`.
+After adding, verify with `/mcp` inside a Claude Code session. You should see over 100 tools including `list_workspaces`, `get_warehouse`, `kill_session`, and `clear_cache`.
 
 ### Cursor
 
@@ -482,11 +482,15 @@ Request bodies are capped at 4 MiB; anything larger is rejected with HTTP 413. I
 
 ### Protocol versions
 
-The server speaks MCP revision `2026-07-28` and continues to serve `2025-11-25` clients from the same process, so no client change is needed. Two protocol-level notes for anyone driving the server directly: `ping` is no longer part of the protocol, and unknown methods return `-32601` (method not found) rather than `-32602`.
+The server speaks MCP revision `2026-07-28` and continues to serve `2025-11-25` clients from the same process, so no client change is needed. Two protocol-level notes for anyone driving the server directly.
+
+`ping` was removed in revision `2026-07-28`, but only for clients that negotiate that revision: a `2025-11-25` client can still call it and this server still answers. A `2026-07-28` client gets `-32601` instead. Note that the SDK's own client emits a deprecation warning from `send_ping()` in both cases, so the warning alone does not tell you whether the call worked.
+
+Unknown methods return `-32601` (method not found) under both revisions.
 
 ### Verify the MCP server
 
-After configuring your client, restart it and ask the assistant to list its available tools. You should see entries like `list_workspaces`, `get_warehouse`, `kill_session`, `clear_cache`, and 23 others (27 tools total).
+After configuring your client, restart it and ask the assistant to list its available tools. You should see over 100 entries, including `list_workspaces`, `get_warehouse`, `kill_session`, and `clear_cache`.
 
 ### MCP troubleshooting
 
