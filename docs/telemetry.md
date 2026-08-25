@@ -25,7 +25,7 @@ Every telemetry event includes a shared envelope of standard fields:
 |---|---|---|
 | `app_started` | Once per process | - |
 | `mcp_server_started` | When the MCP server boots | - |
-| `mcp_client_connected` | First time each distinct MCP client identifies itself | `mcp_client` |
+| `mcp_client_connected` | First time each distinct MCP client identifies itself, for the first 8 distinct names a server process sees. After that they all count as one client, `other`. | `mcp_client` |
 | `app_exited` | On process exit | `duration_ms`, `exit_status` (ok / user_error / api_error), `error_category` |
 
 > `auth_mode` is omitted from the three start events: they fire before any sign-in, so there is nothing accurate to report yet. It appears on `command_invoked` and `app_exited`.
@@ -79,7 +79,7 @@ Running the MCP server also records one entry per protocol message it handles, w
 | outcome | Whether it succeeded, and if not, the error code or the name of the error type. |
 | protocol version | The MCP revision the client and the server agreed on, e.g. `2025-06-18`. |
 
-Anything you choose the content of is removed from these entries first: prompt and tool names, error messages, stack traces, request IDs that are not plain numbers, and the trace IDs a client can put in a request.
+Anything you choose the content of is removed from these entries first: prompt and tool names, error messages, stack traces, and request IDs that are not plain numbers. A trace ID a client puts in a request is replaced by a hash of it, keyed with a random value this process never stores or sends, so entries from one trace still group together but the exported ID is not one you chose or can recover.
 
 ### What is deliberately NOT collected
 
@@ -89,7 +89,8 @@ Anything you choose the content of is removed from these entries first: prompt a
 - File paths or environment variable values
 - Any other personally-identifiable information
 - Names you put in an MCP request: prompt names, and the tool name on a call for a tool that does not exist
-- Error messages, stack traces, and trace IDs taken off the wire
+- Error messages and stack traces
+- Trace IDs taken off the wire, which are replaced by a keyed hash as described above
 - Metrics of any kind
 
 ## Where telemetry data goes

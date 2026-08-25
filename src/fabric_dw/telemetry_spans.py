@@ -76,7 +76,12 @@ from opentelemetry import trace as _trace
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
-from opentelemetry.trace import DEFAULT_TRACE_STATE, SpanContext, TraceFlags
+from opentelemetry.trace import (
+    DEFAULT_TRACE_STATE,
+    SpanContext,
+    TraceFlags,
+)
+from opentelemetry.trace import ProxyTracerProvider as _ProxyTracerProvider
 from opentelemetry.trace.status import Status
 
 if TYPE_CHECKING:
@@ -128,6 +133,21 @@ _MAX_REQUEST_ID_DIGITS = 19
 #: Longest ``error.type`` recorded.  Server-side exception class names are far
 #: shorter; the cap exists so the invariant does not rest on that.
 _MAX_ERROR_TYPE_LEN = 64
+
+#: Longest ``rpc.response.status_code`` recorded, in digits: the int32 range.
+#: A JSON-RPC error code is a small integer (the spec reserves -32768..-32000
+#: and implementations add their own nearby), but ``ErrorData.code`` is a plain
+#: Python ``int``, so nothing upstream bounds it.  This used to borrow
+#: :data:`_MAX_ERROR_TYPE_LEN`, which allowed a 64-digit code: three times
+#: looser than the 19 digits :data:`_MAX_REQUEST_ID_DIGITS` allows for a request
+#: id, under exactly the same argument that an unbounded numeric field is a
+#: channel (#1052).
+_MAX_STATUS_CODE_DIGITS = 10
+
+#: The one qualname part that is not a Python identifier.  ``type(e).__qualname__``
+#: for an exception class defined inside a function is ``outer.<locals>.Inner``,
+#: which the identifier test alone would reject (#1052).
+_QUALNAME_LOCALS = "<locals>"
 
 # Per-process key for remapping trace ids.  The MCP SDK parents every inbound
 # span on trace context lifted off the wire, so the trace id and the parent span
@@ -240,13 +260,33 @@ def _safe_request_id(value: object) -> str | None:
 
 
 def _safe_status_code(value: object) -> str | None:
-    """Return *value* when it is a JSON-RPC error code, else ``None``."""
+    """Return *value* when it is a JSON-RPC error code, else ``None``.
+
+    Bounded at :data:`_MAX_STATUS_CODE_DIGITS`, which is what a JSON-RPC code
+    can plausibly be, rather than at the ``error.type`` length: digits alone are
+    still a channel, for the same reason they are on ``jsonrpc.request.id``.
+    """
     if not isinstance(value, str):
         return None
     digits = value.removeprefix("-")
-    if digits.isascii() and digits.isdigit() and len(digits) <= _MAX_ERROR_TYPE_LEN:
+    if digits.isascii() and digits.isdigit() and len(digits) <= _MAX_STATUS_CODE_DIGITS:
         return value
     return None
+
+
+def _is_qualname(value: str) -> bool:
+    """Return whether *value* has the shape of a Python qualified name.
+
+    ``<locals>`` is admitted as a whole part because it is what CPython puts in
+    the qualname of a class defined inside a function, and an exception class
+    defined in a function is ordinary code.
+
+    Non-ASCII is admitted too.  ``str.isidentifier`` is the actual language rule
+    and it is Unicode-aware, so ``isascii()`` on top of it rejected class names
+    written in any other script while adding nothing: the shape test is what
+    bounds the value, and the length cap bounds it in characters either way.
+    """
+    return all(part == _QUALNAME_LOCALS or part.isidentifier() for part in value.split("."))
 
 
 def _safe_error_type(value: object) -> str | None:
@@ -258,13 +298,13 @@ def _safe_error_type(value: object) -> str | None:
     that is a property of the current SDK rather than of this code, and the
     server-to-client direction (``sampling/createMessage`` and friends) would
     put a peer's error on a span.  So the invariant is checked rather than
-    assumed: a numeric code, the known literal, or a dotted Python identifier.
+    assumed: a numeric code, the known literal, or a Python qualified name.
     """
     if not isinstance(value, str) or not value or len(value) > _MAX_ERROR_TYPE_LEN:
         return None
     if value == _TOOL_ERROR or _safe_status_code(value) is not None:
         return value
-    if value.isascii() and all(part.isidentifier() for part in value.split(".")):
+    if _is_qualname(value):
         return value
     return None
 
@@ -300,6 +340,62 @@ def _sanitise_attributes(attributes: object) -> dict[str, Any]:
         out["rpc.response.status_code"] = status_code
 
     return out
+
+
+def _safe_parent(parent: object, trace_id: int, safe_trace_id: int) -> SpanContext | None:
+    """Return a parent context safe to export, or ``None`` to cut the link.
+
+    Azure writes the parent span id straight into ``ai.operation.parentId``, and
+    for an inbound message the parent is the W3C context the client put in the
+    request's ``_meta``: a value the client chooses, on a span it can produce at
+    will.  That link is cut.
+
+    A **locally** minted parent is a different thing and is kept, remapped onto
+    the same trace id its child now carries.  It is what makes a server-initiated
+    ``SpanKind.CLIENT`` span nest under the inbound server span that caused it in
+    the App Insights transaction view.  Nothing in this server sends requests to a
+    client today, so this is dormant until an elicitation or sampling call is
+    added, at which point the nesting works rather than needing to be discovered.
+
+    Everything that is not provably local fails closed, because getting this
+    wrong exports a client-chosen span id:
+
+    - ``is_remote`` must be exactly ``False``.  The strict identity test is
+      deliberate: a missing attribute, ``None``, or any other object is treated
+      as remote.  ``is_remote`` is written by OpenTelemetry's propagator when it
+      extracts context off the wire, never by the value the client sent, so it
+      is the real discriminator, but this code should not be the thing that
+      trusts it loosely.
+    - The parent must be a genuine :class:`SpanContext` with a valid, non-zero
+      trace id and span id.
+    - The parent must sit in the same trace as its child.  A local parent always
+      does, by construction; a mismatch means something built this span in a way
+      this code does not understand, and the fail-safe answer is no link.
+
+    Args:
+        parent: ``ReadableSpan.parent``, in whatever shape it arrived.
+        trace_id: The child's original (pre-remap) trace id.
+        safe_trace_id: The remapped trace id the child will be exported with.
+
+    Returns:
+        A :class:`SpanContext` carrying the local parent's span id under the
+        remapped trace id, or ``None``.
+    """
+    if not isinstance(parent, SpanContext):
+        return None
+    # `is not False` rather than `not ...`: only the actual boolean passes, so a
+    # context type that reports something else here is treated as remote.
+    if parent.is_remote is not False:
+        return None
+    if not parent.is_valid or parent.trace_id != trace_id:
+        return None
+    return SpanContext(
+        trace_id=safe_trace_id,
+        span_id=parent.span_id,
+        is_remote=False,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+        trace_state=DEFAULT_TRACE_STATE,
+    )
 
 
 def sanitise_span(span: ReadableSpan) -> ReadableSpan | None:
@@ -341,10 +437,11 @@ def sanitise_span(span: ReadableSpan) -> ReadableSpan | None:
     # the first two as `ai.operation.id` and `ai.operation.parentId`.  Only the
     # span id is minted locally, so only the span id is kept as-is; the trace id
     # is remapped so spans of one trace stay grouped without the client choosing
-    # the value, the parent link is cut, and the tracestate is dropped rather
-    # than relying on the exporter continuing not to serialise it.
+    # the value, and the tracestate is dropped rather than relying on the
+    # exporter continuing not to serialise it.
+    safe_trace_id = _remap_trace_id(context.trace_id)
     safe_context = SpanContext(
-        trace_id=_remap_trace_id(context.trace_id),
+        trace_id=safe_trace_id,
         span_id=context.span_id,
         is_remote=False,
         trace_flags=TraceFlags(TraceFlags.SAMPLED),
@@ -358,7 +455,7 @@ def sanitise_span(span: ReadableSpan) -> ReadableSpan | None:
         # `requests` table) from a server-initiated one (CLIENT, `dependencies`).
         name=method,
         context=safe_context,
-        parent=None,
+        parent=_safe_parent(span.parent, context.trace_id, safe_trace_id),
         resource=span.resource,
         attributes=attributes,
         # Dropped: the SDK's `record_exception` branch puts the exception
@@ -420,13 +517,26 @@ def install_mcp_span_pipeline(connection_string: str, resource: object | None) -
     the CLI produces no protocol spans, so there is nothing there for this
     pipeline to carry and no reason for it to claim the process-wide provider.
 
-    A host application that already installed a ``TracerProvider`` keeps it.
-    OpenTelemetry refuses to override an existing global provider, so this
-    function claims the global **last**, after the provider is fully built, and
-    checks whether the claim took effect.  Order matters: claiming first and
-    then failing to build the exporter would leave an empty provider installed
-    permanently, recording every span in the process into nothing and locking
-    the host out for good, while still reporting failure to the caller.
+    A host application that already installed a ``TracerProvider`` keeps it,
+    and this function stands down without side effects.  Two checks, in this
+    order, and both are needed:
+
+    - Before building anything, the current global is inspected and this
+      function returns early unless it is still the placeholder
+      ``ProxyTracerProvider``.  Without it, standing down was not free.
+      Measured in an embedded host: a real ``AzureMonitorTraceExporter`` was
+      constructed and thrown away, the process-wide
+      ``APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED`` was set on
+      the way there, and the host got an ``Overriding of current TracerProvider
+      is not allowed`` warning in its logs, all for a pipeline that never ran
+      (#1052).
+    - The claim itself still happens **last**, after the provider is fully
+      built, and is verified afterwards.  That is what covers a host that
+      claims the global between the check and the claim, and the ordering
+      matters on its own: claiming first and then failing to build the exporter
+      would leave an empty provider installed permanently, recording every span
+      in the process into nothing and locking the host out for good, while
+      still reporting failure to the caller.
 
     Args:
         connection_string: The Application Insights connection string.
@@ -445,7 +555,15 @@ def install_mcp_span_pipeline(connection_string: str, resource: object | None) -
         # A host that configured OTEL_PYTHON_TRACER_PROVIDER rather than calling
         # set_tracer_provider() has not claimed the global yet; this read is what
         # makes OpenTelemetry load and install it, so the check below sees it.
-        _trace.get_tracer_provider()
+        #
+        # ProxyTracerProvider is the placeholder OpenTelemetry hands out while no
+        # real provider has been set, so anything else means a host owns the
+        # global and set_tracer_provider() would be refused.  Returning here is
+        # what keeps standing down free of side effects: everything below builds
+        # a live Azure exporter.
+        if not isinstance(_trace.get_tracer_provider(), _ProxyTracerProvider):
+            _log.debug("A TracerProvider was already installed; leaving it alone")
+            return False
 
         # The Azure trace exporter appends an `_OTELRESOURCE_` MetricData
         # envelope to every non-empty export unless this is set, so switching

@@ -218,6 +218,11 @@ def _reset_telemetry_module_globals(
        - ``_sdk_initialised``, ``_tracer``, ``_otel_logger`` → initial values
          (prevents a test that calls ``_get_tracer()`` from leaving a live logger
          object that causes subsequent tests to skip the SDK init path entirely)
+       - ``_span_pipeline_installed`` → ``False``
+         (both ``flush_telemetry`` and ``shutdown_telemetry`` branch on it to
+         decide whether to tear down the global ``TracerProvider``; a leftover
+         ``True`` sends a later test down the span-pipeline teardown path for a
+         provider it never installed)
 
     All resets are applied *before* and *after* each test (yield fixture) so state
     never leaks from a previous test even if it raised.
@@ -295,6 +300,14 @@ def _reset_telemetry_module_globals(
             ns["_sdk_initialised"] = False
             ns["_tracer"] = None
             ns["_otel_logger"] = None
+            # Asserted by name because this one is newer than its neighbours and
+            # both teardown paths branch on it: a rename in telemetry.py should
+            # fail here loudly rather than leave a silent no-op behind.
+            assert "_span_pipeline_installed" in ns, (
+                "_span_pipeline_installed not found in fabric_dw.telemetry — "
+                "update both telemetry.py and tests/conftest.py"
+            )
+            ns["_span_pipeline_installed"] = False
 
     _reset()
     yield

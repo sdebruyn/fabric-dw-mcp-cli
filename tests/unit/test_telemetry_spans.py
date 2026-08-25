@@ -17,6 +17,7 @@ execution order.
 from __future__ import annotations
 
 import contextlib
+import os
 import sys
 from types import SimpleNamespace
 from typing import Any
@@ -34,7 +35,13 @@ from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from opentelemetry.sdk.util.instrumentation import InstrumentationScope
-from opentelemetry.trace import SpanContext, SpanKind, StatusCode, TraceState
+from opentelemetry.trace import (
+    ProxyTracerProvider,
+    SpanContext,
+    SpanKind,
+    StatusCode,
+    TraceState,
+)
 from opentelemetry.trace.status import Status
 
 from fabric_dw import telemetry_spans
@@ -554,6 +561,11 @@ def _patch_global_provider_hooks(
     and the ``sys.modules`` entry as two different objects for the rest of the
     session.  Patching the wrong one of those two patches nothing at all and
     lets the real function run.
+
+    ``getter`` must return a :class:`ProxyTracerProvider` for the "nobody has
+    claimed the global yet" state, which is the object OpenTelemetry itself
+    hands out then, because the install path checks for exactly that before it
+    builds anything.
     """
     monkeypatch.setattr(
         telemetry_spans,
@@ -562,27 +574,57 @@ def _patch_global_provider_hooks(
     )
 
 
-def test_a_host_installed_tracer_provider_keeps_winning(
+def test_a_host_installed_tracer_provider_costs_nothing_to_lose_to(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An application that already set a provider must keep it, and its exporter.
+    """An application that already set a provider must keep it, at no cost to it.
 
-    OpenTelemetry refuses to override an existing global provider, so the
-    ``set_tracer_provider`` call below is silently ignored, exactly as it would
-    be in a host process.  The pipeline has to notice and stand down instead of
-    building an exporter nothing will ever feed.
+    OpenTelemetry refuses to override an existing global provider, so this
+    package has to stand down.  Standing down has to be free: building the real
+    Azure exporter first and discarding it set a process-wide environment
+    variable, opened the exporter's local storage, and put an ``Overriding of
+    current TracerProvider is not allowed`` warning in the host's logs, all for a
+    pipeline that never ran (#1052).
     """
     host_provider = TracerProvider()
+    claimed: list[object] = []
+    _patch_global_provider_hooks(monkeypatch, setter=claimed.append, getter=lambda: host_provider)
+
+    def _no_exporter_please(**_kw: Any) -> Any:
+        pytest.fail("an exporter was built for a pipeline that will never run")
+
+    monkeypatch.setattr(telemetry_spans, "_AzureMonitorTraceExporter", _no_exporter_please)
+    monkeypatch.delenv("APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED", raising=False)
+
+    assert install_mcp_span_pipeline(_CONNECTION_STRING, None) is False
+    assert claimed == [], "set_tracer_provider must not be called at all"
+    # Set on the way to building the exporter, so it is a proxy for having got
+    # that far, and it is process-wide state a host did not ask for.
+    assert "APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED" not in os.environ
+
+
+def test_a_host_claiming_the_global_late_still_gets_the_exporter_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pre-check is not the whole guard; the post-claim check is still needed.
+
+    A host that claims the global between the check and the claim gets past the
+    early return, so the exporter is built after all.  That one has to be shut
+    down rather than left running with its batch worker and its storage folder.
+    """
+    host_provider = TracerProvider()
+    providers: list[object] = [ProxyTracerProvider(), host_provider]
     _patch_global_provider_hooks(
-        monkeypatch, setter=lambda _provider: None, getter=lambda: host_provider
+        monkeypatch,
+        setter=lambda _provider: None,
+        # First read is the pre-check, second is the verification after the claim.
+        getter=lambda: providers.pop(0) if providers else host_provider,
     )
 
     captured = _CapturingExporter()
     monkeypatch.setattr(telemetry_spans, "_AzureMonitorTraceExporter", lambda **_kw: captured)
 
     assert install_mcp_span_pipeline(_CONNECTION_STRING, None) is False
-    # The exporter is built before the global is claimed, so losing the race
-    # means there is a batch worker and an exporter to close again.
     assert captured.shutdown_calls == 1, "the provider we built and lost must be shut down"
 
 
@@ -591,10 +633,11 @@ def test_installing_the_pipeline_wires_the_sanitiser_in_front_of_azure(
 ) -> None:
     """The happy path: our provider wins, and the Azure exporter sits behind the sanitiser."""
     installed: dict[str, Any] = {}
+    proxy = ProxyTracerProvider()
     _patch_global_provider_hooks(
         monkeypatch,
         setter=lambda provider: installed.setdefault("p", provider),
-        getter=lambda: installed.get("p"),
+        getter=lambda: installed.get("p", proxy),
     )
 
     captured = _CapturingExporter()
@@ -692,7 +735,7 @@ def test_installing_the_pipeline_never_raises(monkeypatch: pytest.MonkeyPatch) -
     def _explode(_provider: Any) -> None:
         raise RuntimeError("boom")
 
-    _patch_global_provider_hooks(monkeypatch, setter=_explode, getter=lambda: None)
+    _patch_global_provider_hooks(monkeypatch, setter=_explode, getter=ProxyTracerProvider)
 
     assert install_mcp_span_pipeline(_CONNECTION_STRING, None) is False
 
@@ -740,7 +783,18 @@ def test_a_request_id_is_capped_at_the_int64_range(request_id: str, kept: bool) 
         ("-32601", True),
         ("ValueError", True),
         ("mcp.shared.exceptions.MCPError", True),
+        # A real `type(e).__qualname__` for an exception class defined inside a
+        # function, which the identifier test alone rejected (#1052).
+        ("handle.<locals>.RetryableError", True),
+        # `str.isidentifier` is Unicode-aware, and a class name in another script
+        # is ordinary code, not a smuggled string.
+        ("Ongeldigeİnvoer", True),
+        ("Ошибка", True),
         ("Unknown prompt: " + MARKER, False),
+        ("<locals>", True),
+        ("a.<locals", False),
+        ("locals>.Boom", False),
+        ("a..b", False),
         ("a" * 65, False),
         ("", False),
     ],
@@ -759,6 +813,174 @@ def test_error_type_is_checked_rather_than_assumed_safe(value: str, kept: bool) 
 
     assert sanitised is not None
     assert ("error.type" in (sanitised.attributes or {})) is kept
+
+
+@pytest.mark.parametrize(
+    ("value", "kept"),
+    [
+        ("-32601", True),
+        ("0", True),
+        ("9" * 10, True),
+        ("9" * 11, False),
+        ("-" + "9" * 11, False),
+        ("9" * 64, False),
+        ("tool_error", False),
+    ],
+)
+def test_a_status_code_is_capped_at_what_a_jsonrpc_code_can_be(value: str, kept: bool) -> None:  # noqa: FBT001
+    """A JSON-RPC error code is a small integer, so the field is bounded like one.
+
+    It used to borrow the 64-character ``error.type`` cap, which kept a 64-digit
+    value: three times looser than the 19 digits a request id gets, under exactly
+    the argument that an unbounded numeric field is a channel (#1052).
+    """
+    span = _make_span(
+        MCP_SDK_SCOPE,
+        "ping",
+        {"mcp.method.name": "ping", "rpc.response.status_code": value},
+    )
+    sanitised = sanitise_span(span)
+
+    assert sanitised is not None
+    assert ("rpc.response.status_code" in (sanitised.attributes or {})) is kept
+
+
+def test_an_overlong_numeric_error_type_is_dropped_too() -> None:
+    """``error.type`` accepts a numeric code through the same bounded check.
+
+    So tightening the status-code cap has to tighten this too, rather than
+    letting a 30-digit "code" fall through to some other branch and survive.
+    """
+    span = _make_span(
+        MCP_SDK_SCOPE,
+        "ping",
+        {"mcp.method.name": "ping", "error.type": "9" * 30},
+    )
+    sanitised = sanitise_span(span)
+
+    assert sanitised is not None
+    assert "error.type" not in (sanitised.attributes or {})
+
+
+# ---------------------------------------------------------------------------
+# The parent link
+# ---------------------------------------------------------------------------
+
+
+def _span_with_parent(
+    parent: SpanContext | None, *, kind: SpanKind = SpanKind.SERVER
+) -> ReadableSpan:
+    """Return an MCP-scoped span whose parent is *parent*, in the same trace."""
+    trace_id = parent.trace_id if parent is not None else 0x0BADC0DE0BADC0DE0BADC0DE0BADC0DE
+    return ReadableSpan(
+        name="tools/call",
+        context=SpanContext(trace_id=trace_id, span_id=0xAAAA, is_remote=False),
+        parent=parent,
+        kind=kind,
+        instrumentation_scope=InstrumentationScope(MCP_SDK_SCOPE),
+        attributes={"mcp.method.name": "tools/call"},
+        start_time=1,
+        end_time=2,
+    )
+
+
+def test_a_remote_parent_is_cut() -> None:
+    """The client chooses the parent span id of an inbound span, so it is dropped.
+
+    Azure writes it straight into ``ai.operation.parentId``.
+    """
+    remote = SpanContext(
+        trace_id=int(MARKER_TRACE_BYTES.hex(), 16),
+        span_id=int(MARKER_PARENT_BYTES.hex(), 16),
+        is_remote=True,
+    )
+    sanitised = sanitise_span(_span_with_parent(remote))
+
+    assert sanitised is not None
+    assert sanitised.parent is None
+
+
+def test_a_local_parent_survives_so_client_spans_still_nest() -> None:
+    """Cutting the remote parent must not cut the locally minted one as well.
+
+    The dispatcher's ``SpanKind.CLIENT`` span is parented on the inbound server
+    span this process created, and that link is what makes it nest in the App
+    Insights transaction view.  Nothing here sends requests to a client yet, so
+    the regression was invisible until an elicitation or sampling call was added
+    (#1052).
+    """
+    local_trace_id = 0x0BADC0DE0BADC0DE0BADC0DE0BADC0DE
+    local_parent = SpanContext(trace_id=local_trace_id, span_id=0xBBBB, is_remote=False)
+    span = _span_with_parent(local_parent, kind=SpanKind.CLIENT)
+
+    sanitised = sanitise_span(span)
+
+    assert sanitised is not None
+    assert sanitised.parent is not None
+    assert sanitised.parent.span_id == 0xBBBB, "the local parent's span id is minted here"
+    # The child's own trace id is remapped, so the parent has to be remapped with
+    # it or the link points at a trace that was never exported.
+    assert sanitised.parent.trace_id == sanitised.context.trace_id
+    assert sanitised.parent.trace_id != local_trace_id
+    assert sanitised.parent.is_remote is False
+    assert sanitised.parent.trace_state == TraceState()
+
+
+@pytest.mark.parametrize(
+    "parent",
+    [
+        pytest.param(None, id="no-parent"),
+        pytest.param(
+            SpanContext(trace_id=0, span_id=0xBBBB, is_remote=False), id="invalid-trace-id"
+        ),
+        pytest.param(
+            SpanContext(trace_id=0x0BADC0DE0BADC0DE0BADC0DE0BADC0DE, span_id=0, is_remote=False),
+            id="invalid-span-id",
+        ),
+        pytest.param(
+            SimpleNamespace(trace_id=1, span_id=2, is_remote=False, is_valid=True),
+            id="not-a-span-context",
+        ),
+        pytest.param(
+            SimpleNamespace(trace_id=1, span_id=2, is_valid=True), id="no-is-remote-at-all"
+        ),
+    ],
+)
+def test_only_a_provably_local_parent_is_kept(parent: Any) -> None:
+    """Anything not provably local fails closed, because the cost of being wrong
+    is exporting a span id the client chose."""
+    sanitised = sanitise_span(_span_with_parent(parent))
+
+    assert sanitised is not None
+    assert sanitised.parent is None
+
+
+def test_a_parent_from_another_trace_is_cut() -> None:
+    """A local parent always shares its child's trace id.
+
+    One that does not means this span was built in a way this code does not
+    understand, and the safe answer is no link rather than a remapped span id
+    hung off the child's trace.
+    """
+    stranger = SpanContext(
+        trace_id=0x11111111111111111111111111111111, span_id=0xBBBB, is_remote=False
+    )
+    span = ReadableSpan(
+        name="tools/call",
+        context=SpanContext(
+            trace_id=0x22222222222222222222222222222222, span_id=0xAAAA, is_remote=False
+        ),
+        parent=stranger,
+        instrumentation_scope=InstrumentationScope(MCP_SDK_SCOPE),
+        attributes={"mcp.method.name": "tools/call"},
+        start_time=1,
+        end_time=2,
+    )
+
+    sanitised = sanitise_span(span)
+
+    assert sanitised is not None
+    assert sanitised.parent is None
 
 
 # ---------------------------------------------------------------------------
@@ -880,8 +1102,9 @@ def test_a_failed_exporter_build_never_claims_the_global(
     out for good, and the caller told the install had failed.
     """
     claimed: list[object] = []
+    proxy = ProxyTracerProvider()
     _patch_global_provider_hooks(
-        monkeypatch, setter=claimed.append, getter=lambda: claimed[-1] if claimed else None
+        monkeypatch, setter=claimed.append, getter=lambda: claimed[-1] if claimed else proxy
     )
 
     def _explode(**_kw: Any) -> Any:
