@@ -374,11 +374,6 @@ def get_sql_token_struct(mode: CredentialMode = CredentialMode.DEFAULT) -> bytes
 
 def _make_default_credential() -> AsyncTokenCredential:
     if _is_github_actions_oidc():
-        # Auth mode for the OIDC path is NOT recorded via
-        # record_auth_mode_from_default_credential (ClientAssertionCredential
-        # has no _successful_credential attribute and the function early-returns).
-        # Instead, _detect_auth_mode() picks up the GitHub Actions env-var
-        # signals and returns "github_oidc" automatically.
         return _make_github_oidc_credential()
 
     interactive_kwargs = _resolve_interactive_kwargs()

@@ -16,6 +16,12 @@ import re
 # snake_case naming convention enforced for every MCP tool name.
 SNAKE_CASE_RE: re.Pattern[str] = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)*$")
 
+# Minimum tool count, guarding against a catastrophic registration drop.
+# Deliberately well below the real count (121 at the time of writing) so that
+# adding a tool never requires a bump, while a whole domain going missing is
+# still caught.  The exact number is never asserted; only this floor is.
+MIN_TOOL_COUNT = 90
+
 
 def collect_live_mcp_tool_names() -> frozenset[str]:
     """Register all MCP tools against a fresh MCPServer; return tool names.

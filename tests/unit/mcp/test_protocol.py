@@ -1,11 +1,15 @@
 """Raw JSON-RPC regression tests for the production server's protocol handling.
 
 ``test_contract.py`` drives the server through :class:`mcp.client.Client`, which
-is the right tool for everything a well-behaved client can produce.  This file
-covers what it cannot: a method the protocol does not define, and the
-2026-07-28 per-request ``_meta`` envelope built by hand rather than by the
-client.  Both go through ``tests/unit/_mcp_session.py``, which speaks the wire
-format directly.
+is the right tool for everything a well-behaved client can produce, and its
+``client_mode`` fixture already covers the handshake era with full framing.  Two
+things are left over, and both live here because ``tests/unit/_mcp_session.py``
+speaks the wire format directly:
+
+- The 2026-07-28 per-request ``_meta`` envelope on the wire.  ``Client``'s
+  ``auto`` mode reaches the same handler but skips framing, so the envelope
+  itself is only ever built by hand, here.
+- A method the protocol does not define.  A client cannot send one.
 
 What these pin down is that the SDK's own request pipeline -- handler lookup,
 its built-in middleware chain, the error envelope -- serves this server's
@@ -23,13 +27,12 @@ import pytest
 from mcp_types import JSONRPCRequest
 
 from tests.unit._mcp_session import exchange, handshake, modern_request
+from tests.unit._tool_introspection import MIN_TOOL_COUNT
 
 # JSON-RPC's own code for "no such method", per the base spec the MCP protocol
 # inherits.  Written out rather than imported so a change in the SDK's constant
 # is a visible test failure and not a silently redefined expectation.
 _METHOD_NOT_FOUND = -32601
-
-_EXPECTED_TOOL_COUNT = 121
 
 
 @pytest.fixture
@@ -57,40 +60,29 @@ def _server() -> Any:
 
 
 @pytest.mark.usefixtures("_mocked_context")
-async def test_the_handshake_era_lists_every_tool() -> None:
-    """``initialize`` followed by ``tools/list`` returns the full roster."""
-    responses = await exchange(
-        _server(),
-        [
-            *handshake("protocol-test"),
-            JSONRPCRequest(jsonrpc="2.0", id=2, method="tools/list", params={}),
-        ],
-    )
+async def test_the_envelope_era_lists_the_tools() -> None:
+    """A handshake-free 2026-07-28 request reaches the tool handler.
 
-    initialize, tools = responses
-    assert initialize["result"]["serverInfo"]["name"] == "fabric-dw"
-    assert len(tools["result"]["tools"]) == _EXPECTED_TOOL_COUNT
-
-
-@pytest.mark.usefixtures("_mocked_context")
-async def test_the_envelope_era_lists_every_tool() -> None:
-    """The handshake-free 2026-07-28 path reaches the same handler."""
+    That era opens the connection from the reserved ``_meta`` keys on the first
+    message instead of from ``initialize``, so the server has to build its
+    connection out of the envelope before any handler runs.
+    """
     responses = await exchange(_server(), [modern_request(1, "tools/list")])
 
-    assert len(responses[0]["result"]["tools"]) == _EXPECTED_TOOL_COUNT
+    assert len(responses[0]["result"]["tools"]) >= MIN_TOOL_COUNT
 
 
 @pytest.mark.usefixtures("_mocked_context")
 async def test_an_undefined_method_gets_the_protocol_error() -> None:
     """An unknown method is answered with METHOD_NOT_FOUND, not a crash.
 
-    A middleware that raises on a message it cannot classify would turn this
+    A middleware that raised on a message it could not classify would turn this
     into a transport teardown or an internal error instead.
     """
     responses = await exchange(
         _server(),
         [
-            *handshake("protocol-test"),
+            *handshake(),
             JSONRPCRequest(jsonrpc="2.0", id=2, method="fabric/not-a-method", params={}),
         ],
     )

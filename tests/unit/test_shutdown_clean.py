@@ -14,14 +14,14 @@ None of this is observable in-process: the warnings are emitted by finalisers
 during interpreter teardown, after pytest has stopped looking.  A subprocess is
 the only place they show up.
 
-The command is allowed to fail (e.g. auth error, unreachable workspace) - only
-the *absence* of the above stderr substrings is asserted.
-
 The two variants cover different teardown paths.  ``config show`` runs the root
 callback and a real leaf command without touching the network, so it is cheap
-enough for the default suite.  ``workspaces list`` builds a credential and the
-aiohttp session it owns, which is what actually exercises the resource teardown;
-it is marked ``slow`` because the auth attempt takes seconds to fail.
+enough for the default suite; it is expected to succeed, because a command that
+died before opening anything would make the assertions below vacuous.
+``workspaces list`` builds a credential and the aiohttp session it owns, which is
+what actually exercises the resource teardown; it is marked ``slow`` because the
+auth attempt takes seconds to fail, and it is *allowed* to fail, since a failed
+command still has to close what it opened.
 """
 
 from __future__ import annotations
@@ -57,13 +57,17 @@ _CLI_RUNNER = [
 
 
 def _env(config_home: Path) -> dict[str, str]:
-    """Return the child environment with the config directory redirected.
+    """Return the child environment with every config input neutralised.
 
-    A developer's real config could name a default workspace or auth mode and
-    change which teardown path the child takes, so the child gets an empty one.
+    Both the config file and ``FABRIC_AUTH`` feed the root callback, and either
+    one can change which teardown path the child takes or stop it from starting
+    at all: an unrecognised ``FABRIC_AUTH`` raises a usage error before the
+    command body runs, which would fail the local variant on a developer machine
+    while its stderr was perfectly clean.
     """
     env = dict(os.environ)
     env["XDG_CONFIG_HOME"] = str(config_home)
+    env.pop("FABRIC_AUTH", None)
     return env
 
 

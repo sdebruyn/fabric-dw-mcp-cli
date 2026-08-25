@@ -88,10 +88,6 @@ _log = logging.getLogger(__name__)
 
 _LOCK_TIMEOUT = 5  # seconds
 
-# Falsy string values for boolean-like config keys, so a user who writes
-# ``key = "false"`` gets False rather than the True that bare bool() would give.
-_FALSY_STRINGS = frozenset({"", "0", "false", "no", "off"})
-
 
 class ConfigError(RuntimeError):
     """Raised when a config write operation cannot complete (e.g. lock timeout)."""

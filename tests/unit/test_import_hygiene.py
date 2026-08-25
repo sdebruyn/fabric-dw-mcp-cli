@@ -24,8 +24,10 @@ depending on the run order.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -70,13 +72,21 @@ assert len(tools) > 100, len(tools)
         ("mcp tools/list", _LIST_MCP_TOOLS),
     ],
 )
-def test_no_backend_module_is_imported(label: str, snippet: str) -> None:
+def test_no_backend_module_is_imported(label: str, snippet: str, tmp_path: Path) -> None:
     """None of the forbidden modules is present after *snippet* has run."""
+    # The child runs a real CLI command, and load_config takes a FileLock next
+    # to the config file it reads.  Without this redirect that lock lands in the
+    # developer's own ~/.config/fabric-dw/.
+    env = dict(os.environ)
+    env["XDG_CONFIG_HOME"] = str(tmp_path)
+    env.pop("FABRIC_AUTH", None)
+
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", snippet + _REPORT],
         capture_output=True,
         text=True,
         timeout=60,
+        env=env,
         check=False,
     )
 

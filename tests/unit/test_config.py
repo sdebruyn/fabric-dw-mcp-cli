@@ -706,6 +706,27 @@ def test_load_config_toml_float_deadline_coerced_to_int(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Empty sections are omitted rather than written out
+# ---------------------------------------------------------------------------
+
+
+def test_empty_user_config_writes_empty_file(tmp_path: Path) -> None:
+    """A fully-None UserConfig writes an empty TOML file (no sections at all)."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(), path)
+    content = path.read_text(encoding="utf-8")
+    assert content.strip() == ""
+
+
+def test_mcp_section_absent_when_none(tmp_path: Path) -> None:
+    """When mcp fields are None, the [mcp] section is not written."""
+    path = tmp_path / "config.toml"
+    save_config(UserConfig(), path)
+    content = path.read_text(encoding="utf-8")
+    assert "[mcp]" not in content
+
+
+# ---------------------------------------------------------------------------
 # All sections round-trip together
 # ---------------------------------------------------------------------------
 

@@ -601,6 +601,21 @@ class TestEveryDestructiveToolIsGuarded:
     refused, or refused but never declared, fails here instead of shipping.
     """
 
+    def test_the_registry_is_populated(self) -> None:
+        """The registry is not empty.
+
+        Load-bearing, not a formality.  ``DESTRUCTIVE_TOOL_NAMES`` fills at
+        decoration time as an import side effect, so a registration change that
+        left it empty would turn the parametrised test below into a single skip
+        and make the roster check below it vacuously true.  Every destructive
+        tool could go unguarded with this file fully green.
+        """
+        assert _destructive_tool_names(), (
+            "DESTRUCTIVE_TOOL_NAMES is empty: either no tool is registered with "
+            "mutating_tool(destructive=True), or importing the server no longer "
+            "populates the registry. Both leave the destructive tools untested."
+        )
+
     @pytest.mark.parametrize("tool_name", _destructive_tool_names())
     async def test_refused_without_the_flag(self, tool_name: str) -> None:
         """Calling the tool without FABRIC_MCP_ALLOW_DESTRUCTIVE raises ToolError.

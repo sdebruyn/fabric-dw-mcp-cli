@@ -1,7 +1,7 @@
 """Domain classification for the MCP tool surface.
 
 ``list_capabilities`` groups the registered tools by domain so a client can see
-what the server can do without reading 121 tool descriptions.  The grouping is
+what the server can do without reading every tool description.  The grouping is
 an explicit table rather than something derived from the tool name, because the
 name alone does not carry it: ``restore_warehouse_in_place`` belongs to restore
 points, not warehouses, and ``list_masked_columns`` belongs to permissions, not

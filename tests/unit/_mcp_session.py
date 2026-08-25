@@ -6,11 +6,10 @@ a tool's return value.  This helper is the opposite trade, for the handful of
 tests that are *about* the protocol layer: the SDK's middleware chain, the
 handshake, the error envelope.  None of that runs on the ``_call.py`` path.
 
-Messages are built by the caller as raw ``JSONRPCRequest`` /
-``JSONRPCNotification`` objects rather than through ``ClientSession``, because
-the interesting cases are the ones a well-behaved client cannot produce: a
-method the protocol does not define, a string request id, an ``initialize``
-without ``clientInfo``.
+Messages are built as raw ``JSONRPCRequest`` / ``JSONRPCNotification`` objects
+rather than through ``ClientSession``, for two reasons: a well-behaved client
+cannot send a method the protocol does not define, and the 2026-07-28 ``_meta``
+envelope is only visible on the wire, which the client's modern mode skips.
 """
 
 from __future__ import annotations
@@ -89,50 +88,33 @@ async def exchange(server: MCPServer[Any], messages: list[Any]) -> list[dict[str
     return responses
 
 
-def handshake(client_name: str | None = "test-client") -> list[Any]:
-    """Return the handshake-era opening messages: ``initialize`` plus the notification.
-
-    Args:
-        client_name: The name to put in ``clientInfo``.  ``None`` omits
-            ``clientInfo`` entirely, which the protocol permits.
-    """
-    params: dict[str, Any] = {"protocolVersion": HANDSHAKE_VERSION, "capabilities": {}}
-    if client_name is not None:
-        params["clientInfo"] = {"name": client_name, "version": "1.0"}
+def handshake() -> list[Any]:
+    """Return the handshake-era opening messages: ``initialize`` plus the notification."""
+    params: dict[str, Any] = {
+        "protocolVersion": HANDSHAKE_VERSION,
+        "capabilities": {},
+        "clientInfo": {"name": "test-client", "version": "1.0"},
+    }
     return [
         JSONRPCRequest(jsonrpc="2.0", id=1, method="initialize", params=params),
         JSONRPCNotification(jsonrpc="2.0", method="notifications/initialized", params={}),
     ]
 
 
-def modern_request(
-    request_id: int,
-    method: str,
-    client_name: str | None = "test-client",
-    params: dict[str, Any] | None = None,
-) -> JSONRPCRequest:
+def modern_request(request_id: int, method: str) -> JSONRPCRequest:
     """Return a 2026-07-28 request carrying the per-request ``_meta`` envelope.
 
     That era has no handshake: the reserved ``_meta`` keys are what open the
-    connection and carry the client's identity, so the server builds its
-    ``Connection`` from them before the first message reaches middleware.
+    connection, so the server builds its ``Connection`` from them before the
+    first message reaches middleware.
 
     Args:
         request_id: The JSON-RPC id.
         method: The method to call.
-        client_name: The name to put in the client-info envelope key, or
-            ``None`` to leave that key out (capabilities alone are valid).
-        params: Extra params merged alongside ``_meta``.
     """
     meta: dict[str, Any] = {
         PROTOCOL_VERSION_META_KEY: MODERN_VERSION,
         CLIENT_CAPABILITIES_META_KEY: {},
+        CLIENT_INFO_META_KEY: {"name": "test-client", "version": "1.0"},
     }
-    if client_name is not None:
-        meta[CLIENT_INFO_META_KEY] = {"name": client_name, "version": "1.0"}
-    return JSONRPCRequest(
-        jsonrpc="2.0",
-        id=request_id,
-        method=method,
-        params={**(params or {}), "_meta": meta},
-    )
+    return JSONRPCRequest(jsonrpc="2.0", id=request_id, method=method, params={"_meta": meta})

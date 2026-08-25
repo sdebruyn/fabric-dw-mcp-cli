@@ -59,18 +59,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from fabric_dw.models import Workspace
-from tests.unit._tool_introspection import SNAKE_CASE_RE
+from tests.unit._tool_introspection import MIN_TOOL_COUNT, SNAKE_CASE_RE
 from tests.unit.mcp.conftest import WS_ID, WS_NAME, make_item_entry
-
-# ---------------------------------------------------------------------------
-# Minimum tool count — guards against catastrophic registration drops.
-# Set well below the current count (121 at time of writing) so adding tools
-# never requires a bump, while a whole-domain disappearance is still caught.
-# The exact number is deliberately not asserted; only a floor is.
-# ---------------------------------------------------------------------------
-
-MIN_TOOL_COUNT = 90
-
 
 # ---------------------------------------------------------------------------
 # Fixture: a mocked ServerContext whose http is a proper async context manager
