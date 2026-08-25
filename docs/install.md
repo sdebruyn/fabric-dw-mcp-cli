@@ -480,7 +480,8 @@ It binds to loopback by default, where `Host` and `Origin` validation is handled
 
 ### Verify the MCP server
 
-The server speaks both current MCP protocol revisions from the same process, so you do not need to match a specific revision in your client; whichever one it negotiates, it gets served.
+!!! note "Protocol version"
+    The server supports every MCP protocol revision it implements from the same process, so whichever revision your client negotiates, the server serves it - no client change is needed. If `ping` gives you a deprecation warning, see [ping troubleshooting](troubleshooting.md#ping-deprecation-warning-doesnt-mean-the-call-failed).
 
 After configuring your client, restart it and ask the assistant to list its available tools. You should see over 100 entries, including `list_workspaces`, `get_warehouse`, `kill_session`, and `clear_cache`.
 
