@@ -584,6 +584,52 @@ class TestAssertDestructiveAllowed:
             assert_destructive_allowed()
 
 
+def _destructive_tool_names() -> list[str]:
+    """Return every tool registered as destructive, importing the server once."""
+    from fabric_dw.mcp._helpers import DESTRUCTIVE_TOOL_NAMES  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    assert mcp is not None  # importing the server is what populates the registry
+    return sorted(DESTRUCTIVE_TOOL_NAMES)
+
+
+class TestEveryDestructiveToolIsGuarded:
+    """The whole destructive roster, not a spot-check of a few members.
+
+    The spot-checks elsewhere in this file each cover one tool.  These two walk
+    ``DESTRUCTIVE_TOOL_NAMES`` so a tool declared destructive but not actually
+    refused, or refused but never declared, fails here instead of shipping.
+    """
+
+    @pytest.mark.parametrize("tool_name", _destructive_tool_names())
+    async def test_refused_without_the_flag(self, tool_name: str) -> None:
+        """Calling the tool without FABRIC_MCP_ALLOW_DESTRUCTIVE raises ToolError.
+
+        The registered callable is invoked with no arguments on purpose: the
+        guard is the first thing in the wrapper, so it must fire before the
+        wrapped tool body ever sees a parameter.  A tool that reached its body
+        would raise TypeError instead, which the match below would not accept.
+        """
+        from mcp.server.mcpserver.exceptions import ToolError  # noqa: PLC0415
+
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        fn = mcp._tool_manager.get_tool(tool_name).fn
+        env = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_ALLOW_DESTRUCTIVE"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
+        ):
+            await fn()
+
+    def test_registry_matches_the_registered_tools(self) -> None:
+        """Every declared destructive name is a tool the server actually registers."""
+        from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+        unknown = [n for n in _destructive_tool_names() if mcp._tool_manager.get_tool(n) is None]
+        assert not unknown, f"DESTRUCTIVE_TOOL_NAMES lists unregistered tools: {unknown}"
+
+
 # ---------------------------------------------------------------------------
 # 4. assert_workspace_allowed
 # ---------------------------------------------------------------------------

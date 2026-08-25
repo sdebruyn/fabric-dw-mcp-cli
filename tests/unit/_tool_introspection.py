@@ -1,10 +1,9 @@
 """Shared live MCP tool introspection helper for unit tests.
 
 Single source of truth: build a fresh MCP server via the production
-registration path (``InstrumentedMCPServer`` + ``register_all``) and
-enumerate all registered tools.  Used by:
+registration path (``MCPServer`` + ``register_all``) and enumerate all
+registered tools.  Used by:
 
-- ``tests/unit/test_telemetry_commands.py`` — domain-coverage checks
 - ``tests/unit/mcp/test_contract.py`` — contract / invariant checks
 - ``tests/unit/mcp/test_server.py`` — registration property checks
 """
@@ -19,16 +18,17 @@ SNAKE_CASE_RE: re.Pattern[str] = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)*$")
 
 
 def collect_live_mcp_tool_names() -> frozenset[str]:
-    """Register all MCP tools against a fresh InstrumentedMCPServer; return tool names.
+    """Register all MCP tools against a fresh MCPServer; return tool names.
 
-    Uses ``InstrumentedMCPServer`` (the same class the production MCP server
-    instantiates) and ``register_all()`` so that any tool added to the server
-    automatically appears here.  Tool names are enumerated via the public
-    ``asyncio.run(mcp.list_tools())`` API to avoid relying on private internals.
+    Uses ``register_all()`` against a throwaway server so that any tool added
+    to the production server automatically appears here.  Tool names are
+    enumerated via the public ``asyncio.run(mcp.list_tools())`` API to avoid
+    relying on private internals.
     """
-    from fabric_dw.mcp._helpers import InstrumentedMCPServer  # noqa: PLC0415
+    from mcp.server.mcpserver import MCPServer  # noqa: PLC0415
+
     from fabric_dw.mcp.tools import register_all  # noqa: PLC0415
 
-    mcp = InstrumentedMCPServer("coverage-check")
+    mcp: MCPServer[None] = MCPServer("coverage-check")
     register_all(mcp)
     return frozenset(tool.name for tool in asyncio.run(mcp.list_tools()))

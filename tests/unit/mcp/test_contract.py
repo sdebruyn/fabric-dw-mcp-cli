@@ -203,18 +203,35 @@ async def test_list_tools_non_empty_descriptions(live_tools) -> None:
 
 
 async def test_list_tools_all_resolve_to_domain(live_tools) -> None:
-    """Every tool registered via MCP must resolve to a known telemetry domain.
+    """Every registered tool must have a domain, or list_capabilities hides it.
 
-    This replicates the invariant enforced by test_telemetry_commands, but
-    exercises it through the full MCP protocol round-trip so contract tests
-    are self-contained.
+    A tool with no entry lands in an ``unknown`` bucket, which is how a new
+    tool silently fails to show up where a client looks for it.
     """
-    from fabric_dw.telemetry_commands import resolve_domain  # noqa: PLC0415
+    from fabric_dw.mcp._domains import domain_for_tool  # noqa: PLC0415
 
-    unknown = [t.name for t in live_tools if resolve_domain(t.name) == "unknown"]
+    unknown = [t.name for t in live_tools if domain_for_tool(t.name) == "unknown"]
     assert not unknown, (
-        f"MCP tools with no DOMAIN_MAP entry (would log domain='unknown'): {sorted(unknown)}. "
-        "Add each missing name to DOMAIN_MAP in fabric_dw.telemetry_commands."
+        f"MCP tools with no domain (list_capabilities would bucket them as "
+        f"'unknown'): {sorted(unknown)}. Add each name to TOOL_DOMAINS in "
+        "fabric_dw.mcp._domains."
+    )
+
+
+async def test_domain_table_has_no_stale_entries(live_tools) -> None:
+    """Every name in the domain table must still be a registered tool.
+
+    The inverse of the check above.  Without it a renamed or removed tool
+    leaves its old name behind and the table slowly fills with entries that
+    classify nothing.
+    """
+    from fabric_dw.mcp._domains import TOOL_DOMAINS  # noqa: PLC0415
+
+    live_names = {t.name for t in live_tools}
+    stale = sorted(name for name in TOOL_DOMAINS if name not in live_names)
+    assert not stale, (
+        f"TOOL_DOMAINS names tools that are not registered: {stale}. "
+        "Remove them from fabric_dw.mcp._domains."
     )
 
 

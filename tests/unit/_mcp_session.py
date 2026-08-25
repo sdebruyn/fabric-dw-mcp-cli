@@ -3,8 +3,8 @@
 ``tests/unit/_call.py`` reaches past the protocol and calls a tool function
 directly, which is the right trade for the several hundred tests that assert on
 a tool's return value.  This helper is the opposite trade, for the handful of
-tests that are *about* the protocol layer: the middleware chain, the SDK's
-OpenTelemetry spans, the handshake.  None of that runs on the ``_call.py`` path.
+tests that are *about* the protocol layer: the SDK's middleware chain, the
+handshake, the error envelope.  None of that runs on the ``_call.py`` path.
 
 Messages are built by the caller as raw ``JSONRPCRequest`` /
 ``JSONRPCNotification`` objects rather than through ``ClientSession``, because

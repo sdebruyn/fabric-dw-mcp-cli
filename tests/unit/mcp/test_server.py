@@ -255,10 +255,11 @@ def test_registered_tools_no_duplicates() -> None:
     """
     import asyncio  # noqa: PLC0415
 
-    from fabric_dw.mcp._helpers import InstrumentedMCPServer  # noqa: PLC0415
+    from mcp.server.mcpserver import MCPServer  # noqa: PLC0415
+
     from fabric_dw.mcp.tools import register_all  # noqa: PLC0415
 
-    mcp = InstrumentedMCPServer("dup-check")
+    mcp: MCPServer[None] = MCPServer("dup-check")
     register_all(mcp)
     all_tools = asyncio.run(mcp.list_tools())
     all_names = [t.name for t in all_tools]
@@ -284,10 +285,11 @@ def test_registered_tools_non_empty_descriptions() -> None:
     """
     import asyncio  # noqa: PLC0415
 
-    from fabric_dw.mcp._helpers import InstrumentedMCPServer  # noqa: PLC0415
+    from mcp.server.mcpserver import MCPServer  # noqa: PLC0415
+
     from fabric_dw.mcp.tools import register_all  # noqa: PLC0415
 
-    mcp = InstrumentedMCPServer("desc-check")
+    mcp: MCPServer[None] = MCPServer("desc-check")
     register_all(mcp)
     all_tools = asyncio.run(mcp.list_tools())
     missing_desc = [t.name for t in all_tools if not (t.description or "").strip()]

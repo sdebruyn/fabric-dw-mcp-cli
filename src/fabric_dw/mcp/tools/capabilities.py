@@ -6,7 +6,7 @@ import logging
 
 from mcp.server.mcpserver import MCPServer
 
-from fabric_dw.telemetry_commands import resolve_domain
+from fabric_dw.mcp._domains import domain_for_tool
 
 __all__ = ["register"]
 
@@ -32,7 +32,7 @@ def register(mcp: MCPServer) -> None:
         tools = await mcp.list_tools()
         grouped: dict[str, list[str]] = {}
         for tool in tools:
-            domain = resolve_domain(tool.name)
+            domain = domain_for_tool(tool.name)
             grouped.setdefault(domain, []).append(tool.name)
         for domain, names in grouped.items():
             grouped[domain] = sorted(names)
