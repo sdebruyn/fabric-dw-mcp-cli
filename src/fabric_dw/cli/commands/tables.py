@@ -13,7 +13,6 @@ import click
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._context import CliContext
-from fabric_dw.cli._main import _CLI_CONDITIONAL_DESTRUCTIVE_KEY
 from fabric_dw.cli._render import render, render_result_rows
 from fabric_dw.cli.commands._utils import (
     AS_OF_OPTION,
@@ -1121,12 +1120,9 @@ async def load_cmd(  # noqa: PLR0912, PLR0915
     else:
         effective_if_exists = "append"
 
-    # Stash the conditional destructive flag before any guard or API call so the
-    # finally block in _InstrumentedGroup.invoke picks it up outcome-independently —
-    # even when the call is rejected by the --create guard below.
+    # truncate and replace both destroy rows that are already there, so both the
+    # --url rejection and the confirmation prompt below key off this.
     is_destructive = effective_if_exists in ("truncate", "replace")
-    if is_destructive:
-        click.get_current_context().meta[_CLI_CONDITIONAL_DESTRUCTIVE_KEY] = True
 
     # truncate/replace on the --url path are not supported: there is no schema
     # to infer and no pre-load DDL hook.  Reject early with a clear message.

@@ -522,8 +522,3 @@ class TestRlsDrop:
             )
         assert result.exit_code == 0, result.output
         mock_svc.assert_called_once()
-
-    def test_drop_is_in_destructive_commands(self) -> None:
-        from fabric_dw.cli._main import _DESTRUCTIVE_CLI_COMMANDS  # noqa: PLC0415
-
-        assert "permissions.rls.drop" in _DESTRUCTIVE_CLI_COMMANDS
