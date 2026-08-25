@@ -202,3 +202,11 @@ The client automatically retries on each 429 and waits exactly as long as the se
 HTTP 403 specifically means the request carried an `Origin` header and no `--allowed-origin` matched it. Browser-based clients send that header, and so do Electron renderers, VS Code webviews and `fetch`-based Deno or Node clients. Note that an origin is matched exactly, so a different port counts as a different origin.
 
 **Fix:** Pass `--allowed-host` with the exact name clients use, repeating the option per name, and `--allowed-origin` for a browser-based client. Both are described under [Hosting the MCP server](reference/hosting-mcp-server.md#host-and-origin-validation). To see what the server is actually enforcing, read its startup output: the allowlist it applied is logged at INFO level as `Host and Origin validation enabled`.
+
+## `ping` logs a deprecation warning and I can't tell if it worked
+
+**Symptom:** Calling `ping` (or the SDK's `send_ping()`) prints a deprecation warning. The warning appears every time, whether or not the call actually succeeded, so it gives you no signal either way.
+
+**Cause:** MCP revision `2026-07-28` removed `ping` from the protocol. A client that negotiates that revision gets `-32601` (method not found) back; a client that negotiates the older `2025-11-25` revision still gets a normal response, since this server keeps serving both revisions from the same process. The SDK's own client emits the deprecation warning unconditionally in both cases, so the warning by itself does not tell you which one happened.
+
+**Fix:** Ignore the warning and check the actual response or exception instead. If your code relies on `ping` returning normally, that only happens on `2025-11-25`; on `2026-07-28`, treat a `-32601` from `ping` as expected, not as a failure.

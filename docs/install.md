@@ -478,17 +478,9 @@ fabric-dw-mcp --transport http [--host 127.0.0.1] [--port 8000]
 
 It binds to loopback by default, where `Host` and `Origin` validation is handled for you and there is nothing to configure. Binding anywhere else requires `FABRIC_MCP_ALLOW_REMOTE=1` and `--allowed-host`, and the endpoint needs an authenticating reverse proxy in front of it. See [Hosting the MCP server](reference/hosting-mcp-server.md) for that setup.
 
-Request bodies are capped at 4 MiB; anything larger is rejected with HTTP 413. In practice only a multi-megabyte `execute_sql` script or object definition can reach that. The stdio transport has no such limit.
-
-### Protocol versions
-
-The server speaks MCP revision `2026-07-28` and continues to serve `2025-11-25` clients from the same process, so no client change is needed. Two protocol-level notes for anyone driving the server directly.
-
-`ping` was removed in revision `2026-07-28`, but only for clients that negotiate that revision: a `2025-11-25` client can still call it and this server still answers. A `2026-07-28` client gets `-32601` instead. Note that the SDK's own client emits a deprecation warning from `send_ping()` in both cases, so the warning alone does not tell you whether the call worked.
-
-Unknown methods return `-32601` (method not found) under both revisions.
-
 ### Verify the MCP server
+
+The server speaks both current MCP protocol revisions from the same process, so you do not need to match a specific revision in your client; whichever one it negotiates, it gets served.
 
 After configuring your client, restart it and ask the assistant to list its available tools. You should see over 100 entries, including `list_workspaces`, `get_warehouse`, `kill_session`, and `clear_cache`.
 
