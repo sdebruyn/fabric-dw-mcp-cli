@@ -570,7 +570,15 @@ def _patch_global_provider_hooks(
     monkeypatch.setattr(
         telemetry_spans,
         "_trace",
-        SimpleNamespace(set_tracer_provider=setter, get_tracer_provider=getter),
+        SimpleNamespace(
+            set_tracer_provider=setter,
+            get_tracer_provider=getter,
+            # The real class, not a stand-in: the install path reads
+            # ProxyTracerProvider off this same handle rather than importing it at
+            # module level, and an isinstance() against a different object would
+            # make every test here pass for the wrong reason.
+            ProxyTracerProvider=ProxyTracerProvider,
+        ),
     )
 
 
@@ -790,6 +798,12 @@ def test_a_request_id_is_capped_at_the_int64_range(request_id: str, kept: bool) 
         # is ordinary code, not a smuggled string.
         ("Ongeldigeİnvoer", True),
         ("Ошибка", True),
+        # 24 characters, 48 bytes: comfortably inside the cap either way.
+        ("Ошибка" * 4, True),
+        # 42 characters but 84 bytes. Under a character cap this is KEPT and puts
+        # 84 bytes on the wire against a limit that says 64, which is why the cap
+        # counts encoded bytes (#1052 review).
+        ("Ошибка" * 7, False),
         ("Unknown prompt: " + MARKER, False),
         ("<locals>", True),
         ("a.<locals", False),
@@ -807,6 +821,11 @@ def test_error_type_is_checked_rather_than_assumed_safe(value: str, kept: bool) 
     holds only while this server sends no requests to the client; the
     server-to-client direction would put a peer's error text here. Checking the
     shape costs one comparison and makes the invariant ours.
+
+    The length cap counts UTF-8 bytes, not characters: `str.isidentifier` is
+    Unicode-aware, so a 64-character class name in another script is up to 256
+    bytes on the wire, and every other bound in this module is about what
+    actually gets transmitted.
     """
     span = _make_span(MCP_SDK_SCOPE, "ping", {"mcp.method.name": "ping", "error.type": value})
     sanitised = sanitise_span(span)
@@ -926,16 +945,38 @@ def test_a_local_parent_survives_so_client_spans_still_nest() -> None:
     assert sanitised.parent.trace_state == TraceState()
 
 
+_LOCAL_TRACE_ID = 0x0BADC0DE0BADC0DE0BADC0DE0BADC0DE
+
+
 @pytest.mark.parametrize(
     "parent",
     [
         pytest.param(None, id="no-parent"),
         pytest.param(
+            SpanContext(trace_id=_LOCAL_TRACE_ID, span_id=0xBBBB, is_remote=True), id="remote"
+        ),
+        pytest.param(
             SpanContext(trace_id=0, span_id=0xBBBB, is_remote=False), id="invalid-trace-id"
         ),
         pytest.param(
-            SpanContext(trace_id=0x0BADC0DE0BADC0DE0BADC0DE0BADC0DE, span_id=0, is_remote=False),
+            SpanContext(trace_id=_LOCAL_TRACE_ID, span_id=0, is_remote=False),
             id="invalid-span-id",
+        ),
+        # The two below are the whole reason the test is `is not False` rather
+        # than `if parent.is_remote:`.  SpanContext stores the field verbatim, so
+        # these are constructible, and under a truthiness test both would be
+        # KEPT and their span id exported.  Both are genuine SpanContexts, so
+        # they get past the isinstance guard and actually reach the comparison;
+        # the SimpleNamespace cases further down do not, and pin something else.
+        pytest.param(
+            # The suppression below is the point of the case: the parameter is
+            # annotated `bool` and the runtime stores whatever it is handed.
+            SpanContext(trace_id=_LOCAL_TRACE_ID, span_id=0xBBBB, is_remote=None),  # ty: ignore[invalid-argument-type]
+            id="is-remote-is-none",
+        ),
+        pytest.param(
+            SpanContext(trace_id=_LOCAL_TRACE_ID, span_id=0xBBBB, is_remote=0),  # ty: ignore[invalid-argument-type]
+            id="is-remote-is-zero",
         ),
         pytest.param(
             SimpleNamespace(trace_id=1, span_id=2, is_remote=False, is_valid=True),
@@ -953,6 +994,29 @@ def test_only_a_provably_local_parent_is_kept(parent: Any) -> None:
 
     assert sanitised is not None
     assert sanitised.parent is None
+
+
+def test_a_falsy_non_boolean_is_remote_is_treated_as_remote() -> None:
+    """Guards the identity comparison directly, not through the isinstance check.
+
+    ``SpanContext`` stores ``is_remote`` verbatim, so ``None`` and ``0`` are both
+    reachable, and a readability pass that rewrites the guard as
+    ``if parent.is_remote:`` keeps every other test in this module green while
+    starting to export the parent span id for both.  This one fails.
+    """
+    for value in (None, 0):
+        # Suppressed for the same reason as above: `is_remote` is annotated
+        # `bool` but never coerced, so these values are reachable at runtime.
+        parent = SpanContext(trace_id=_LOCAL_TRACE_ID, span_id=0xBBBB, is_remote=value)  # ty: ignore[invalid-argument-type]
+        assert parent.is_remote is value, "SpanContext must not be coercing the field"
+
+        sanitised = sanitise_span(_span_with_parent(parent))
+
+        assert sanitised is not None
+        assert sanitised.parent is None, (
+            f"is_remote={value!r} is not the boolean False, so the parent is not "
+            "provably local and its span id must not be exported"
+        )
 
 
 def test_a_parent_from_another_trace_is_cut() -> None:

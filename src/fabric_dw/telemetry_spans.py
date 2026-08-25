@@ -76,12 +76,7 @@ from opentelemetry import trace as _trace
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
-from opentelemetry.trace import (
-    DEFAULT_TRACE_STATE,
-    SpanContext,
-    TraceFlags,
-)
-from opentelemetry.trace import ProxyTracerProvider as _ProxyTracerProvider
+from opentelemetry.trace import DEFAULT_TRACE_STATE, SpanContext, TraceFlags
 from opentelemetry.trace.status import Status
 
 if TYPE_CHECKING:
@@ -130,15 +125,19 @@ _TOOL_ERROR = "tool_error"
 #: 4000-digit id measured at 4824 bytes on the wire before this cap existed.
 _MAX_REQUEST_ID_DIGITS = 19
 
-#: Longest ``error.type`` recorded.  Server-side exception class names are far
-#: shorter; the cap exists so the invariant does not rest on that.
-_MAX_ERROR_TYPE_LEN = 64
+#: Longest ``error.type`` recorded, in BYTES of UTF-8.  Server-side exception
+#: class names are far shorter; the cap exists so the invariant does not rest on
+#: that.  Bytes rather than characters because ``str.isidentifier`` is
+#: Unicode-aware, so 64 characters of a non-ASCII class name is up to 256 bytes
+#: on the wire, and this module bounds its other fields by what actually gets
+#: transmitted.
+_MAX_ERROR_TYPE_BYTES = 64
 
 #: Longest ``rpc.response.status_code`` recorded, in digits: the int32 range.
 #: A JSON-RPC error code is a small integer (the spec reserves -32768..-32000
 #: and implementations add their own nearby), but ``ErrorData.code`` is a plain
 #: Python ``int``, so nothing upstream bounds it.  This used to borrow
-#: :data:`_MAX_ERROR_TYPE_LEN`, which allowed a 64-digit code: three times
+#: the ``error.type`` cap, which allowed a 64-digit code: three times
 #: looser than the 19 digits :data:`_MAX_REQUEST_ID_DIGITS` allows for a request
 #: id, under exactly the same argument that an unbounded numeric field is a
 #: channel (#1052).
@@ -284,7 +283,7 @@ def _is_qualname(value: str) -> bool:
     Non-ASCII is admitted too.  ``str.isidentifier`` is the actual language rule
     and it is Unicode-aware, so ``isascii()`` on top of it rejected class names
     written in any other script while adding nothing: the shape test is what
-    bounds the value, and the length cap bounds it in characters either way.
+    bounds the value, and :data:`_MAX_ERROR_TYPE_BYTES` bounds it on the wire.
     """
     return all(part == _QUALNAME_LOCALS or part.isidentifier() for part in value.split("."))
 
@@ -300,7 +299,7 @@ def _safe_error_type(value: object) -> str | None:
     put a peer's error on a span.  So the invariant is checked rather than
     assumed: a numeric code, the known literal, or a Python qualified name.
     """
-    if not isinstance(value, str) or not value or len(value) > _MAX_ERROR_TYPE_LEN:
+    if not isinstance(value, str) or not value or len(value.encode()) > _MAX_ERROR_TYPE_BYTES:
         return None
     if value == _TOOL_ERROR or _safe_status_code(value) is not None:
         return value
@@ -561,8 +560,18 @@ def install_mcp_span_pipeline(connection_string: str, resource: object | None) -
         # global and set_tracer_provider() would be refused.  Returning here is
         # what keeps standing down free of side effects: everything below builds
         # a live Azure exporter.
-        if not isinstance(_trace.get_tracer_provider(), _ProxyTracerProvider):
-            _log.debug("A TracerProvider was already installed; leaving it alone")
+        # Reached through the module handle rather than imported at module level:
+        # ProxyTracerProvider is not in opentelemetry.trace.__all__, unlike its
+        # three co-imported siblings, so it is the one name here that could be
+        # moved without a deprecation.  A module-level ImportError would be raised
+        # while telemetry._get_tracer() imports this module, which would take out
+        # every customEvent on the MCP surface and not merely the spans, reported
+        # at debug level only.
+        if not isinstance(_trace.get_tracer_provider(), _trace.ProxyTracerProvider):
+            _log.debug(
+                "A host TracerProvider already owns the global; standing down "
+                "before building anything"
+            )
             return False
 
         # The Azure trace exporter appends an `_OTELRESOURCE_` MetricData
@@ -573,12 +582,19 @@ def install_mcp_span_pipeline(connection_string: str, resource: object | None) -
         # is.  setdefault, like APPLICATIONINSIGHTS_SDKSTATS_DISABLED: the gate
         # is `!= "true"`, so an operator's explicit value is a real override.
         #
-        # One of four now: statsbeat, customer sdkstats, this, and the
-        # OneSettings control plane (APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED,
-        # set in telemetry.py, #1053).  Assume any Azure Monitor exporter has a
-        # side channel behind an environment variable until proven otherwise,
-        # and expect a fifth: each of the four was found by measuring a running
-        # process, none by reading the library's API surface.
+        # One of five now: statsbeat, customer sdkstats, this, the OneSettings
+        # control plane and the Azure resource detectors' IMDS probe.  The other
+        # four are set in telemetry.py, which carries the full list.  Assume any
+        # Azure Monitor exporter has a side channel behind an environment
+        # variable until proven otherwise, and expect a sixth: every one of the
+        # five was found by measuring a running process, none by reading the
+        # library's API surface.
+        #
+        # Unlike most of those, this one is NOT restored afterwards, because it
+        # is read at export time.  It is also reached only when this function
+        # gets as far as building an exporter, which is right: a host that owns
+        # the global provider has already returned above, and in that case there
+        # is no exporter of ours to smuggle a metric envelope.
         os.environ.setdefault("APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED", "true")
 
         exporter = _AzureMonitorTraceExporter(connection_string=connection_string)
@@ -598,7 +614,13 @@ def install_mcp_span_pipeline(connection_string: str, resource: object | None) -
 
         _trace.set_tracer_provider(provider)
         if _trace.get_tracer_provider() is not provider:
-            _log.debug("A TracerProvider was already installed; leaving it alone")
+            # Distinct from the message above on purpose: this is the wasteful
+            # path, where a host claimed the global between the check and the
+            # claim, so an exporter was built and has to be torn down again.
+            _log.debug(
+                "A host TracerProvider was installed while this one was being "
+                "built; discarding the exporter we just made"
+            )
             # Stop the batch worker and close the exporter we built but lost.
             provider.shutdown()
             return False

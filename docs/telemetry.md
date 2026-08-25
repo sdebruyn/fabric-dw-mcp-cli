@@ -78,6 +78,7 @@ Running the MCP server also records one entry per protocol message it handles, w
 | duration | How long the message took to handle. |
 | outcome | Whether it succeeded, and if not, the error code or the name of the error type. |
 | protocol version | The MCP revision the client and the server agreed on, e.g. `2025-06-18`. |
+| parent entry | Which other entry from this same server caused this one, so a sequence reads as one operation. Only ever an entry this server created itself; a parent a client puts in a request is dropped. |
 
 Anything you choose the content of is removed from these entries first: prompt and tool names, error messages, stack traces, and request IDs that are not plain numbers. A trace ID a client puts in a request is replaced by a hash of it, keyed with a random value this process never stores or sends, so entries from one trace still group together but the exported ID is not one you chose or can recover.
 
@@ -89,8 +90,7 @@ Anything you choose the content of is removed from these entries first: prompt a
 - File paths or environment variable values
 - Any other personally-identifiable information
 - Names you put in an MCP request: prompt names, and the tool name on a call for a tool that does not exist
-- Error messages and stack traces
-- Trace IDs taken off the wire, which are replaced by a keyed hash as described above
+- Error messages and stack traces, and trace IDs taken off the wire (replaced by the keyed hash described above)
 - Metrics of any kind
 
 ## Where telemetry data goes
