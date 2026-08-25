@@ -23,11 +23,6 @@ Each subprocess is launched with ``PYTHONWARNINGS=error::ResourceWarning`` and
 ``PYTHONDEVMODE=1`` so that unclosed file handles, sockets, or aiohttp sessions are
 promoted to hard exceptions that abort the process (non-zero exit) rather than being
 silently swallowed.
-
-Telemetry
----------
-The child env deliberately removes ``FABRIC_DW_TELEMETRY_OPT_OUT`` so the
-telemetry init → flush → shutdown path is exercised for every command.
 """
 
 from __future__ import annotations
@@ -85,12 +80,6 @@ _STDERR_FORBIDDEN = (
     "Traceback (most recent call last)",
     "ResourceWarning",
     "_close_pool_connections",
-    # PerformanceCounters ZeroDivisionError signatures (#399 / #391).
-    # azure-monitor-opentelemetry PerformanceCounters callback crashes on
-    # short-lived processes with a ZeroDivisionError from _get_processor_time
-    # unless enable_performance_counters=False is passed at SDK init time.
-    "Error getting processor time",
-    "_get_processor_time",
 )
 
 # ---------------------------------------------------------------------------
@@ -162,18 +151,12 @@ def _child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 
     - Inherits the current process environment so credentials pass through.
     - Promotes ResourceWarnings to errors via PYTHONWARNINGS + PYTHONDEVMODE.
-    - Removes ``FABRIC_DW_TELEMETRY_OPT_OUT`` so the telemetry init / flush /
-      shutdown path is exercised even when the caller has opted out.
     """
     env = os.environ.copy()
 
     # Make resource leaks hard failures in the child process.
     env["PYTHONWARNINGS"] = "error::ResourceWarning"
     env["PYTHONDEVMODE"] = "1"
-
-    # Ensure the child process exercises the telemetry path regardless of caller opt-out.
-    env.pop("FABRIC_DW_TELEMETRY_OPT_OUT", None)
-    env.pop("DO_NOT_TRACK", None)
 
     if extra:
         env.update(extra)

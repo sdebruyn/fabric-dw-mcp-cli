@@ -99,7 +99,6 @@ _sql_config_cache: _UserConfig | None = None
 _sql_config_lock: threading.Lock = threading.Lock()
 
 # Truthy/falsy string set for _resolve_sql_retry_executes.
-# Kept inline to avoid importing telemetry's private helpers.
 _FALSY_STRINGS: frozenset[str] = frozenset({"", "0", "false", "no", "off"})
 
 # ---------------------------------------------------------------------------

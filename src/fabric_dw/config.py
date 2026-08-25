@@ -18,9 +18,6 @@ The TOML shape supports multiple named sections:
     sql_retry_executes = false
     auth_mode = "default"
 
-    [telemetry]
-    disabled = true
-
     [mcp]
     workspace_allowlist = ["Sales Workspace", "Finance Workspace"]
 
@@ -78,7 +75,6 @@ __all__ = [
     "Defaults",
     "LoggingConfig",
     "McpConfig",
-    "TelemetryConfig",
     "UserConfig",
     "clear_config",
     "default_path",
@@ -92,8 +88,8 @@ _log = logging.getLogger(__name__)
 
 _LOCK_TIMEOUT = 5  # seconds
 
-# Falsy string values for boolean-like config keys (e.g. [telemetry] disabled).
-# Matches the convention in telemetry._FALSY_VALUES / consoledonottrack.com.
+# Falsy string values for boolean-like config keys, so a user who writes
+# ``key = "false"`` gets False rather than the True that bare bool() would give.
 _FALSY_STRINGS = frozenset({"", "0", "false", "no", "off"})
 
 
@@ -112,13 +108,6 @@ class Defaults:
     sql_retry_deadline_s: int | None = None
     sql_retry_executes: bool | None = None
     auth_mode: str | None = None
-
-
-@dataclass(frozen=True)
-class TelemetryConfig:
-    """Configuration for the ``[telemetry]`` section."""
-
-    disabled: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -148,7 +137,6 @@ class UserConfig:
     """Top-level user configuration object."""
 
     defaults: Defaults = field(default_factory=Defaults)
-    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     mcp: McpConfig = field(default_factory=McpConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     auth: AuthConfig = field(default_factory=AuthConfig)
@@ -224,37 +212,6 @@ def _parse_defaults_section(data: dict[str, object]) -> Defaults:
     )
 
 
-def _parse_telemetry_section(data: dict[str, object]) -> TelemetryConfig:
-    """Parse the ``[telemetry]`` section from *data*.
-
-    Accepted ``disabled`` value types:
-
-    - TOML bool (``true`` / ``false``) → direct bool coercion.
-    - TOML int (``1`` / ``0``) → bool via ``bool()``.
-    - TOML string (``"true"`` / ``"false"`` etc.) → falsy-set check:
-      strings in ``_FALSY_STRINGS`` map to ``False``; any other
-      non-empty string maps to ``True``.  This avoids ``bool("false") is True``
-      which would silently re-enable telemetry for a user who wrote
-      ``disabled = "false"``.
-    - Any other type → ``None`` (unknown, treated as not opted out).
-    """
-    raw = data.get("telemetry", {})
-    if not isinstance(raw, dict):
-        raw = {}
-    raw_disabled = raw.get("disabled")
-    disabled: bool | None
-    if isinstance(raw_disabled, bool):
-        disabled = raw_disabled
-    elif isinstance(raw_disabled, int):
-        disabled = bool(raw_disabled)
-    elif isinstance(raw_disabled, str):
-        stripped = raw_disabled.strip().lower()
-        disabled = stripped not in _FALSY_STRINGS
-    else:
-        disabled = None
-    return TelemetryConfig(disabled=disabled)
-
-
 def _parse_mcp_section(data: dict[str, object]) -> McpConfig:
     """Parse the ``[mcp]`` section from *data*."""
     raw = data.get("mcp", {})
@@ -311,7 +268,6 @@ def _parse_sections(data: dict[str, object]) -> UserConfig:
     """Parse all config sections from *data* and return a :class:`UserConfig`."""
     return UserConfig(
         defaults=_parse_defaults_section(data),
-        telemetry=_parse_telemetry_section(data),
         mcp=_parse_mcp_section(data),
         logging=_parse_logging_section(data),
         auth=_parse_auth_section(data),
@@ -396,14 +352,6 @@ def _defaults_to_dict(d: Defaults) -> dict[str, object]:
     return out
 
 
-def _telemetry_to_dict(t: TelemetryConfig) -> dict[str, object]:
-    """Serialise *t* to a TOML-compatible dict, omitting ``None`` values."""
-    out: dict[str, object] = {}
-    if t.disabled is not None:
-        out["disabled"] = t.disabled
-    return out
-
-
 def _mcp_to_dict(m: McpConfig) -> dict[str, object]:
     """Serialise *m* to a TOML-compatible dict, omitting ``None`` values."""
     out: dict[str, object] = {}
@@ -436,9 +384,6 @@ def _config_to_data(config: UserConfig) -> dict[str, object]:
     defaults_dict = _defaults_to_dict(config.defaults)
     if defaults_dict:
         data["defaults"] = defaults_dict
-    telemetry_dict = _telemetry_to_dict(config.telemetry)
-    if telemetry_dict:
-        data["telemetry"] = telemetry_dict
     mcp_dict = _mcp_to_dict(config.mcp)
     if mcp_dict:
         data["mcp"] = mcp_dict
@@ -571,36 +516,12 @@ def _make_defaults_setter(
         )
         return UserConfig(
             defaults=new_defaults,
-            telemetry=current.telemetry,
             mcp=current.mcp,
             logging=current.logging,
             auth=current.auth,
         )
 
     return _set
-
-
-def _set_telemetry_disabled(current: UserConfig, value: str | None) -> UserConfig:
-    if value is None:
-        new_telemetry = TelemetryConfig(disabled=None)
-    else:
-        lower = value.strip().lower()
-        if lower in ("true", "1", "yes", "on"):
-            new_telemetry = TelemetryConfig(disabled=True)
-        elif lower in ("false", "0", "no", "off"):
-            new_telemetry = TelemetryConfig(disabled=False)
-        else:
-            raise ValueError(
-                f"telemetry.disabled {value!r} cannot be interpreted as a boolean; "
-                "use 'true' or 'false'"
-            )
-    return UserConfig(
-        defaults=current.defaults,
-        telemetry=new_telemetry,
-        mcp=current.mcp,
-        logging=current.logging,
-        auth=current.auth,
-    )
 
 
 def _set_mcp_workspace_allowlist(current: UserConfig, value: str | None) -> UserConfig:
@@ -612,7 +533,6 @@ def _set_mcp_workspace_allowlist(current: UserConfig, value: str | None) -> User
         new_mcp = McpConfig(workspace_allowlist=names or None)
     return UserConfig(
         defaults=current.defaults,
-        telemetry=current.telemetry,
         mcp=new_mcp,
         logging=current.logging,
         auth=current.auth,
@@ -643,7 +563,6 @@ def _set_logging_level(current: UserConfig, value: str | None) -> UserConfig:
     new_logging = LoggingConfig(level=value)
     return UserConfig(
         defaults=current.defaults,
-        telemetry=current.telemetry,
         mcp=current.mcp,
         logging=new_logging,
         auth=current.auth,
@@ -669,7 +588,6 @@ def _set_auth_tenant_id(current: UserConfig, value: str | None) -> UserConfig:
     new_auth = AuthConfig(tenant_id=value, client_id=current.auth.client_id)
     return UserConfig(
         defaults=current.defaults,
-        telemetry=current.telemetry,
         mcp=current.mcp,
         logging=current.logging,
         auth=new_auth,
@@ -682,7 +600,6 @@ def _set_auth_client_id(current: UserConfig, value: str | None) -> UserConfig:
     new_auth = AuthConfig(tenant_id=current.auth.tenant_id, client_id=value)
     return UserConfig(
         defaults=current.defaults,
-        telemetry=current.telemetry,
         mcp=current.mcp,
         logging=current.logging,
         auth=new_auth,
@@ -700,7 +617,6 @@ _SET_CONFIG_DISPATCH: dict[
     ("defaults", "sql_retry_deadline_s"): _make_defaults_setter("sql_retry_deadline_s"),
     ("defaults", "sql_retry_executes"): _make_defaults_setter("sql_retry_executes"),
     ("defaults", "auth_mode"): _make_defaults_setter("auth_mode"),
-    ("telemetry", "disabled"): _set_telemetry_disabled,
     ("mcp", "workspace_allowlist"): _set_mcp_workspace_allowlist,
     ("logging", "level"): _set_logging_level,
     ("auth", "tenant_id"): _set_auth_tenant_id,
@@ -721,7 +637,7 @@ def set_config(
     CLI invocations (C20).
 
     Args:
-        section: The config section name (e.g. ``"defaults"``, ``"telemetry"``).
+        section: The config section name (e.g. ``"defaults"``, ``"mcp"``).
         key: The key within the section.
         value: The new value (as a string; numeric/bool keys are coerced), or
                *None* to clear (unset) the key.

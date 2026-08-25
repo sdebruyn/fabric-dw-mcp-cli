@@ -9,9 +9,9 @@ format directly.
 
 What these pin down is that the SDK's own request pipeline -- handler lookup,
 its built-in middleware chain, the error envelope -- serves this server's
-messages unchanged.  That pipeline includes the SDK's OpenTelemetry middleware,
-which sees only the API package's no-op provider here and must stay invisible
-either way.
+messages unchanged.  The server installs no middleware of its own, so anything
+that appears in that pipeline arrives from the SDK and has to stay invisible on
+the wire.
 """
 
 from __future__ import annotations

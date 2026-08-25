@@ -614,13 +614,14 @@ class TestEveryDestructiveToolIsGuarded:
 
         from fabric_dw.mcp.server import mcp  # noqa: PLC0415
 
-        fn = mcp._tool_manager.get_tool(tool_name).fn
+        tool = mcp._tool_manager.get_tool(tool_name)
+        assert tool is not None, f"{tool_name} is declared destructive but not registered"
         env = {k: v for k, v in os.environ.items() if k != "FABRIC_MCP_ALLOW_DESTRUCTIVE"}
         with (
             patch.dict(os.environ, env, clear=True),
             pytest.raises(ToolError, match="FABRIC_MCP_ALLOW_DESTRUCTIVE"),
         ):
-            await fn()
+            await tool.fn()
 
     def test_registry_matches_the_registered_tools(self) -> None:
         """Every declared destructive name is a tool the server actually registers."""

@@ -1,20 +1,25 @@
-"""Ordinary CLI and MCP execution must not pull in a telemetry exporter.
+"""Ordinary use of fabric-dw must not drag in an observability backend.
 
-The failure this guards against is not a crash, it is a dependency creeping back
-in through a transitive import and quietly re-acquiring the process-global
-OpenTelemetry providers.  ``sys.modules`` is the cheap and exact signal: an
-exporter cannot start a worker thread, write an offline-storage directory, or
-contact an ingestion endpoint without first being imported.
+``fabric_dw`` is imported into processes it does not own: an MCP host, a dbt
+run, a notebook.  Two families of module are therefore off limits no matter how
+they arrive, because both take effect process-wide rather than for this package:
+
+- ``opentelemetry.sdk`` and ``opentelemetry.exporter`` own the concrete tracer
+  and logger providers, and installing one replaces whatever the host process
+  had.  (``opentelemetry.api`` is a different thing: it resolves to a no-op
+  provider, it is a dependency of the MCP SDK, and it is fine.)
+- ``azure.monitor`` starts a background exporter with its own worker thread,
+  network egress and on-disk spool directory.
+
+A transitive import is enough to cause all of that, which is why this asserts on
+``sys.modules`` rather than on any particular call.  It is also why nothing here
+has to run anything: if the module is absent, none of its behaviour is
+reachable.
 
 Each check runs in a fresh interpreter.  In-process it would be worthless: the
 rest of the suite has already imported a great deal by the time this file runs,
 and a module another test pulled in would either mask a regression or invent one
 depending on the run order.
-
-``opentelemetry.sdk`` is named alongside the Azure packages because it is the
-half that owns providers, processors and exporters.  ``opentelemetry.api``
-resolves to a no-op provider and is a dependency of the MCP SDK, so its presence
-says nothing either way.
 """
 
 from __future__ import annotations
@@ -65,8 +70,8 @@ assert len(tools) > 100, len(tools)
         ("mcp tools/list", _LIST_MCP_TOOLS),
     ],
 )
-def test_no_exporter_module_is_imported(label: str, snippet: str) -> None:
-    """No exporter module is present after *snippet* has run."""
+def test_no_backend_module_is_imported(label: str, snippet: str) -> None:
+    """None of the forbidden modules is present after *snippet* has run."""
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", snippet + _REPORT],
         capture_output=True,
@@ -78,4 +83,4 @@ def test_no_exporter_module_is_imported(label: str, snippet: str) -> None:
     assert result.returncode == 0, f"{label} failed:\n{result.stdout}\n{result.stderr}"
     line = next(ln for ln in result.stdout.splitlines() if ln.startswith("FORBIDDEN:"))
     imported = [m for m in line.removeprefix("FORBIDDEN:").split(",") if m]
-    assert not imported, f"{label} imported exporter modules: {imported}"
+    assert not imported, f"{label} imported: {imported}"
