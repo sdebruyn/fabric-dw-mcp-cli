@@ -57,13 +57,17 @@ _CLI_RUNNER = [
 
 
 def _env(config_home: Path) -> dict[str, str]:
-    """Return the child environment with every config input neutralised.
+    """Return the child environment with the two inputs that matter neutralised.
 
-    Both the config file and ``FABRIC_AUTH`` feed the root callback, and either
-    one can change which teardown path the child takes or stop it from starting
-    at all: an unrecognised ``FABRIC_AUTH`` raises a usage error before the
-    command body runs, which would fail the local variant on a developer machine
-    while its stderr was perfectly clean.
+    The config file and ``FABRIC_AUTH`` are the ones that can stop the child
+    before it opens anything: an unrecognised ``FABRIC_AUTH`` raises a usage
+    error inside the root callback, which would fail the local variant on a
+    developer machine while its stderr was perfectly clean, and a developer's
+    real config could name defaults that change which teardown path runs.
+
+    Other ``FABRIC_*`` variables are deliberately left inherited.  The retry and
+    default-workspace ones are read further down, by code neither variant
+    reaches, so clearing them would suggest a sensitivity that is not there.
     """
     env = dict(os.environ)
     env["XDG_CONFIG_HOME"] = str(config_home)

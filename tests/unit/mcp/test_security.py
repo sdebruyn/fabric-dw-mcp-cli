@@ -596,9 +596,11 @@ def _destructive_tool_names() -> list[str]:
 class TestEveryDestructiveToolIsGuarded:
     """The whole destructive roster, not a spot-check of a few members.
 
-    The spot-checks elsewhere in this file each cover one tool.  These two walk
-    ``DESTRUCTIVE_TOOL_NAMES`` so a tool declared destructive but not actually
-    refused, or refused but never declared, fails here instead of shipping.
+    The spot-checks elsewhere in this file each cover one tool.  Two of the
+    tests below walk ``DESTRUCTIVE_TOOL_NAMES`` instead, so a tool declared
+    destructive but not actually refused, or refused but never declared, fails
+    here rather than shipping.  The third guards the walk itself: an empty
+    registry would make both of the others pass without checking anything.
     """
 
     def test_the_registry_is_populated(self) -> None:

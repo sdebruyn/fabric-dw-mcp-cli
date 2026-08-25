@@ -1,11 +1,20 @@
 """Shared live MCP tool introspection helper for unit tests.
 
-Single source of truth: build a fresh MCP server via the production
-registration path (``MCPServer`` + ``register_all``) and enumerate all
-registered tools.  Used by:
+Two things every test that reasons about the whole tool roster needs: a way to
+enumerate it, and the floor it must not fall below.
+
+:func:`collect_live_mcp_tool_names` is the single source of truth for the first,
+building a fresh MCP server through the production registration path
+(``MCPServer`` + ``register_all``).  Used by:
 
 - ``tests/unit/mcp/test_contract.py`` — contract / invariant checks
 - ``tests/unit/mcp/test_server.py`` — registration property checks
+
+:data:`MIN_TOOL_COUNT` is the second, and lives here rather than in either test
+module so both assert against one number.  Used by:
+
+- ``tests/unit/mcp/test_contract.py`` — the protocol-level roster check
+- ``tests/unit/mcp/test_protocol.py`` — the raw JSON-RPC roster check
 """
 
 from __future__ import annotations
