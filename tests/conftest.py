@@ -128,7 +128,20 @@ _SDK_ENV_VARS = (
     "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
     "APPLICATIONINSIGHTS_SDKSTATS_DISABLED",
     "APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED",
+    "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED",
+    "OTEL_EXPERIMENTAL_RESOURCE_DETECTORS",
 )
+
+# Kept deliberately wider than what ``_get_tracer()`` leaves behind today.  Most
+# of these are now applied inside ``telemetry._scoped_env_defaults`` and restored
+# by the code itself, so this fixture is a backstop rather than the mechanism.
+# The two that genuinely survive a real ``_get_tracer()`` are
+# ``APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL`` and
+# ``APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED``; both are read
+# after construction, so the source cannot restore them.  A variable added to
+# ``_SCOPED_SIDE_CHANNELS_OFF`` belongs here too: if the scoping is ever dropped
+# the leak should show up as a test failure, not as a variable quietly set for
+# the rest of the pytest process.
 
 
 @pytest.fixture(autouse=True)
@@ -142,7 +155,7 @@ def _restore_sdk_env() -> Generator[None, None, None]:
     ``test_telemetry_commands.py``.
 
     Deliberately unconditional rather than gated on
-    ``_TELEMETRY_SELF_MANAGED_MODULES``: the cost is a dict of five lookups per
+    ``_TELEMETRY_SELF_MANAGED_MODULES``: the cost is one dict of lookups per
     test, and gating would mean a future module that reaches ``_get_tracer()``
     silently reintroduces the leak until someone remembers to extend the
     frozenset.  Nothing depends on these variables surviving a test.

@@ -1176,6 +1176,8 @@ _WATCHED_OTEL_VARS = (
     "OTEL_LOGS_EXPORTER",
     "APPLICATIONINSIGHTS_SDKSTATS_DISABLED",
     "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED",
+    "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL",
+    "OTEL_EXPERIMENTAL_RESOURCE_DETECTORS",
 )
 #
 # The real-process check was run by hand against the locked versions: point
@@ -1219,8 +1221,10 @@ def _run_get_tracer(
 
     # Start from a known-clean slate so a value inherited from the surrounding
     # process cannot make these tests pass for the wrong reason. Teardown is
-    # handled by the autouse _restore_sdk_env fixture, which also covers the
-    # assignments _get_tracer() makes directly to os.environ.
+    # handled by the autouse _restore_sdk_env fixture: monkeypatch.delenv records
+    # nothing when the key is already absent, so a raw setdefault inside
+    # _get_tracer() would otherwise survive teardown. Every variable _get_tracer()
+    # writes must therefore be in that fixture's _SDK_ENV_VARS as well as here.
     for key in _WATCHED_OTEL_VARS:
         monkeypatch.delenv(key, raising=False)
     for key, value in (preset or {}).items():
@@ -1274,9 +1278,14 @@ def _control_plane_is_off(env_at_call: dict[str, str | None]) -> bool:
 
     Same composition as :func:`_resolves_disabled`: the environment as the
     library sees it at call time, fed through the library's own gate, so this
-    cannot pass while the control plane is live.  ``get_configuration_manager``
-    returns ``None`` only on the disabled branch, and that branch is checked
-    before the singleton is built, so asking is free of side effects.
+    cannot pass while the control plane is live.
+
+    Not side-effect free on the enabled branch: ``get_configuration_manager()``
+    constructs and caches the process-global ``_ConfigurationManager`` there.  No
+    thread starts and no request is made (the worker starts from
+    ``initialize()``, which only ``BaseExporter.__init__`` calls), so the cost is
+    a cached singleton for the rest of the session.  On the disabled branch the
+    gate returns before the singleton is touched.
     """
     from azure.monitor.opentelemetry.exporter._configuration._state import (  # noqa: PLC0415
         get_configuration_manager,
@@ -1584,6 +1593,148 @@ def test_operator_can_re_enable_the_onesettings_control_plane(
         )
         assert not _control_plane_is_off(at_call), (
             "an operator who asked for the control plane must get it"
+        )
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_get_tracer_disables_the_azure_vm_resource_detector(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """The resource detectors must be off, or every run probes the Azure IMDS endpoint.
+
+    ``configure_azure_monitor`` does
+    ``environ.setdefault(OTEL_EXPERIMENTAL_RESOURCE_DETECTORS,
+    "azure_app_service,azure_vm")`` and then re-runs ``Resource.create()``. The
+    ``azure_vm`` detector calls ``urlopen()`` against 169.254.169.254, on both
+    surfaces, on every telemetry-enabled process. Measured before this was set:
+    ``dns:169.254.169.254:80`` followed by ``tcp:('169.254.169.254', 80)``;
+    after: neither.
+
+    Nothing about the VM reaches the wire today, but on an Azure VM the detector
+    merges ``cloud.resource_id`` (subscription id, resource group and VM name),
+    ``host.id`` and ``host.name`` into the Resource, which is one configuration
+    change away from being exported.
+
+    Note what this test can and cannot do, same caveat as the OTEL_*_EXPORTER
+    tests above: ``configure_azure_monitor`` is mocked here, so no
+    ``Resource.create()`` runs and no probe could happen either way. What is
+    asserted is the environment the library sees at the moment it would decide,
+    which is the fact that determines the outcome.
+    """
+    mod, at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request)
+    try:
+        assert at_call["OTEL_EXPERIMENTAL_RESOURCE_DETECTORS"] == "", (
+            "the Azure resource detectors were left enabled, so azure_vm probes IMDS"
+        )
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_operator_can_re_enable_the_resource_detectors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """setdefault, so an operator who wants the Azure detectors keeps them.
+
+    ``azure_app_service`` rather than ``azure_vm`` as the preset: this package's
+    own ``_build_otel_resource`` calls ``Resource.create()`` too, inside the
+    scoped window, so an operator asking for ``azure_vm`` really does get an IMDS
+    request here, and a unit test must make no network call. That is itself worth
+    recording: the window has to start before ``_build_otel_resource``, not just
+    before ``configure_azure_monitor``.
+    """
+    mod, at_call, _after = _run_get_tracer(
+        monkeypatch,
+        tmp_path,
+        request,
+        preset={"OTEL_EXPERIMENTAL_RESOURCE_DETECTORS": "azure_app_service"},
+    )
+    try:
+        assert at_call["OTEL_EXPERIMENTAL_RESOURCE_DETECTORS"] == "azure_app_service"
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_get_tracer_hands_the_host_environment_back(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """fabric-dw can be embedded, so its side-channel choices must not outlive the call.
+
+    A host that later builds its own Azure Monitor exporter would otherwise
+    silently inherit them: a disabled OneSettings control plane means it also
+    loses its own offline-storage kill switch, and it never asked for that. The
+    provider-ownership check in ``telemetry_spans`` does not protect it, because
+    these variables are written long before that check runs (#1052).
+
+    The two exceptions are asserted in the other direction rather than left
+    untested, because both are deliberate; see
+    ``test_get_tracer_keeps_the_two_unrestorable_switches_set``.
+    """
+    mod, at_call, after = _run_get_tracer(monkeypatch, tmp_path, request)
+    try:
+        for var in mod._SCOPED_SIDE_CHANNELS_OFF:
+            assert at_call[var] is not None, f"{var} must be set while the SDK is built"
+            assert after[var] is None, (
+                f"{var} escaped into the host process; it started unset and must end unset"
+            )
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_get_tracer_restores_an_operator_value_rather_than_its_own(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Restoring means putting back what was there, not deleting the key."""
+    preset = {"APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED": "false"}
+    mod, at_call, after = _run_get_tracer(monkeypatch, tmp_path, request, preset=preset)
+    try:
+        assert at_call["APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"] == "false"
+        assert after["APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"] == "false"
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_get_tracer_keeps_the_two_unrestorable_switches_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Statsbeat is the one switch that must survive the call, and here is why.
+
+    ``is_statsbeat_enabled()`` re-reads the environment on every call, and
+    ``BaseExporter._should_collect_stats()`` calls it on every export, so
+    restoring the variable flips statsbeat bookkeeping back on inside this
+    process for the rest of its life. Measured on a live log exporter with the
+    variable removed after init: ``is_statsbeat_enabled()`` False -> True and
+    ``_should_collect_stats()`` False -> True.
+
+    So this asserts the leak rather than the absence of one. If a future version
+    of the library moves that read to construction time, this test is the place
+    that says the switch can then move into ``_SCOPED_SIDE_CHANNELS_OFF``.
+
+    (``APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED`` is the other
+    one, for the same reason: it is read at export time. It is set inside
+    ``telemetry_spans`` and covered by that module's tests.)
+    """
+    mod, at_call, after = _run_get_tracer(monkeypatch, tmp_path, request)
+    try:
+        var = "APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL"
+        assert at_call[var] == "true"
+        assert after[var] == "true", (
+            "statsbeat must stay disabled for the exporter's lifetime; restoring it "
+            "re-arms statsbeat bookkeeping inside this process"
+        )
+        assert var not in mod._SCOPED_SIDE_CHANNELS_OFF, (
+            "statsbeat cannot be scoped and restored; see the comment at its "
+            "assignment site in telemetry.py"
         )
     finally:
         mod._sdk_initialised = False

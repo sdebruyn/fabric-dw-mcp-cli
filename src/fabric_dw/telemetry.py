@@ -38,26 +38,41 @@ Architecture notes
   it, and its spans keep going wherever it chose.  That is correct and
   desirable; what this prevents is *this package* adding an export path the user
   did not ask for.
-- Four side channels of the Azure Monitor stack are switched off, each behind an
+- Five side channels of the Azure Monitor stack are switched off, each behind an
   environment variable of its own that nothing in the library's API surface
-  points to, and each found only by measuring a live process:
+  points to, and each found only by measuring a live process.  This list is the
+  checklist to re-verify, by measurement, on every bump of this dependency:
 
-  1. ``APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL`` (statsbeat, plus its Azure
-     IMDS probe).
+  1. ``APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL`` (statsbeat, including the
+     IMDS probe statsbeat itself makes; note that this does NOT cover the
+     separate IMDS probe from the resource detectors, which is number 5).
+     Set here, and deliberately never restored: see the comment at its
+     assignment site.
   2. ``APPLICATIONINSIGHTS_SDKSTATS_DISABLED`` (customer sdkstats, separate from
      statsbeat, which would otherwise run its own metrics pipeline on our
-     connection string).
+     connection string).  Set and restored, via ``_SCOPED_SIDE_CHANNELS_OFF``.
   3. ``APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED`` (the
-     ``_OTELRESOURCE_`` ``MetricData`` envelope appended to every span export,
-     set in :mod:`fabric_dw.telemetry_spans`).
+     ``_OTELRESOURCE_`` ``MetricData`` envelope appended to every span export).
+     Set in :mod:`fabric_dw.telemetry_spans`, and only on the path where that
+     module actually builds an exporter: a host process that already owns the
+     global ``TracerProvider`` returns before this point, which is correct,
+     because in that case no exporter of ours exists to smuggle a metric.  Never
+     restored either: it is read at export time, not at construction.
   4. ``APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED`` (the OneSettings control
      plane: an hourly outbound poll that also lets Microsoft toggle this
-     installation's offline storage remotely, #1053).
+     installation's offline storage remotely, #1053).  Set and restored.
+  5. ``OTEL_EXPERIMENTAL_RESOURCE_DETECTORS`` (``configure_azure_monitor``
+     defaults it to ``azure_app_service,azure_vm`` and re-runs
+     ``Resource.create()``; the ``azure_vm`` detector calls the Azure IMDS
+     endpoint at 169.254.169.254 on every telemetry-enabled process, and on an
+     Azure VM would merge ``cloud.resource_id``, ``host.id`` and ``host.name``
+     into the exported Resource).  Set and restored.
 
-  Treat that as a property of this stack rather than as four coincidences:
-  assume a fifth exists and check for it by measurement, not by reading the
+  Treat that as a property of this stack rather than as five coincidences:
+  assume a sixth exists and check for it by measurement, not by reading the
   configuration surface, whenever this dependency is upgraded or a new exporter
-  is added.
+  is added.  Every one of the five was found this way, and none of them by
+  reading the library's API surface.
 - ``shutdown_on_exit`` is disabled; a bounded ``force_flush`` + ``provider.shutdown()``
   (≤8 s total) is performed at app exit in a daemon thread so the CLI never hangs.
   The explicit ``force_flush`` call before ``shutdown()`` is required to reliably
@@ -691,6 +706,68 @@ _OTEL_EXPORTERS_OFF: dict[str, str] = {
     "OTEL_METRICS_EXPORTER": "none",
 }
 
+# Side channels switched off with ``setdefault`` semantics AND restored
+# afterwards, so an embedding host is not left holding this package's choices
+# (#1052).  Each one was measured to be read only while the exporters are being
+# built, which is what makes restoring safe.  Two related variables are
+# deliberately NOT in here; both are documented at their assignment sites.
+_SCOPED_SIDE_CHANNELS_OFF: dict[str, str] = {
+    # The OneSettings control plane (#1053).  Its only read is
+    # get_configuration_manager(), from BaseExporter.__init__.  Measured after a
+    # restore, over a 35 s window covering the worker's 5-15 s startup delay: no
+    # ConfigurationWorker thread and no contact with the settings endpoint.
+    "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED": "true",
+    # Customer sdkstats.  The export-time checks read `manager.is_enabled`, a
+    # cached attribute rather than the environment, so a restore does not re-arm
+    # it.  Measured: `_should_collect_customer_sdkstats()` stays False on the
+    # live log exporter after the variable is removed.
+    "APPLICATIONINSIGHTS_SDKSTATS_DISABLED": "true",
+    # Resource detectors.  configure_azure_monitor does
+    # `environ.setdefault(OTEL_EXPERIMENTAL_RESOURCE_DETECTORS,
+    # "azure_app_service,azure_vm")` and then re-runs Resource.create(); the
+    # azure_vm detector calls urlopen() against the Azure IMDS endpoint at
+    # 169.254.169.254 on every telemetry-enabled process, on both surfaces.
+    # Measured before this line existed: `dns:169.254.169.254:80` followed by
+    # `tcp:('169.254.169.254', 80)`.  Nothing about the VM reaches the wire
+    # today, but on an Azure VM the detector merges `cloud.resource_id`
+    # (subscription id, resource group and VM name), `host.id` and `host.name`
+    # into the Resource, one configuration change away from being exported.
+    # Read only inside Resource.create(), so restoring is safe.
+    "OTEL_EXPERIMENTAL_RESOURCE_DETECTORS": "",
+}
+
+
+@contextlib.contextmanager
+def _scoped_env_defaults(defaults: dict[str, str]) -> Iterator[None]:
+    """Apply *defaults* with ``setdefault`` semantics, then put back what was there.
+
+    ``setdefault`` so an operator's explicit value still wins, and a restore
+    because fabric-dw can be embedded as a library: a host that later builds its
+    own Azure Monitor exporter must get its own defaults, not this package's.
+    Without the restore that leak is silent and one-directional, and the
+    provider-ownership check in :mod:`fabric_dw.telemetry_spans` does not cover
+    it, because these are written long before that check runs.
+
+    Only for variables measured to be read while the exporters are being built.
+    One read later, at export time say, must be left set for the exporter's
+    lifetime instead: restoring it would quietly re-arm the channel inside this
+    very process.
+
+    Args:
+        defaults: Variable name to the value this package wants as the default.
+    """
+    previous = {key: os.environ.get(key) for key in defaults}
+    for key, value in defaults.items():
+        os.environ.setdefault(key, value)
+    try:
+        yield
+    finally:
+        for key, old in previous.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+
 
 def _harden_azure_sdk_logging() -> None:
     """Raise the level of noisy Azure SDK loggers to CRITICAL and detach them from root.
@@ -860,136 +937,130 @@ def _get_tracer() -> object | None:
             # an operator setting it to "false" genuinely re-enables collection.  That
             # makes it a real override rather than a discarded value (unlike the
             # OTEL_*_EXPORTER pair below), and the failure direction is benign: more
-            # Microsoft-internal telemetry, opted into deliberately.
-            os.environ.setdefault("APPLICATIONINSIGHTS_SDKSTATS_DISABLED", "true")
-
-            # OneSettings control plane: the third separately-gated channel set
-            # here, and the only side channel of the four that is also an INBOUND
-            # one (#1053).
+            # Microsoft-internal telemetry, opted into deliberately.  It is applied,
+            # and restored, by the _SCOPED_SIDE_CHANNELS_OFF block below.
             #
-            # BaseExporter.__init__ calls get_configuration_manager(), which stands
-            # up a singleton manager plus a `ConfigurationWorker` daemon thread that
-            # polls https://settings.sdk.monitor.azure.com/ roughly hourly and
-            # describes this process to it (os, rp, attach, component, version,
-            # region and the instrumentation key).  The response is a feature-flag
-            # document, and the exporter registers a callback on it so Microsoft can
-            # toggle this installation's offline storage remotely.  The log exporter
-            # alone is enough to start it, so it ran on every CLI invocation and for
-            # the life of every MCP server.
-            #
-            # Two reasons to switch it off rather than document it: docs/telemetry.md
-            # presents a closed list of what leaves the machine and this was not on
-            # it, and a third party changing an installation's storage behaviour at
-            # runtime is not something this package should accept on the user's
-            # behalf.
-            #
-            # setdefault, like the two above: the gate is `== "true"`, so an operator
-            # setting any other value keeps the control plane and its remote
-            # kill-switch.
-            os.environ.setdefault("APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED", "true")
+            # The statsbeat switch above is the one exception to that restore, and
+            # deliberately so.  is_statsbeat_enabled() re-reads the environment on
+            # every call, and BaseExporter._should_collect_stats() calls it on every
+            # export, so putting the variable back would flip statsbeat bookkeeping
+            # on inside this process for the rest of its life.  Measured with the
+            # variable removed after init: is_statsbeat_enabled() False -> True and
+            # _should_collect_stats() False -> True on the live log exporter.  No
+            # statsbeat manager is ever initialised so nothing transmits, but the
+            # guarantee here is that the switch is off, not that the blast radius is
+            # small.  So it stays set for the exporter's lifetime and an embedding
+            # host inherits it.  Pre-existing; unchanged by #1052.
 
-            # Build the OTel Resource that populates native Part A fields and prevents
-            # hostname fallback for cloud_RoleInstance / ai.device.id (#477).
-            resource = _build_otel_resource(_current_surface)
+            # Everything from here through the span-pipeline install runs with the
+            # restorable side channels switched off.  The window deliberately extends
+            # PAST configure_azure_monitor: install_mcp_span_pipeline builds a second
+            # AzureMonitorTraceExporter afterwards, and that constructor reaches the
+            # very same control-plane and resource-detector code.
+            with _scoped_env_defaults(_SCOPED_SIDE_CHANNELS_OFF):
+                # Build the OTel Resource that populates native Part A fields and prevents
+                # hostname fallback for cloud_RoleInstance / ai.device.id (#477).
+                resource = _build_otel_resource(_current_surface)
 
-            configure_kwargs: dict[str, object] = {
-                "connection_string": _DEFAULT_CONNECTION_STRING,
-                "logger_name": "fabric_dw.telemetry",
-                # disable_logging=False (default) is intentional: the log/event
-                # exporter must be active so customEvents land in the customEvents
-                # table.  Without the logs pipeline, log records carrying
-                # microsoft.custom_event.name are silently dropped and events never
-                # appear in the App Insights "Usage → Events" or "Usage → Users" blades.
-                "disable_logging": False,
-                # NOTE: these next two are statements of intent, NOT the mechanism.
-                # azure-monitor-opentelemetry clobbers both with its own defaults
-                # (see _OTEL_EXPORTERS_OFF below, which is what actually disables
-                # these pipelines).  They are kept so the intent is visible at the
-                # call site and so the arguments become effective for free if
-                # upstream ever stops overwriting caller kwargs.
-                "disable_metrics": True,
-                "disable_tracing": True,
-                # A1: disable PerformanceCounters — not covered by disable_metrics in
-                # azure-monitor-opentelemetry 1.8+; its _get_processor_time callback
-                # divides by zero on short-lived processes and logs a traceback (#399).
-                "enable_performance_counters": False,
-                # A2: belt-and-suspenders — QuickPulse must never ping the LiveEndpoint.
-                # Suppresses _quickpulse/_exporter.py::_ping tracebacks on connection
-                # refused even if the default changes in a future SDK version (#411).
-                "enable_live_metrics": False,
-                # B2: disable unbounded (30 s) atexit flush — we do our own bounded flush.
-                "shutdown_on_exit": False,
-                # B1: disable all auto-HTTP / Azure SDK instrumentors (privacy).
-                "instrumentation_options": _INSTRUMENTATION_OPTIONS,
-            }
-            # Pass the resource when available so native Part A fields are populated
-            # (cloud_RoleName, cloud_RoleInstance, application_Version, ai.device.id).
-            if resource is not None:
-                configure_kwargs["resource"] = resource
+                configure_kwargs: dict[str, object] = {
+                    "connection_string": _DEFAULT_CONNECTION_STRING,
+                    "logger_name": "fabric_dw.telemetry",
+                    # disable_logging=False (default) is intentional: the log/event
+                    # exporter must be active so customEvents land in the customEvents
+                    # table.  Without the logs pipeline, log records carrying
+                    # microsoft.custom_event.name are silently dropped and events never
+                    # appear in the App Insights "Usage → Events" or "Usage → Users" blades.
+                    "disable_logging": False,
+                    # NOTE: these next two are statements of intent, NOT the mechanism.
+                    # azure-monitor-opentelemetry clobbers both with its own defaults
+                    # (see _OTEL_EXPORTERS_OFF below, which is what actually disables
+                    # these pipelines).  They are kept so the intent is visible at the
+                    # call site and so the arguments become effective for free if
+                    # upstream ever stops overwriting caller kwargs.
+                    "disable_metrics": True,
+                    "disable_tracing": True,
+                    # A1: disable PerformanceCounters — not covered by disable_metrics in
+                    # azure-monitor-opentelemetry 1.8+; its _get_processor_time callback
+                    # divides by zero on short-lived processes and logs a traceback (#399).
+                    "enable_performance_counters": False,
+                    # A2: belt-and-suspenders — QuickPulse must never ping the LiveEndpoint.
+                    # Suppresses _quickpulse/_exporter.py::_ping tracebacks on connection
+                    # refused even if the default changes in a future SDK version (#411).
+                    "enable_live_metrics": False,
+                    # B2: disable unbounded (30 s) atexit flush — we do our own bounded flush.
+                    "shutdown_on_exit": False,
+                    # B1: disable all auto-HTTP / Azure SDK instrumentors (privacy).
+                    "instrumentation_options": _INSTRUMENTATION_OPTIONS,
+                }
+                # Pass the resource when available so native Part A fields are populated
+                # (cloud_RoleName, cloud_RoleInstance, application_Version, ai.device.id).
+                if resource is not None:
+                    configure_kwargs["resource"] = resource
 
-            # PRIVACY, load-bearing.  These two env vars are the ONLY working way
-            # to switch off the trace and metric pipelines, and they must be set
-            # HARD, not with setdefault.
-            #
-            # Why the kwargs above do not do it: in azure-monitor-opentelemetry
-            # 1.8.9 `_get_configurations()` copies the caller's kwargs into a dict
-            # and THEN runs a `_default_*` pass in which `_default_disable_tracing`
-            # / `_default_disable_metrics` assign unconditionally, clobbering
-            # whatever the caller passed.  Contrast `_default_connection_string`,
-            # which early-returns when the key is already present.  Those defaults
-            # consult only these env vars, and only for an exact `== "none"` after
-            # lower/strip.
-            #
-            # Why NOT setdefault: any pre-existing value that is not literally
-            # "none" leaves the pipeline ON, and what then gets installed is the
-            # AzureMonitorTraceExporter pointed at the maintainer's ingestion
-            # endpoint, NOT the exporter the operator asked for.  Measured:
-            #     (unset)                     -> ProxyTracerProvider, no exporters
-            #     OTEL_TRACES_EXPORTER=otlp   -> AzureMonitorTraceExporter installed
-            #     OTEL_TRACES_EXPORTER=""     -> AzureMonitorTraceExporter installed
-            # So setdefault gives the operator no control (outside the separate
-            # auto-instrumentation entry point, `== "none"` is the only thing this
-            # distro ever reads these for) and one silent third-party export path.
-            # A host process that already installed its own TracerProvider is
-            # unaffected either way: OpenTelemetry refuses to override an existing
-            # provider, so the user's provider wins.
-            #
-            # Scoped and restored, because fabric-dw can be embedded as a library
-            # and must not mutate the host process environment beyond this call.
-            # Mutating os.environ is process-global, but the window is safe: it sits
-            # inside the double-checked _sdk_init_lock so it runs exactly once, and
-            # both entry points (the CLI and the MCP server) reach it on the main
-            # thread before any transport or worker concurrency starts.
-            # OTEL_LOGS_EXPORTER is deliberately NOT touched: a user setting it to
-            # "none" disables our own customEvents, which is the safe direction.
-            _prev_otel = {k: os.environ.get(k) for k in _OTEL_EXPORTERS_OFF}
-            os.environ.update(_OTEL_EXPORTERS_OFF)
-            try:
-                configure_azure_monitor(**configure_kwargs)
-            finally:
-                for _key, _old in _prev_otel.items():
-                    if _old is None:
-                        os.environ.pop(_key, None)
-                    else:
-                        os.environ[_key] = _old
+                # PRIVACY, load-bearing.  These two env vars are the ONLY working way
+                # to switch off the trace and metric pipelines, and they must be set
+                # HARD, not with setdefault.
+                #
+                # Why the kwargs above do not do it: in azure-monitor-opentelemetry
+                # 1.8.9 `_get_configurations()` copies the caller's kwargs into a dict
+                # and THEN runs a `_default_*` pass in which `_default_disable_tracing`
+                # / `_default_disable_metrics` assign unconditionally, clobbering
+                # whatever the caller passed.  Contrast `_default_connection_string`,
+                # which early-returns when the key is already present.  Those defaults
+                # consult only these env vars, and only for an exact `== "none"` after
+                # lower/strip.
+                #
+                # Why NOT setdefault: any pre-existing value that is not literally
+                # "none" leaves the pipeline ON, and what then gets installed is the
+                # AzureMonitorTraceExporter pointed at the maintainer's ingestion
+                # endpoint, NOT the exporter the operator asked for.  Measured:
+                #     (unset)                     -> ProxyTracerProvider, no exporters
+                #     OTEL_TRACES_EXPORTER=otlp   -> AzureMonitorTraceExporter installed
+                #     OTEL_TRACES_EXPORTER=""     -> AzureMonitorTraceExporter installed
+                # So setdefault gives the operator no control (outside the separate
+                # auto-instrumentation entry point, `== "none"` is the only thing this
+                # distro ever reads these for) and one silent third-party export path.
+                # A host process that already installed its own TracerProvider is
+                # unaffected either way: OpenTelemetry refuses to override an existing
+                # provider, so the user's provider wins.
+                #
+                # Scoped and restored, because fabric-dw can be embedded as a library
+                # and must not mutate the host process environment beyond this call.
+                # Mutating os.environ is process-global, but the window is safe: it sits
+                # inside the double-checked _sdk_init_lock so it runs exactly once, and
+                # both entry points (the CLI and the MCP server) reach it on the main
+                # thread before any transport or worker concurrency starts.
+                # OTEL_LOGS_EXPORTER is deliberately NOT touched: a user setting it to
+                # "none" disables our own customEvents, which is the safe direction.
+                _prev_otel = {k: os.environ.get(k) for k in _OTEL_EXPORTERS_OFF}
+                os.environ.update(_OTEL_EXPORTERS_OFF)
+                try:
+                    configure_azure_monitor(**configure_kwargs)
+                finally:
+                    for _key, _old in _prev_otel.items():
+                        if _old is None:
+                            os.environ.pop(_key, None)
+                        else:
+                            os.environ[_key] = _old
 
-            # MCP protocol spans (#1049).  Only on the MCP surface: the CLI
-            # produces no protocol spans, so installing a trace pipeline there
-            # would claim the process-wide TracerProvider and run a batch
-            # exporter thread for a stream that is always empty.
-            if _current_surface == "mcp":
-                from fabric_dw.telemetry_spans import (  # noqa: PLC0415
-                    install_mcp_span_pipeline,
-                )
+                # MCP protocol spans (#1049).  Only on the MCP surface: the CLI
+                # produces no protocol spans, so installing a trace pipeline there
+                # would claim the process-wide TracerProvider and run a batch
+                # exporter thread for a stream that is always empty.
+                if _current_surface == "mcp":
+                    from fabric_dw.telemetry_spans import (  # noqa: PLC0415
+                        install_mcp_span_pipeline,
+                    )
 
-                # Load-bearing, not bookkeeping: flush_telemetry and
-                # shutdown_telemetry must not touch a TracerProvider this
-                # package did not install.  When a host application already had
-                # one, shutting it down at our exit would kill the host's own
-                # exporter for the rest of its life.
-                _span_pipeline_installed = install_mcp_span_pipeline(
-                    _DEFAULT_CONNECTION_STRING, resource
-                )
+                    # Load-bearing, not bookkeeping: flush_telemetry and
+                    # shutdown_telemetry must not touch a TracerProvider this
+                    # package did not install.  When a host application already had
+                    # one, shutting it down at our exit would kill the host's own
+                    # exporter for the rest of its life.
+                    _span_pipeline_installed = install_mcp_span_pipeline(
+                        _DEFAULT_CONNECTION_STRING, resource
+                    )
+
             # Obtain the OTel Logger via the global LoggerProvider set up by
             # configure_azure_monitor.  This logger is used in emit_event to fire
             # customEvents as log records (not spans).
