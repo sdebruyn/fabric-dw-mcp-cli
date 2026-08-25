@@ -18,7 +18,6 @@ from fabric_dw.config import (
     Defaults,
     LoggingConfig,
     McpConfig,
-    TelemetryConfig,
     UserConfig,
     clear_config,
     default_path,
@@ -674,7 +673,6 @@ def test_defaults_only_file_loads_with_new_sections_empty(tmp_path: Path) -> Non
     cfg = load_config(path)
     assert cfg.defaults.workspace == "SalesWS"
     assert cfg.defaults.warehouse == "SalesDW"
-    assert cfg.telemetry.disabled is None
     assert cfg.mcp.workspace_allowlist is None
     assert cfg.logging.level is None
     assert cfg.auth.tenant_id is None
@@ -708,75 +706,8 @@ def test_load_config_toml_float_deadline_coerced_to_int(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# TelemetryConfig round-trip
+# Empty sections are omitted rather than written out
 # ---------------------------------------------------------------------------
-
-
-def test_round_trip_telemetry_disabled_true(tmp_path: Path) -> None:
-    """[telemetry] disabled = true survives save/load."""
-    path = tmp_path / "config.toml"
-    cfg = UserConfig(telemetry=TelemetryConfig(disabled=True))
-    save_config(cfg, path)
-    loaded = load_config(path)
-    assert loaded.telemetry.disabled is True
-
-
-def test_round_trip_telemetry_disabled_false(tmp_path: Path) -> None:
-    """[telemetry] disabled = false survives save/load."""
-    path = tmp_path / "config.toml"
-    cfg = UserConfig(telemetry=TelemetryConfig(disabled=False))
-    save_config(cfg, path)
-    loaded = load_config(path)
-    assert loaded.telemetry.disabled is False
-
-
-def test_telemetry_section_absent_when_none(tmp_path: Path) -> None:
-    """When telemetry.disabled is None, the [telemetry] section is not written."""
-    path = tmp_path / "config.toml"
-    cfg = UserConfig(defaults=Defaults(workspace="WS"))
-    save_config(cfg, path)
-    content = path.read_text(encoding="utf-8")
-    assert "[telemetry]" not in content
-
-
-def test_telemetry_disabled_integer_one_parsed_as_true(tmp_path: Path) -> None:
-    """[telemetry] disabled = 1 (integer) is treated as disabled=True."""
-    path = tmp_path / "config.toml"
-    path.write_text("[telemetry]\ndisabled = 1\n", encoding="utf-8")
-    cfg = load_config(path)
-    assert cfg.telemetry.disabled is True
-
-
-def test_telemetry_disabled_integer_zero_parsed_as_false(tmp_path: Path) -> None:
-    """[telemetry] disabled = 0 (integer) is treated as disabled=False."""
-    path = tmp_path / "config.toml"
-    path.write_text("[telemetry]\ndisabled = 0\n", encoding="utf-8")
-    cfg = load_config(path)
-    assert cfg.telemetry.disabled is False
-
-
-def test_telemetry_disabled_string_true_parsed_as_true(tmp_path: Path) -> None:
-    """[telemetry] disabled = \"true\" (string) is treated as disabled=True."""
-    path = tmp_path / "config.toml"
-    path.write_text('[telemetry]\ndisabled = "true"\n', encoding="utf-8")
-    cfg = load_config(path)
-    assert cfg.telemetry.disabled is True
-
-
-def test_telemetry_disabled_string_false_parsed_as_false(tmp_path: Path) -> None:
-    """[telemetry] disabled = \"false\" (string) must not opt out (disabled=False)."""
-    path = tmp_path / "config.toml"
-    path.write_text('[telemetry]\ndisabled = "false"\n', encoding="utf-8")
-    cfg = load_config(path)
-    assert cfg.telemetry.disabled is False
-
-
-def test_telemetry_disabled_string_zero_parsed_as_false(tmp_path: Path) -> None:
-    """[telemetry] disabled = \"0\" (string) must not opt out (disabled=False)."""
-    path = tmp_path / "config.toml"
-    path.write_text('[telemetry]\ndisabled = "0"\n', encoding="utf-8")
-    cfg = load_config(path)
-    assert cfg.telemetry.disabled is False
 
 
 def test_empty_user_config_writes_empty_file(tmp_path: Path) -> None:
@@ -787,60 +718,12 @@ def test_empty_user_config_writes_empty_file(tmp_path: Path) -> None:
     assert content.strip() == ""
 
 
-# ---------------------------------------------------------------------------
-# McpConfig round-trip
-# ---------------------------------------------------------------------------
-
-
-def test_round_trip_mcp_workspace_allowlist(tmp_path: Path) -> None:
-    """[mcp] workspace_allowlist survives save/load."""
-    path = tmp_path / "config.toml"
-    cfg = UserConfig(mcp=McpConfig(workspace_allowlist=["Sales", "Finance"]))
-    save_config(cfg, path)
-    loaded = load_config(path)
-    assert loaded.mcp.workspace_allowlist == ["Sales", "Finance"]
-
-
 def test_mcp_section_absent_when_none(tmp_path: Path) -> None:
     """When mcp fields are None, the [mcp] section is not written."""
     path = tmp_path / "config.toml"
     save_config(UserConfig(), path)
     content = path.read_text(encoding="utf-8")
     assert "[mcp]" not in content
-
-
-# ---------------------------------------------------------------------------
-# LoggingConfig round-trip
-# ---------------------------------------------------------------------------
-
-
-def test_round_trip_logging_level(tmp_path: Path) -> None:
-    """[logging] level survives save/load."""
-    path = tmp_path / "config.toml"
-    cfg = UserConfig(logging=LoggingConfig(level="DEBUG"))
-    save_config(cfg, path)
-    loaded = load_config(path)
-    assert loaded.logging.level == "DEBUG"
-
-
-# ---------------------------------------------------------------------------
-# AuthConfig round-trip
-# ---------------------------------------------------------------------------
-
-
-def test_round_trip_auth_config(tmp_path: Path) -> None:
-    """[auth] tenant_id and client_id survive save/load."""
-    path = tmp_path / "config.toml"
-    cfg = UserConfig(
-        auth=AuthConfig(
-            tenant_id="00000000-0000-0000-0000-000000000001",
-            client_id="00000000-0000-0000-0000-000000000002",
-        )
-    )
-    save_config(cfg, path)
-    loaded = load_config(path)
-    assert loaded.auth.tenant_id == "00000000-0000-0000-0000-000000000001"
-    assert loaded.auth.client_id == "00000000-0000-0000-0000-000000000002"
 
 
 # ---------------------------------------------------------------------------
@@ -853,7 +736,6 @@ def test_round_trip_all_sections(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     cfg = UserConfig(
         defaults=Defaults(workspace="WS", max_429_retries=5),
-        telemetry=TelemetryConfig(disabled=True),
         mcp=McpConfig(workspace_allowlist=["A", "B"]),
         logging=LoggingConfig(level="WARNING"),
         auth=AuthConfig(tenant_id="tid", client_id="cid"),
@@ -862,7 +744,6 @@ def test_round_trip_all_sections(tmp_path: Path) -> None:
     loaded = load_config(path)
     assert loaded.defaults.workspace == "WS"
     assert loaded.defaults.max_429_retries == 5
-    assert loaded.telemetry.disabled is True
     assert loaded.mcp.workspace_allowlist == ["A", "B"]
     assert loaded.logging.level == "WARNING"
     assert loaded.auth.tenant_id == "tid"
@@ -884,7 +765,7 @@ def test_unknown_section_ignored_on_load(tmp_path: Path) -> None:
     cfg = load_config(path)
     assert cfg.defaults.workspace == "WS"
     # No error raised, other sections default to None.
-    assert cfg.telemetry.disabled is None
+    assert cfg.mcp.workspace_allowlist is None
 
 
 # ---------------------------------------------------------------------------
@@ -941,7 +822,7 @@ def test_set_config_preserves_other_sections(tmp_path: Path) -> None:
     save_config(
         UserConfig(
             defaults=Defaults(workspace="WS"),
-            telemetry=TelemetryConfig(disabled=True),
+            logging=LoggingConfig(level="WARNING"),
         ),
         path,
     )
@@ -949,24 +830,7 @@ def test_set_config_preserves_other_sections(tmp_path: Path) -> None:
     loaded = load_config(path)
     assert loaded.defaults.workspace == "WS"
     assert loaded.defaults.warehouse == "DW"
-    assert loaded.telemetry.disabled is True  # not lost
-
-
-def test_set_config_telemetry_disabled_true(tmp_path: Path) -> None:
-    """set_config can write telemetry.disabled = True."""
-    path = tmp_path / "config.toml"
-    set_config("telemetry", "disabled", "true", path)
-    loaded = load_config(path)
-    assert loaded.telemetry.disabled is True
-
-
-def test_set_config_telemetry_disabled_false(tmp_path: Path) -> None:
-    """set_config can write telemetry.disabled = False."""
-    path = tmp_path / "config.toml"
-    save_config(UserConfig(telemetry=TelemetryConfig(disabled=True)), path)
-    set_config("telemetry", "disabled", "false", path)
-    loaded = load_config(path)
-    assert loaded.telemetry.disabled is False
+    assert loaded.logging.level == "WARNING"  # not lost
 
 
 def test_set_config_concurrent_different_sections_no_lost_update(tmp_path: Path) -> None:
@@ -981,15 +845,15 @@ def test_set_config_concurrent_different_sections_no_lost_update(tmp_path: Path)
         except Exception as exc:
             errors.append(exc)
 
-    def set_telemetry() -> None:
+    def set_level() -> None:
         try:
             for _ in range(5):
-                set_config("telemetry", "disabled", "true", path)
+                set_config("logging", "level", "DEBUG", path)
         except Exception as exc:
             errors.append(exc)
 
     t1 = threading.Thread(target=set_ws)
-    t2 = threading.Thread(target=set_telemetry)
+    t2 = threading.Thread(target=set_level)
     t1.start()
     t2.start()
     t1.join()
@@ -998,7 +862,7 @@ def test_set_config_concurrent_different_sections_no_lost_update(tmp_path: Path)
     assert not errors, f"Thread errors: {errors}"
     loaded = load_config(path)
     assert loaded.defaults.workspace == "ConcurrentWS"
-    assert loaded.telemetry.disabled is True
+    assert loaded.logging.level == "DEBUG"
 
 
 # ---------------------------------------------------------------------------
@@ -1047,7 +911,7 @@ def test_set_config_logging_level_preserves_other_sections(tmp_path: Path) -> No
     save_config(
         UserConfig(
             defaults=Defaults(workspace="WS"),
-            telemetry=TelemetryConfig(disabled=True),
+            mcp=McpConfig(workspace_allowlist=["prod"]),
         ),
         path,
     )
@@ -1055,7 +919,7 @@ def test_set_config_logging_level_preserves_other_sections(tmp_path: Path) -> No
     loaded = load_config(path)
     assert loaded.logging.level == "DEBUG"
     assert loaded.defaults.workspace == "WS"
-    assert loaded.telemetry.disabled is True
+    assert loaded.mcp.workspace_allowlist == ["prod"]
 
 
 def test_logging_section_absent_when_level_none(tmp_path: Path) -> None:
@@ -1274,7 +1138,7 @@ def test_set_config_mcp_workspace_allowlist_preserves_other_sections(tmp_path: P
     save_config(
         UserConfig(
             defaults=Defaults(workspace="WS"),
-            telemetry=TelemetryConfig(disabled=True),
+            logging=LoggingConfig(level="WARNING"),
         ),
         path,
     )
@@ -1282,7 +1146,7 @@ def test_set_config_mcp_workspace_allowlist_preserves_other_sections(tmp_path: P
     loaded = load_config(path)
     assert loaded.mcp.workspace_allowlist == ["prod"]
     assert loaded.defaults.workspace == "WS"
-    assert loaded.telemetry.disabled is True
+    assert loaded.logging.level == "WARNING"
 
 
 def test_set_config_mcp_workspace_allowlist_round_trip(tmp_path: Path) -> None:

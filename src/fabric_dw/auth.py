@@ -368,26 +368,12 @@ def get_sql_token_struct(mode: CredentialMode = CredentialMode.DEFAULT) -> bytes
     # We must NOT cache the resulting struct here — let the credential decide expiry.
     token = credential.get_token(SQL_SCOPE).token
 
-    # Populate telemetry tenant_id from the SQL token's tid claim.  This covers
-    # the GitHub OIDC path where the HTTP client also acquires a token, but the
-    # SQL path runs synchronously before the async HTTP client initialises.
-    # cache_tenant_id_from_token is a no-op when telemetry is disabled or the
-    # override is already set; it never raises.
-    from fabric_dw import telemetry as _telemetry  # noqa: PLC0415
-
-    _telemetry.cache_tenant_id_from_token(token)
-
     token_bytes = token.encode("UTF-16-LE")
     return struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
 
 
 def _make_default_credential() -> AsyncTokenCredential:
     if _is_github_actions_oidc():
-        # Auth mode for the OIDC path is NOT recorded via
-        # record_auth_mode_from_default_credential (ClientAssertionCredential
-        # has no _successful_credential attribute and the function early-returns).
-        # Instead, _detect_auth_mode() picks up the GitHub Actions env-var
-        # signals and returns "github_oidc" automatically.
         return _make_github_oidc_credential()
 
     interactive_kwargs = _resolve_interactive_kwargs()
@@ -432,66 +418,6 @@ def _make_interactive_credential() -> AsyncTokenCredential:
     )
 
 
-# Mapping from DefaultAzureCredential sub-credential class names to telemetry
-# auth_mode strings.  Read defensively via getattr(_successful_credential, None)
-# so any future azure-identity refactor does not break the call site.
-#
-# NOTE: AzurePowerShellCredential is intentionally grouped under "azure_cli".
-# All local developer-tool auth methods (Azure CLI, Azure Developer CLI, and
-# Azure PowerShell) are treated as a single category because they represent the
-# same usage pattern: a developer who has authenticated locally with a Microsoft
-# tool.  Do NOT add a separate "azure_powershell" category — the intent is to
-# distinguish interactive-browser from local-tool auth, not to enumerate tools.
-_DAC_CLASS_TO_AUTH_MODE: dict[str, str] = {
-    "AzureCliCredential": "azure_cli",
-    "AzureDeveloperCliCredential": "azure_cli",
-    "AzurePowerShellCredential": "azure_cli",
-    "InteractiveBrowserCredential": "interactive",
-    "SharedTokenCacheCredential": "interactive",
-    "VisualStudioCodeCredential": "interactive",
-    "EnvironmentCredential": "service_principal",
-    "WorkloadIdentityCredential": "service_principal",
-    "ManagedIdentityCredential": "managed_identity",
-}
-
-
-def record_auth_mode_from_default_credential(credential: object) -> None:
-    """Derive and record the telemetry auth mode from a resolved DefaultAzureCredential.
-
-    Reads the semi-private ``_successful_credential`` attribute that azure-identity
-    sets on :class:`~azure.identity.DefaultAzureCredential` after the first
-    successful ``get_token`` call, maps its class name to a telemetry mode string,
-    and calls :func:`~fabric_dw.telemetry.set_auth_mode`.
-
-    This function is entirely fail-safe: any error (missing attribute, unknown
-    class name, telemetry disabled) is silently absorbed so it never interrupts
-    token acquisition.
-
-    Args:
-        credential: The credential object (expected to be a
-            :class:`~azure.identity.aio.DefaultAzureCredential` or its
-            :class:`SyncCredentialAdapter` wrapper).  Non-DAC objects are
-            handled gracefully.
-    """
-    try:
-        from fabric_dw import telemetry as _telemetry  # noqa: PLC0415
-
-        # Unwrap SyncCredentialAdapter so we can inspect the inner credential.
-        inner = getattr(credential, "_inner", credential)
-        sub = getattr(inner, "_successful_credential", None)
-        if sub is None:
-            return
-        class_name = type(sub).__name__
-        mode = _DAC_CLASS_TO_AUTH_MODE.get(class_name)
-        if mode is None:
-            # Unknown sub-credential — fall back to the env heuristic by not
-            # setting an override; _detect_auth_mode() will be used instead.
-            return
-        _telemetry.set_auth_mode(mode)
-    except Exception:  # noqa: S110
-        pass  # telemetry must never break the auth path
-
-
 #: Registry mapping each CredentialMode to a factory that produces the
 #: appropriate AsyncTokenCredential.  To add a new mode, register a new
 #: factory here — no other code needs to change.
@@ -504,14 +430,6 @@ _CREDENTIAL_REGISTRY: dict[CredentialMode, Callable[[], AsyncTokenCredential]] =
 
 def get_credential(mode: CredentialMode = CredentialMode.DEFAULT) -> AsyncTokenCredential:
     """Return an Azure credential for the given mode.
-
-    As a side-effect, records the telemetry auth mode when the mode is
-    unambiguous at credential-construction time (``SERVICE_PRINCIPAL`` →
-    ``"service_principal"``; ``INTERACTIVE`` → ``"interactive"``).  For
-    ``DEFAULT`` mode the resolved sub-credential is only known after the first
-    successful ``get_token`` call, so recording is deferred to
-    :func:`record_auth_mode_from_default_credential` (called from
-    ``FabricHttpClient._get_token``).
 
     Args:
         mode: The credential mode to use. Defaults to DEFAULT.
@@ -527,23 +445,4 @@ def get_credential(mode: CredentialMode = CredentialMode.DEFAULT) -> AsyncTokenC
     factory = _CREDENTIAL_REGISTRY.get(mode)
     if factory is None:
         raise ConfigError.unknown_credential_mode(mode)
-    credential = factory()
-
-    # Record the auth mode for unambiguous direct modes immediately.
-    # DEFAULT mode is deferred to record_auth_mode_from_default_credential.
-    if mode is CredentialMode.SERVICE_PRINCIPAL:
-        try:
-            from fabric_dw import telemetry as _telemetry  # noqa: PLC0415
-
-            _telemetry.set_auth_mode("service_principal")
-        except Exception:  # noqa: S110
-            pass  # telemetry must never break credential construction
-    elif mode is CredentialMode.INTERACTIVE:
-        try:
-            from fabric_dw import telemetry as _telemetry  # noqa: PLC0415
-
-            _telemetry.set_auth_mode("interactive")
-        except Exception:  # noqa: S110
-            pass  # telemetry must never break credential construction
-
-    return credential
+    return factory()

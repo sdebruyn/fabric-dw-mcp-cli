@@ -1,8 +1,8 @@
 """Tests that -h is accepted as a short alias for --help at every CLI level.
 
 Covers: root group, a sub-group (warehouses), and a nested leaf command
-(warehouses list).  Propagation must work through the custom
-_InstrumentedGroup class and the telemetry patching applied to sub-groups.
+(warehouses list).  Propagation must survive the lazy import of a sub-group and
+the global-option injection applied to it on the way in.
 """
 
 from __future__ import annotations

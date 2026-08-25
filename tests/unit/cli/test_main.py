@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,8 +13,6 @@ from click.testing import CliRunner
 import fabric_dw
 import fabric_dw.cli as _cli_pkg
 import fabric_dw.cli._main as _main_mod
-import fabric_dw.telemetry as _tel
-import fabric_dw.telemetry as _telemetry_mod
 from fabric_dw.auth import CredentialMode
 from fabric_dw.cli._context import CliContext
 from fabric_dw.cli._main import cli
@@ -122,7 +119,7 @@ class TestCliTopLevelErrorGuard:
     driver error that slipped past a connect-retry-exhaustion path) propagates
     unchanged.  ``main()`` wraps ``cli()`` with a defense-in-depth guard; these
     tests exercise that guard directly by replacing ``cli()`` with a callable
-    that raises, mirroring the existing ``TestHelpTelemetrySuppression`` pattern.
+    that raises.
     """
 
     def test_unexpected_exception_prints_clean_single_line_error(
@@ -239,7 +236,7 @@ class TestCliTopLevelErrorGuard:
 
 
 class TestCliVersion:
-    """--version / -V flag: output format, exit code, and telemetry short-circuit."""
+    """--version / -V flag: output format, exit code, and eager short-circuit."""
 
     def test_version_flag_exits_zero(self) -> None:
         """--version must exit 0."""
@@ -265,58 +262,20 @@ class TestCliVersion:
         result = runner.invoke(cli, ["-V"])
         assert result.output.strip() == f"fabric-dw {fabric_dw.__version__}"
 
-    def test_version_flag_emits_no_telemetry(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """--version must short-circuit before any telemetry path is entered.
+    def test_version_flag_short_circuits_before_the_group_callback(self) -> None:
+        """--version must print and exit without running the root callback.
 
-        The autouse ``_disable_telemetry_globally`` fixture sets
-        ``FABRIC_DISABLE_TELEMETRY=1`` for every test in this file, which means
-        telemetry calls are silently skipped at the ``telemetry_enabled()`` guard
-        before they reach ``record_app_started`` / ``_InstrumentedGroup.invoke``.
-        That makes a plain ``assert_not_called()`` check vacuous — it would pass
-        even if the eager ``--version`` option were removed.
-
-        To make the assertion meaningful, this test *enables* telemetry for its
-        own scope (by removing all opt-out env vars) and mocks
-        ``configure_azure_monitor`` so no real SDK initialisation or egress can
-        occur.  It then asserts three independent invariants that can only hold
-        simultaneously when the eager option genuinely short-circuits:
-
-        1. ``_InstrumentedGroup.invoke`` was never entered.
-        2. ``record_app_started`` was never called.
-        3. ``fabric_dw.telemetry._sdk_initialised`` is still ``False`` (the SDK
-           was never initialised — no ``configure_azure_monitor`` side-effects).
+        The callback resolves the auth mode and reads the config file, so a
+        version query that fell through to it would do real work and could fail
+        on a machine with a broken config.  ``setup_logging`` is the callback's
+        first statement, which makes it the cheapest proof the body never ran.
         """
-        # Enable telemetry for this test only by removing all opt-out signals.
-        monkeypatch.delenv("FABRIC_DISABLE_TELEMETRY", raising=False)
-        monkeypatch.delenv("FABRIC_TELEMETRY", raising=False)
-        monkeypatch.delenv("DO_NOT_TRACK", raising=False)
-        # Prevent real SDK init / egress by pointing at a localhost dummy endpoint.
-        monkeypatch.setenv(
-            "FABRIC_TELEMETRY_CONNECTION_STRING",
-            "InstrumentationKey=00000000-0000-0000-0000-000000000000;"
-            "IngestionEndpoint=https://localhost/",
-        )
-        # Reset _sdk_initialised so the module is in a clean state.
-        _telemetry_mod._sdk_initialised = False  # type: ignore[attr-defined]
-
         runner = CliRunner()
-        with (
-            patch("azure.monitor.opentelemetry.configure_azure_monitor") as mock_configure,
-            patch.object(
-                _main_mod._InstrumentedGroup,
-                "invoke",
-                wraps=_main_mod._InstrumentedGroup.invoke,
-            ) as mock_invoke,
-            patch("fabric_dw.cli._main.record_app_started") as mock_started,
-        ):
+        with patch("fabric_dw.cli._main.setup_logging") as mock_setup:
             result = runner.invoke(cli, ["--version"])
 
         assert result.exit_code == 0
-        # The eager option must short-circuit before any of these are reached.
-        mock_invoke.assert_not_called()
-        mock_started.assert_not_called()
-        mock_configure.assert_not_called()
-        assert _telemetry_mod._sdk_initialised is False  # type: ignore[attr-defined]
+        mock_setup.assert_not_called()
 
     def test_version_flag_listed_in_help(self) -> None:
         """--version must appear in the root --help output."""
@@ -345,83 +304,6 @@ class TestCliVerboseFlag:
             result = runner.invoke(cli, ["cache", "--help"])
             assert result.exit_code == 0
             mock_setup.assert_called_once_with(logging.INFO)
-
-
-class TestHelpTelemetrySuppression:
-    """Help invocations must suppress all telemetry (no SDK init, no network flush)."""
-
-    @pytest.fixture(autouse=True)
-    def _reset_suppress_flag(self) -> Generator[None, None, None]:
-        """Reset the suppress_telemetry flag after every test to avoid state leakage."""
-        _tel.suppress_telemetry(value=False)
-        yield
-        _tel.suppress_telemetry(value=False)
-
-    @pytest.mark.parametrize("help_flag", ["-h", "--help"])
-    def test_main_suppresses_telemetry_when_help_flag_in_argv(
-        self, help_flag: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """main() must suppress telemetry when a help flag appears in sys.argv.
-
-        We verify by checking that _SUPPRESSED is True after main() detects
-        the help flag, without needing to let the real cli() execute.
-        """
-        monkeypatch.setattr(sys, "argv", ["fdw", "config", help_flag])
-
-        # Start unsuppressed.
-        _tel.suppress_telemetry(value=False)
-
-        # Patch cli() in the __init__ module so main() doesn't actually run Click.
-        with patch.object(_cli_pkg, "cli", autospec=False):
-            _cli_pkg.main()
-
-        # After main(), the suppress flag must be set.
-        assert _tel._SUPPRESSED is True, (  # type: ignore[attr-defined]
-            f"_SUPPRESSED must be True after main() when {help_flag!r} is in argv"
-        )
-
-    def test_main_does_not_suppress_telemetry_for_normal_command(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """main() must NOT suppress telemetry for a normal (non-help) invocation."""
-        monkeypatch.setattr(sys, "argv", ["fdw", "config", "get"])
-
-        _tel.suppress_telemetry(value=False)  # start unsuppressed
-
-        with patch.object(_cli_pkg, "cli", autospec=False):
-            _cli_pkg.main()
-
-        assert _tel._SUPPRESSED is False, (  # type: ignore[attr-defined]
-            "_SUPPRESSED must remain False when no help flag is present"
-        )
-
-    def test_get_tracer_not_called_on_subcommand_help(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """When a subcommand is invoked with --help, _get_tracer must not be called."""
-        monkeypatch.setattr(sys, "argv", ["fdw", "config", "--help"])
-
-        # Suppress from the start (as main() would do).
-        _tel.suppress_telemetry()
-
-        tracer_calls: list[str] = []
-        with patch.object(_tel, "_get_tracer", side_effect=lambda: tracer_calls.append("called")):  # type: ignore[attr-defined]
-            runner = CliRunner()
-            result = runner.invoke(cli, ["config", "--help"])
-
-        assert result.exit_code == 0
-        assert tracer_calls == [], "_get_tracer must not be called when telemetry is suppressed"
-
-    def test_subcommand_help_exits_without_telemetry_enabled(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """After suppress_telemetry(), telemetry_enabled() must return False."""
-        monkeypatch.setattr(sys, "argv", ["fdw", "config", "-h"])
-        _tel.suppress_telemetry()
-
-        assert _tel.telemetry_enabled() is False, (
-            "telemetry_enabled() must return False when suppress_telemetry() has been called"
-        )
 
 
 # ---------------------------------------------------------------------------

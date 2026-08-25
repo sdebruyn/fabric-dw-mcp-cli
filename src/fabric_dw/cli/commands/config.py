@@ -13,7 +13,6 @@ config set retry-deadline            — persist the combined 429+5xx wall-clock
 config set sql-retry-deadline        — persist the SQL/TDS connect+execute retry budget
 config set sql-retry-executes        — persist whether fetch="none" statements are retried
 config set auth-mode                 — persist the MCP server credential mode
-config set telemetry disabled        — opt in/out of telemetry via config
 config set logging level             — set the MCP server log level
 config set mcp workspace-allowlist   — set the MCP workspace allowlist (comma-separated)
 config unset workspace               — clear the workspace default
@@ -23,7 +22,6 @@ config unset retry-deadline          — clear the HTTP deadline default
 config unset sql-retry-deadline      — clear the SQL retry deadline default
 config unset sql-retry-executes      — clear the SQL execute-retry flag
 config unset auth-mode               — clear the credential mode (revert to built-in default)
-config unset telemetry disabled      — clear the telemetry opt-out (revert to default-on)
 config unset logging level           — clear the logging level (revert to built-in INFO)
 config unset mcp workspace-allowlist — clear the MCP workspace allowlist (no restriction)
 config clear                         — wipe the entire config file
@@ -68,9 +66,6 @@ def show_cmd(ctx: CliContext) -> None:
             "sql_retry_deadline_s": cfg.defaults.sql_retry_deadline_s,
             "sql_retry_executes": cfg.defaults.sql_retry_executes,
             "auth_mode": cfg.defaults.auth_mode,
-        },
-        "telemetry": {
-            "disabled": cfg.telemetry.disabled,
         },
         "mcp": {
             "workspace_allowlist": cfg.mcp.workspace_allowlist,
@@ -169,24 +164,6 @@ def set_auth_mode_cmd(value: str) -> None:
     normalised = value.strip().lower()
     set_default("auth_mode", normalised)
     click.echo(f"Default auth_mode set to {normalised!r}.")
-
-
-@set_group.group("telemetry")
-def set_telemetry_group() -> None:
-    """Set a telemetry configuration value."""
-
-
-@set_telemetry_group.command("disabled")
-@click.argument("value", type=click.Choice(["true", "false"], case_sensitive=False))
-def set_telemetry_disabled_cmd(value: str) -> None:
-    """Opt in or out of telemetry via the config file.
-
-    Pass ``true`` to disable telemetry (opt out); ``false`` to re-enable it.
-    Setting this to ``false`` does NOT override the env-var opt-out
-    (``FABRIC_DW_TELEMETRY_OPT_OUT`` / ``DO_NOT_TRACK`` still take precedence).
-    """
-    set_config("telemetry", "disabled", value.lower())
-    click.echo(f"Telemetry disabled set to {value.lower()}.")
 
 
 @set_group.group("logging")
@@ -301,22 +278,6 @@ def unset_auth_mode_cmd() -> None:
     """Clear the auth_mode default (revert to built-in default credential mode)."""
     set_default("auth_mode", None)
     click.echo("Default auth_mode cleared.")
-
-
-@unset_group.group("telemetry")
-def unset_telemetry_group() -> None:
-    """Clear a telemetry configuration value."""
-
-
-@unset_telemetry_group.command("disabled")
-def unset_telemetry_disabled_cmd() -> None:
-    """Clear the telemetry opt-out from the config file (revert to default-on).
-
-    Note: env-var opt-outs (``FABRIC_DW_TELEMETRY_OPT_OUT`` / ``DO_NOT_TRACK``)
-    still take precedence over this setting.
-    """
-    set_config("telemetry", "disabled", None)
-    click.echo("Telemetry disabled cleared.")
 
 
 @unset_group.group("logging")

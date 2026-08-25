@@ -10,8 +10,8 @@ Guards that prevent silent rot:
    every tool name in that steer is real, and the existing DDL/DML warning
    is still present.
 4. Domain guard (existence): every domain noun in the 'Also:' line resolves to
-   a known domain via resolve_domain(), so a domain emptied of tools is caught
-   even when other domains' tool names happen to share the same text.
+   a domain that has live tools, so a domain emptied of tools is caught even
+   when other domains' tool names happen to share the same text.
 5. Domain guard (completeness): every live tool domain is either named in the
    'Also:' line or in the intentional allow-list, so a new domain cannot be
    added silently without the instructions being updated.
@@ -23,8 +23,8 @@ import re
 
 import pytest
 
+from fabric_dw.mcp._domains import domain_for_tool
 from fabric_dw.mcp.server import _SERVER_INSTRUCTIONS, mcp
-from fabric_dw.telemetry_commands import resolve_domain
 
 # ---------------------------------------------------------------------------
 # Character budget for the server instructions block.
@@ -60,7 +60,8 @@ def _tool_names_in_text(text: str) -> set[str]:
 # underscores) so the snake_case tool-name guard above ignores them entirely.
 # Two guards below check the domain index: one asserts every named domain is
 # live (existence), the other asserts every live domain is named (completeness).
-# Both use resolve_domain() from telemetry_commands - the authoritative mapping.
+# Both use domain_for_tool() from fabric_dw.mcp._domains - the authoritative
+# mapping that list_capabilities itself groups by.
 # ---------------------------------------------------------------------------
 
 
@@ -150,13 +151,13 @@ async def test_instructions_tool_names_all_exist() -> None:
 async def test_domain_index_all_have_tools() -> None:
     """Every domain noun in the 'Also:' line must resolve to a domain with live tools.
 
-    Uses resolve_domain() from telemetry_commands - the authoritative mapping -
+    Uses domain_for_tool() - the same mapping list_capabilities groups by -
     rather than substring heuristics. This means a domain emptied of all its tools
     causes this test to fail even when other domains' tool names happen to contain
     the same text (e.g. 'warehouses' would not be rescued by restore_warehouse_in_place
     or get_warehouse_settings, which belong to different domains).
     """
-    live_domains = frozenset(resolve_domain(t.name) for t in await mcp.list_tools())
+    live_domains = frozenset(domain_for_tool(t.name) for t in await mcp.list_tools())
     domain_nouns = _extract_domain_nouns(_SERVER_INSTRUCTIONS)
     assert domain_nouns, (
         "No domain nouns found in _SERVER_INSTRUCTIONS. "
@@ -183,7 +184,7 @@ async def test_domain_index_completeness() -> None:
     the block deliberately steers away from (the sql domain).  Any new domain
     that does not belong in either category must be added to the 'Also:' line.
     """
-    live_domains = frozenset(resolve_domain(t.name) for t in await mcp.list_tools())
+    live_domains = frozenset(domain_for_tool(t.name) for t in await mcp.list_tools())
     named_in_also = frozenset(
         d.replace(" ", "_") for d in _extract_domain_nouns(_SERVER_INSTRUCTIONS)
     )

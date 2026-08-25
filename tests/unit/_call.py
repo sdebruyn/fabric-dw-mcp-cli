@@ -11,12 +11,9 @@ Going through the private tool manager (with its ``convert_result``
 default of ``False``) keeps assertions written against plain dicts,
 lists, and primitives.
 
-Used by:
-
-- every test module under ``tests/unit/mcp/`` (and ``tests/unit/mcp/tools/``)
-  that calls an MCP tool directly against the production ``mcp`` singleton
-- ``tests/unit/test_telemetry_commands.py``, which builds its own
-  ``InstrumentedMCPServer`` instances and calls tools on those instead
+Used by every test module under ``tests/unit/mcp/`` (and
+``tests/unit/mcp/tools/``) that calls an MCP tool directly, whether against the
+production ``mcp`` singleton or a throwaway server built for the test.
 
 Centralising the call here removes ~580 direct references to the private
 SDK internal, and gives the suite a single place to update instead of one

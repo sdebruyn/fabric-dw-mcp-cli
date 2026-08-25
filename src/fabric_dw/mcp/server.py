@@ -72,24 +72,15 @@ import sys
 from collections.abc import Sequence
 from typing import Literal, NoReturn
 
+from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from fabric_dw import __version__
 from fabric_dw.config import load_config
 from fabric_dw.logging import setup_logging
-from fabric_dw.mcp._client_info import ClientInfoMiddleware
 from fabric_dw.mcp._context import fabric_lifespan
 from fabric_dw.mcp._guards import env_flag as _guards_env_flag
-from fabric_dw.mcp._helpers import InstrumentedMCPServer
 from fabric_dw.mcp.tools import register_all
-from fabric_dw.telemetry import (
-    maybe_print_first_run_notice,
-    record_app_exited,
-    record_app_started,
-    record_mcp_server_started,
-    shutdown_telemetry,
-)
-from fabric_dw.telemetry_commands import now_ms
 
 __all__ = ["mcp", "run"]
 
@@ -123,10 +114,13 @@ _SERVER_INSTRUCTIONS: str = (
 )
 
 # ---------------------------------------------------------------------------
-# MCP server instance (instrumented subclass emits command_invoked events)
+# MCP server instance
 # ---------------------------------------------------------------------------
+# Parameterised as MCPServer[None] because fabric_lifespan yields None: the
+# shared ServerContext is reached through a module-level sentinel (see
+# _context.get_context), not through the lifespan result.
 
-mcp: InstrumentedMCPServer = InstrumentedMCPServer(
+mcp: MCPServer[None] = MCPServer(
     "fabric-dw",
     lifespan=fabric_lifespan,
     instructions=_SERVER_INSTRUCTIONS,
@@ -134,10 +128,6 @@ mcp: InstrumentedMCPServer = InstrumentedMCPServer(
     # The SDK defaults it to the empty string, so without this the server has
     # no version at all on the wire.
     version=__version__,
-    # Records which client is connected, so telemetry can be broken down per
-    # client (#1048).  Passed to the constructor rather than appended to
-    # `mcp.middleware`, which the SDK marks provisional.
-    middleware=[ClientInfoMiddleware()],
 )
 
 # ---------------------------------------------------------------------------
@@ -557,65 +547,21 @@ def run(argv: Sequence[str] | None = None) -> None:
         _resolve_transport_security(args, logger) if transport == "streamable-http" else None
     )
 
-    # A2: print first-run notice to stderr before stdio transport starts so
-    # the notice never pollutes the MCP stdio protocol stream.
-    maybe_print_first_run_notice()
-    record_app_started("mcp")
-    record_mcp_server_started()
-
-    start_ms = now_ms()
-    exc_seen: BaseException | None = None
-    try:
-        # Host and port are transport-specific run() kwargs.  There is no
-        # settings object to mutate: MCPServer exposes no `.settings.host` /
-        # `.settings.port` and assigning to them raises.  run() is overloaded
-        # per transport and the stdio overload accepts no kwargs at all, hence
-        # the two branches.
-        # transport_security is passed only when it was actually built, so the
-        # default HTTP call is identical to the one made before --allowed-host
-        # existed rather than an explicit `transport_security=None`.
-        if transport == "streamable-http" and transport_security is not None:
-            mcp.run(
-                transport="streamable-http",
-                host=args.host,
-                port=args.port,
-                transport_security=transport_security,
-            )
-        elif transport == "streamable-http":
-            mcp.run(transport="streamable-http", host=args.host, port=args.port)
-        else:
-            mcp.run(transport="stdio")
-    except BaseException as exc:
-        exc_seen = exc
-        raise
-    finally:
-        duration_ms = now_ms() - start_ms
-        # Map exit status: graceful stops (KeyboardInterrupt, SIGTERM-driven
-        # SystemExit with code 0 or None, or normal return) → "ok".
-        # Unexpected exceptions → "api_error".
-        # "user_error" is not applicable for the MCP server surface.
-        if exc_seen is None or isinstance(exc_seen, KeyboardInterrupt):
-            exit_status = "ok"
-        elif isinstance(exc_seen, SystemExit):
-            code = getattr(exc_seen, "code", None)
-            exit_status = "ok" if (code is None or code == 0) else "api_error"
-        else:
-            exit_status = "api_error"
-
-        # Emit the session-end lifecycle event then flush/shut down the provider.
-        # Telemetry teardown is fail-safe: errors here must NEVER mask the real
-        # server exit exception (exc_seen, re-raised by the except block above).
-        # shutdown_telemetry() must run even if record_app_exited() raises, so it
-        # is guarded by its own try/finally.  The outer except swallows any
-        # exception from the telemetry teardown path.
-        try:
-            try:
-                record_app_exited(
-                    duration_ms=duration_ms,
-                    exit_status=exit_status,
-                    error_category=None,
-                )
-            finally:
-                shutdown_telemetry()
-        except BaseException:  # noqa: S110
-            pass  # telemetry teardown errors must never propagate
+    # Host and port are transport-specific run() kwargs.  There is no settings
+    # object to mutate: MCPServer exposes no `.settings.host` / `.settings.port`
+    # and assigning to them raises.  run() is overloaded per transport and the
+    # stdio overload accepts no kwargs at all, hence the two branches.
+    # transport_security is passed only when it was actually built, so the
+    # default HTTP call is identical to the one made before --allowed-host
+    # existed rather than an explicit `transport_security=None`.
+    if transport == "streamable-http" and transport_security is not None:
+        mcp.run(
+            transport="streamable-http",
+            host=args.host,
+            port=args.port,
+            transport_security=transport_security,
+        )
+    elif transport == "streamable-http":
+        mcp.run(transport="streamable-http", host=args.host, port=args.port)
+    else:
+        mcp.run(transport="stdio")

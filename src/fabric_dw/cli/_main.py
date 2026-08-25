@@ -5,8 +5,6 @@ from __future__ import annotations
 import importlib
 import logging
 import shutil
-import sys
-import time
 from typing import Any
 
 import click
@@ -18,58 +16,8 @@ from fabric_dw.cli._context import CliContext
 from fabric_dw.config import VALID_AUTH_MODES, load_config
 from fabric_dw.config_resolve import resolve_auth_mode
 from fabric_dw.logging import setup_logging
-from fabric_dw.telemetry import (
-    maybe_print_first_run_notice,
-    record_app_exited,
-    record_app_started,
-    shutdown_telemetry,
-)
-from fabric_dw.telemetry_commands import (
-    emit_command_invoked,
-    map_status,
-    now_ms,
-)
 
 _logger = logging.getLogger(__name__)
-
-_CLI_TELEMETRY_KEY = "fabric_dw_telemetry_command_name"
-_CLI_SEGMENTS_KEY = _CLI_TELEMETRY_KEY + "_segments"
-
-# ---------------------------------------------------------------------------
-# Destructive-op telemetry for the CLI (issue #666)
-# ---------------------------------------------------------------------------
-# Single source of truth: the dotted telemetry names (<group>.<subcommand>) of
-# permanently-destructive CLI commands — those that mirror an MCP tool registered
-# with mutating_tool(destructive=True).  Commands that are confirming-but-not-
-# destructive (queries.kill, warehouses.rename, etc.) are intentionally absent.
-#
-# The set is frozen so it cannot be mutated at runtime.
-_DESTRUCTIVE_CLI_COMMANDS: frozenset[str] = frozenset(
-    {
-        "functions.drop",
-        "permissions.cls.revoke",
-        "permissions.mask.drop",
-        "permissions.sql.revoke",
-        "procedures.drop",
-        "restore-points.delete",
-        "restore-points.restore",
-        "schemas.delete",
-        "snapshots.delete",
-        "sql-pools.delete",
-        "statistics.delete",
-        "tables.delete",
-        "tables.clear",
-        "tables.cluster-by",
-        "views.drop",
-        "warehouses.delete",
-        "permissions.rls.drop",
-    }
-)
-
-# ctx.meta key written by conditionally-destructive command bodies BEFORE any
-# API call or prompt, so the finally block in _InstrumentedGroup.invoke can
-# pick it up outcome-independently.
-_CLI_CONDITIONAL_DESTRUCTIVE_KEY = "fabric_dw_conditional_destructive_op"
 
 # Use actual terminal width so help text adapts to the user's screen.
 # Floor of 80 preserves readable wrapping on narrow terminals and in CI
@@ -562,189 +510,19 @@ if _COMMAND_MAP.keys() != _SHORT_HELP_MAP.keys():
     )
 
 
-class _InstrumentedGroup(click.Group):
-    """A :class:`click.Group` subclass that emits one ``command_invoked``
-    telemetry event per leaf command invocation.
-
-    The event is fired *after* the subcommand (or the nested group + leaf)
-    finishes so that the ``status`` and ``duration_ms`` are accurate.
-    The fully-qualified ``name`` attribute uses the format
-    ``<group>.<subcommand>`` (e.g. ``warehouses.list``).
-
-    All child groups added via :meth:`add_command` are transparently patched
-    to record ``<group>.<leaf>`` in the root context's :attr:`click.Context.meta`
-    dict.  The root group (``parent is None``) emits the ``command_invoked``
-    event once the full call stack has unwound.
-
-    Shutdown ordering
-    -----------------
-    ``emit_command_invoked`` is called in :meth:`invoke`'s ``finally`` block so
-    that the ``command_invoked`` event is enqueued before teardown begins.
-
-    ``shutdown_telemetry()`` is called from the root ``_on_close`` callback
-    (registered via ``ctx.call_on_close``) AFTER ``record_app_exited()``.
-    Click's ``main()`` closes the root context (running ``call_on_close``
-    callbacks) only after :meth:`invoke` (and therefore its ``finally`` block)
-    returns.  This means the sequence is:
-
-    1. ``command_invoked`` enqueued in ``invoke`` ``finally``
-    2. Root context closes → ``_on_close`` runs:
-       a. ``record_app_exited`` enqueued
-       b. ``shutdown_telemetry()`` force-flushes all three events and shuts down
-
-    This ordering guarantees that ``app_exited`` is in the queue before the
-    ``BatchLogRecordProcessor`` is force-flushed, fixing the silent drop that
-    occurred when ``shutdown_telemetry`` was called here (before ``_on_close``).
-    """
-
-    def add_command(self, cmd: click.Command, name: str | None = None) -> None:
-        """Add *cmd*, patch for telemetry, and inject global options."""
-        if isinstance(cmd, click.Group):
-            _patch_group_for_telemetry(cmd)
-        _patch_command_for_global_options(cmd)
-        super().add_command(cmd, name)
-
-    def invoke(self, ctx: click.Context) -> object:
-        """Invoke the root group and emit ``command_invoked``.
-
-        Telemetry shutdown is performed by the root ``_on_close`` callback
-        (registered in the root ``cli`` callback via ``ctx.call_on_close``).
-        That callback runs after this method returns, ensuring the sequence:
-        ``command_invoked`` enqueued here → ``_on_close`` enqueues
-        ``app_exited`` → ``shutdown_telemetry()`` force-flushes all events.
-        """
-        start = now_ms()
-        exc_seen: BaseException | None = None
-        try:
-            return super().invoke(ctx)
-        except BaseException as exc:
-            exc_seen = exc
-            raise
-        finally:
-            command_name = _build_command_name(ctx)
-            if command_name:
-                duration = now_ms() - start
-                status = map_status(exc_seen)
-                # Compute destructive flag:
-                # 1. Check the unconditional set (identity-based, flag-independent).
-                # 2. Fall back to the conditional flag stashed in ctx.meta by the
-                #    command body (e.g. sql-endpoints refresh --recreate-tables,
-                #    tables load --if-exists truncate|replace).
-                destructive: bool = command_name in _DESTRUCTIVE_CLI_COMMANDS or bool(
-                    ctx.meta.get(_CLI_CONDITIONAL_DESTRUCTIVE_KEY)
-                )
-                emit_command_invoked(
-                    name=command_name,
-                    status=status,
-                    duration_ms=duration,
-                    destructive=destructive,
-                )
-            # shutdown_telemetry() is NOT called here.  It is called in
-            # _on_close() (registered via ctx.call_on_close on the root context)
-            # AFTER record_app_exited() enqueues the app_exited event.  Click's
-            # main() closes the root context after this invoke() returns, which
-            # triggers _on_close.  Calling shutdown_telemetry() here would shut
-            # down the BatchLogRecordProcessor before app_exited is enqueued,
-            # causing it to be silently dropped (issue #664).
-
-
-def _build_command_name(root_ctx: click.Context) -> str | None:
-    """Build the fully-qualified command name from accumulated path segments.
-
-    Reads the ``_segments`` list written by patched sub-group invoke wrappers,
-    sorts segments by nesting depth (shallowest first), and joins them to form
-    a path like ``warehouses.list``, ``sql.exec``, or ``config.set.workspace``.
-
-    For direct leaf commands registered on the root group (not currently used —
-    all commands are now groups), no sub-group invoke wrapper writes a segment,
-    so ``_segments`` is empty.  In that case ``root_ctx.invoked_subcommand``
-    holds the command name and we return it directly.
-
-    Returns ``None`` when no segments were accumulated (e.g. root ``--help``).
-    """
-    segments: list[tuple[int, str, str]] = root_ctx.meta.get(_CLI_SEGMENTS_KEY, [])
-    if not segments:
-        # Direct leaf command on the root group (e.g. ``fdw sql -q "SELECT 1"``).
-        return root_ctx.invoked_subcommand or None
-
-    # Sort by depth (ascending) to get outermost → innermost order.
-    segments_sorted = sorted(segments, key=lambda t: t[0])
-
-    # Build path: take the group name from each segment, then append the
-    # subcommand name from the deepest segment.
-    parts: list[str] = []
-    for _depth, group_name, _sub in segments_sorted:
-        parts.append(group_name)
-    # Append the leaf subcommand name from the deepest segment.
-    if segments_sorted:
-        parts.append(segments_sorted[-1][2])
-
-    return ".".join(parts)
-
-
-def _patch_group_for_telemetry(group: click.Group) -> None:
-    """Monkey-patch *group*.invoke to record its portion of the command path.
-
-    The strategy is simple and correct for arbitrarily nested groups:
-
-    - Each patched group's ``finally`` block records its own name in the root
-      context's ``meta`` as a **list of (depth, name) segments**.
-    - After all groups have written their segments, the root
-      :class:`_InstrumentedGroup` reads the segments, sorts by depth, and
-      joins them to build the full path (e.g. ``config.set.workspace``).
-
-    Recursive patching ensures that sub-groups added before this function
-    is called (e.g. ``config.set``) are also patched.
-
-    Idempotent: the ``_telemetry_patched`` sentinel prevents double-patching
-    when a lazily-loaded group is resolved more than once via :meth:`get_command`.
-    """
-    if getattr(group, "_telemetry_patched", False):
-        return
-    group._telemetry_patched = True  # ty: ignore[unresolved-attribute]
-
-    # Recursively patch any sub-groups already registered.
-    for sub_cmd in group.commands.values():
-        if isinstance(sub_cmd, click.Group):
-            _patch_group_for_telemetry(sub_cmd)
-
-    original_invoke = group.invoke
-
-    def _patched_invoke(ctx: click.Context) -> Any:  # noqa: ANN401
-        try:
-            return original_invoke(ctx)
-        finally:
-            group_name = ctx.info_name or ""
-            sub_name = ctx.invoked_subcommand or ""
-            if group_name and sub_name:
-                # Calculate nesting depth: count ancestors up to (not including) root.
-                depth = 0
-                node = ctx
-                while node.parent is not None:
-                    depth += 1
-                    node = node.parent
-                root_ctx = node  # node is now the root context
-
-                # Accumulate segments: list of (depth, group_name, sub_name).
-                segs: list[tuple[int, str, str]] = root_ctx.meta.get(_CLI_SEGMENTS_KEY, [])
-                segs.append((depth, group_name, sub_name))
-                root_ctx.meta[_CLI_SEGMENTS_KEY] = segs
-
-    group.invoke = _patched_invoke  # ty: ignore[invalid-assignment]
-
-
-class _LazyGroup(_InstrumentedGroup):
-    """A lazy-loading :class:`_InstrumentedGroup` that defers command module imports.
+class _LazyGroup(click.Group):
+    """A :class:`click.Group` that defers command module imports until they are used.
 
     Command groups are registered as strings in :data:`_COMMAND_MAP` (CLI name
     → ``"module.path:group_object"``).  The module is only imported when the
     group is actually invoked or its own ``--help`` is requested — never on
     startup or for the root ``--help``.
 
-    Root ``--help`` is rendered from :data:`_SHORT_HELP_MAP` so no modules are
-    imported at all.  The full telemetry/global-options patching that
-    :class:`_InstrumentedGroup` performs via :meth:`add_command` is replicated
-    in :meth:`get_command` after the lazy import.
+    Root ``--help`` is rendered from :data:`_SHORT_HELP_MAP`, so listing the
+    commands imports nothing at all.  Because commands arrive through
+    :meth:`get_command` rather than ``add_command``, the global-options patching
+    that a normally-registered command would get at registration time is applied
+    there instead.
     """
 
     def list_commands(self, ctx: click.Context) -> list[str]:  # noqa: ARG002
@@ -763,10 +541,9 @@ class _LazyGroup(_InstrumentedGroup):
         except (ImportError, AttributeError) as exc:
             _logger.warning("Failed to load command %r: %s", cmd_name, exc)
             return None
-        # Replicate what _InstrumentedGroup.add_command does so that telemetry
-        # and global-options injection are applied on the lazily-loaded group.
-        if isinstance(cmd, click.Group):
-            _patch_group_for_telemetry(cmd)
+        # A command reached this way never went through add_command, so the
+        # trailing global options have to be injected here.  The patch recurses
+        # into sub-groups itself, so a nested tree is covered in one call.
         _patch_command_for_global_options(cmd)
         return cmd
 
@@ -926,58 +703,3 @@ def cli(
         max_429_retries=max_429_retries,
         retry_deadline_s=retry_deadline,
     )
-
-    maybe_print_first_run_notice()
-    record_app_started("cli")
-
-    start_ms = time.monotonic() * 1000
-
-    def _on_close() -> None:
-        duration_ms = time.monotonic() * 1000 - start_ms
-        # Map the active exception (if any) to a categorical exit status.
-        # call_on_close callbacks run inside Click's root context __exit__,
-        # which fires after _InstrumentedGroup.invoke() returns (and after its
-        # finally block has already enqueued command_invoked).  sys.exc_info()
-        # here reflects the exception that triggered context teardown.
-        #
-        # Vocabulary (distinct from command_invoked's "success/user_error/api_error"):
-        #   "ok"         — clean exit or zero-code SystemExit / click.Exit
-        #   "user_error" — usage/validation problems: non-zero SystemExit/Exit, Abort, UsageError
-        #   "api_error"  — genuine/unexpected exceptions (mirrors map_status() semantics)
-        exc_type, exc_value, _ = sys.exc_info()
-        if exc_type is None:
-            exit_status = "ok"
-        elif exc_type is SystemExit:
-            code = getattr(exc_value, "code", None)
-            exit_status = "ok" if (code is None or code == 0) else "user_error"
-        elif issubclass(exc_type, click.exceptions.Exit):
-            code = getattr(exc_value, "code", 0)
-            exit_status = "ok" if code == 0 else "user_error"
-        elif issubclass(exc_type, (click.exceptions.Abort, click.exceptions.UsageError)):
-            exit_status = "user_error"
-        else:
-            # Genuine/unexpected exception — api_error mirrors map_status() semantics so
-            # app_exited.exit_status is consistent with command_invoked.status.
-            exit_status = "api_error"
-        # Enqueue app_exited BEFORE calling shutdown_telemetry().  At this
-        # point command_invoked is already in the BatchLogRecordProcessor queue
-        # (enqueued in _InstrumentedGroup.invoke's finally block, which ran
-        # before Click closed the root context and triggered this callback).
-        # shutdown_telemetry() is guarded by try/finally so it always runs even
-        # if record_app_exited raises a BaseException (e.g. KeyboardInterrupt),
-        # preventing the urllib3 pool from being leaked to the GC finaliser.
-        try:
-            record_app_exited(
-                duration_ms=duration_ms,
-                exit_status=exit_status,
-                error_category=None,
-            )
-        finally:
-            # Always flush and release the provider — even if record_app_exited
-            # raises.  shutdown_telemetry() is idempotent (_sdk_shutdown guard)
-            # so a double-call is safe; in practice only one call ever reaches
-            # the daemon-thread work because the flag is set on the calling thread
-            # before the thread is started.
-            shutdown_telemetry()
-
-    ctx.call_on_close(_on_close)

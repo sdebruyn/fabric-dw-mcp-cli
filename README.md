@@ -195,10 +195,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, branch flow, and how to ru
 
 📖 Docs: [fdw.debruyn.dev](https://fdw.debruyn.dev) (or run `uv run --only-group docs zensical serve` locally).
 
-## Telemetry
-
-`fabric-dw` collects opt-out usage telemetry. No SQL statements or credentials are ever sent. To opt out, set `FABRIC_DW_TELEMETRY_OPT_OUT=1`. See the [Telemetry docs](https://fdw.debruyn.dev/telemetry/) for the full list of collected fields and all opt-out methods.
-
 ## Security
 
 Please report vulnerabilities privately. See [SECURITY.md](SECURITY.md).

@@ -63,7 +63,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ClientAuthenticationError
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
-from fabric_dw import auth, telemetry
+from fabric_dw import auth
 from fabric_dw.exceptions import (
     CAPACITY_INACTIVE_MESSAGE,
     AuthError,
@@ -392,19 +392,6 @@ class FabricHttpClient:
                 except ClientAuthenticationError as exc:
                     raise auth_error_from_credential_exc(exc) from exc
                 self._tokens[scope] = token
-                # Decode the tid claim from the new token and cache it in the
-                # telemetry layer (no-op when telemetry is disabled or tid is
-                # already known).  Never raises — fail-safe wrapper.
-                telemetry.cache_tenant_id_from_token(token.token)
-                # Derive and record the resolved auth mode from the credential
-                # that produced this token.  For DefaultAzureCredential, this
-                # inspects _successful_credential (set after the first get_token
-                # succeeds) and maps its class name to a telemetry mode string.
-                # No-op for non-DAC credentials (SyncCredentialAdapter wrapping
-                # InteractiveBrowserCredential / ClientSecretCredential) because
-                # get_credential() already called set_auth_mode for those modes.
-                # Always fail-safe: never raises.
-                auth.record_auth_mode_from_default_credential(self._credential)
         return token.token
 
     # ------------------------------------------------------------------
