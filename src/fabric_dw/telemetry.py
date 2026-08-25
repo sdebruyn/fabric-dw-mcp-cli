@@ -38,9 +38,26 @@ Architecture notes
   it, and its spans keep going wherever it chose.  That is correct and
   desirable; what this prevents is *this package* adding an export path the user
   did not ask for.
-- ``APPLICATIONINSIGHTS_SDKSTATS_DISABLED`` suppresses the customer-sdkstats
-  channel, which is separate from statsbeat and would otherwise run its own
-  metrics pipeline on our connection string.
+- Four side channels of the Azure Monitor stack are switched off, each behind an
+  environment variable of its own that nothing in the library's API surface
+  points to, and each found only by measuring a live process:
+
+  1. ``APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL`` (statsbeat, plus its Azure
+     IMDS probe).
+  2. ``APPLICATIONINSIGHTS_SDKSTATS_DISABLED`` (customer sdkstats, separate from
+     statsbeat, which would otherwise run its own metrics pipeline on our
+     connection string).
+  3. ``APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED`` (the
+     ``_OTELRESOURCE_`` ``MetricData`` envelope appended to every span export,
+     set in :mod:`fabric_dw.telemetry_spans`).
+  4. ``APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED`` (the OneSettings control
+     plane: an hourly outbound poll that also lets Microsoft toggle this
+     installation's offline storage remotely, #1053).
+
+  Treat that as a property of this stack rather than as four coincidences:
+  assume a fifth exists and check for it by measurement, not by reading the
+  configuration surface, whenever this dependency is upgraded or a new exporter
+  is added.
 - ``shutdown_on_exit`` is disabled; a bounded ``force_flush`` + ``provider.shutdown()``
   (≤8 s total) is performed at app exit in a daemon thread so the CLI never hangs.
   The explicit ``force_flush`` call before ``shutdown()`` is required to reliably
@@ -845,6 +862,31 @@ def _get_tracer() -> object | None:
             # OTEL_*_EXPORTER pair below), and the failure direction is benign: more
             # Microsoft-internal telemetry, opted into deliberately.
             os.environ.setdefault("APPLICATIONINSIGHTS_SDKSTATS_DISABLED", "true")
+
+            # OneSettings control plane: the third separately-gated channel set
+            # here, and the only side channel of the four that is also an INBOUND
+            # one (#1053).
+            #
+            # BaseExporter.__init__ calls get_configuration_manager(), which stands
+            # up a singleton manager plus a `ConfigurationWorker` daemon thread that
+            # polls https://settings.sdk.monitor.azure.com/ roughly hourly and
+            # describes this process to it (os, rp, attach, component, version,
+            # region and the instrumentation key).  The response is a feature-flag
+            # document, and the exporter registers a callback on it so Microsoft can
+            # toggle this installation's offline storage remotely.  The log exporter
+            # alone is enough to start it, so it ran on every CLI invocation and for
+            # the life of every MCP server.
+            #
+            # Two reasons to switch it off rather than document it: docs/telemetry.md
+            # presents a closed list of what leaves the machine and this was not on
+            # it, and a third party changing an installation's storage behaviour at
+            # runtime is not something this package should accept on the user's
+            # behalf.
+            #
+            # setdefault, like the two above: the gate is `== "true"`, so an operator
+            # setting any other value keeps the control plane and its remote
+            # kill-switch.
+            os.environ.setdefault("APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED", "true")
 
             # Build the OTel Resource that populates native Part A fields and prevents
             # hostname fallback for cloud_RoleInstance / ai.device.id (#477).

@@ -775,6 +775,10 @@ def _envelopes_for(monkeypatch: pytest.MonkeyPatch, spans: list[ReadableSpan]) -
     """
     monkeypatch.setenv("APPLICATIONINSIGHTS_STATSBEAT_DISABLED_ALL", "true")
     monkeypatch.setenv("APPLICATIONINSIGHTS_SDKSTATS_DISABLED", "true")
+    # As telemetry.py sets it before the first exporter exists (#1053): otherwise
+    # constructing a real exporter starts the OneSettings ConfigurationWorker,
+    # which polls settings.sdk.monitor.azure.com from its own thread.
+    monkeypatch.setenv("APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED", "true")
 
     # The resource-metric branch reads `tracer_provider.resource`, so it only
     # fires when a real provider is in play, which is exactly the production

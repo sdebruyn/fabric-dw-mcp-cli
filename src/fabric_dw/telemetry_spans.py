@@ -455,9 +455,12 @@ def install_mcp_span_pipeline(connection_string: str, resource: object | None) -
         # is.  setdefault, like APPLICATIONINSIGHTS_SDKSTATS_DISABLED: the gate
         # is `!= "true"`, so an operator's explicit value is a real override.
         #
-        # Third one of these now (statsbeat, customer sdkstats, this): assume
-        # any Azure Monitor exporter has a side channel behind an environment
-        # variable until proven otherwise.
+        # One of four now: statsbeat, customer sdkstats, this, and the
+        # OneSettings control plane (APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED,
+        # set in telemetry.py, #1053).  Assume any Azure Monitor exporter has a
+        # side channel behind an environment variable until proven otherwise,
+        # and expect a fifth: each of the four was found by measuring a running
+        # process, none by reading the library's API surface.
         os.environ.setdefault("APPLICATIONINSIGHTS_OPENTELEMETRY_RESOURCE_METRIC_DISABLED", "true")
 
         exporter = _AzureMonitorTraceExporter(connection_string=connection_string)

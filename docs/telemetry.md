@@ -96,6 +96,8 @@ Anything you choose the content of is removed from these entries first: prompt a
 
 Events are sent to a private Azure Application Insights resource operated by the `fabric-dw` maintainers, via a write-only connection string embedded in the package. The backing Log Analytics workspace has a daily ingestion cap to control costs.
 
+The events above are the only outbound traffic telemetry produces. The Azure SDK's own background channels are switched off, so it reports nothing about itself, and it does not poll Microsoft's configuration endpoint for settings that would let a third party change how this installation behaves.
+
 ## How to opt out
 
 Any of the following fully disables telemetry - no events are emitted and the SDK is never imported:

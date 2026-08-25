@@ -1175,6 +1175,7 @@ _WATCHED_OTEL_VARS = (
     "OTEL_METRICS_EXPORTER",
     "OTEL_LOGS_EXPORTER",
     "APPLICATIONINSIGHTS_SDKSTATS_DISABLED",
+    "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED",
 )
 #
 # The real-process check was run by hand against the locked versions: point
@@ -1266,6 +1267,29 @@ def _resolves_disabled(kind: str, env_at_call: dict[str, str | None]) -> bool:
         resolved: dict[str, Any] = {f"disable_{kind}": True}
         fn(resolved)
         return bool(resolved[f"disable_{kind}"])
+
+
+def _control_plane_is_off(env_at_call: dict[str, str | None]) -> bool:
+    """Ask the REAL library whether the OneSettings control plane is off.
+
+    Same composition as :func:`_resolves_disabled`: the environment as the
+    library sees it at call time, fed through the library's own gate, so this
+    cannot pass while the control plane is live.  ``get_configuration_manager``
+    returns ``None`` only on the disabled branch, and that branch is checked
+    before the singleton is built, so asking is free of side effects.
+    """
+    from azure.monitor.opentelemetry.exporter._configuration._state import (  # noqa: PLC0415
+        get_configuration_manager,
+    )
+
+    var = "APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"
+    with patch.dict(os.environ, {}, clear=False):
+        value = env_at_call.get(var)
+        if value is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = value
+        return get_configuration_manager() is None
 
 
 def test_get_tracer_never_lets_the_library_build_the_trace_pipeline(
@@ -1495,6 +1519,71 @@ def test_operator_can_re_enable_customer_sdkstats(
     try:
         assert at_call["APPLICATIONINSIGHTS_SDKSTATS_DISABLED"] == "false", (
             "an explicit operator value must survive"
+        )
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_get_tracer_disables_the_onesettings_control_plane(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """The control plane must be off, on both surfaces, or two promises break.
+
+    ``BaseExporter.__init__`` calls ``get_configuration_manager()``, which starts
+    a ``ConfigurationWorker`` daemon thread polling
+    ``https://settings.sdk.monitor.azure.com/`` roughly hourly and describing this
+    process to it (os, rp, attach, component, version, region, instrumentation
+    key), then registers a callback so the response can toggle this
+    installation's offline storage remotely. The log exporter alone starts it, so
+    it ran on every CLI invocation and for the life of every MCP server.
+
+    ``docs/telemetry.md`` presents a closed list of what leaves the machine and
+    this was not on it, and an inbound remote switch is not something this
+    package should accept on a user's behalf (#1053).
+
+    Measured in a real process before the fix: a ``ConfigurationWorker`` thread
+    and a DNS lookup for ``settings.sdk.monitor.azure.com:443``. After: neither,
+    and ``get_configuration_manager()`` returns ``None``.
+    """
+    mod, at_call, _after = _run_get_tracer(monkeypatch, tmp_path, request)
+    try:
+        assert at_call["APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"] == "true", (
+            "the OneSettings control plane was left enabled (#1053)"
+        )
+        assert _control_plane_is_off(at_call), (
+            "the environment the library sees at call time still resolves to a live "
+            "control plane, so a ConfigurationWorker thread would start and poll "
+            "settings.sdk.monitor.azure.com."
+        )
+    finally:
+        mod._sdk_initialised = False
+        mod._tracer = None
+        mod._otel_logger = None
+
+
+def test_operator_can_re_enable_the_onesettings_control_plane(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """The control-plane switch is a setdefault, so an explicit value wins.
+
+    The library's gate is ``== "true"``, so any other value keeps the control
+    plane and its remote kill switch. Same treatment as statsbeat and customer
+    sdkstats: this package chooses the default, an operator keeps the choice.
+    """
+    mod, at_call, _after = _run_get_tracer(
+        monkeypatch,
+        tmp_path,
+        request,
+        preset={"APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED": "false"},
+    )
+    try:
+        assert at_call["APPLICATIONINSIGHTS_CONTROLPLANE_DISABLED"] == "false", (
+            "an explicit operator value must survive"
+        )
+        assert not _control_plane_is_off(at_call), (
+            "an operator who asked for the control plane must get it"
         )
     finally:
         mod._sdk_initialised = False
