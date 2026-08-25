@@ -149,36 +149,6 @@ fdw config unset logging level
 before connecting. It has no `fabric-dw` configuration key or environment
 variable: pool behaviour is owned entirely by the driver.
 
-## Telemetry
-
-`fabric-dw` collects **anonymous, opt-out** usage telemetry - it is **on by default**. Any of the following independently disables it - no events are emitted and the SDK is never imported:
-
-| Mechanism | Type | Effect |
-|---|---|---|
-| `FABRIC_DW_TELEMETRY_OPT_OUT` | env var | Any truthy value (not in `""`, `0`, `false`, `no`, `off`, case-insensitive) disables telemetry. |
-| `DO_NOT_TRACK` | env var | The [consoledonottrack.com](https://consoledonottrack.com/) standard. Any truthy value (same rules as above) disables telemetry. |
-| `[telemetry] disabled = true` in `config.toml` | config key | Set with `fdw config set telemetry disabled true`. |
-
-To opt out via the config file:
-
-```shell
-fdw config set telemetry disabled true
-```
-
-To re-enable telemetry:
-
-```shell
-fdw config set telemetry disabled false
-```
-
-To revert to the built-in default:
-
-```shell
-fdw config unset telemetry disabled
-```
-
-See [Telemetry](../telemetry.md) for the full list of collected fields and lifecycle events.
-
 ## Credential mode
 
 Both the `fdw` CLI and the MCP server (`fdw mcp`) resolve the credential mode from the same
@@ -230,7 +200,7 @@ fdw config clear
 
 ### config set
 
-Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled`, `logging level`, and `mcp workspace-allowlist` for section-scoped knobs.
+Set a default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, or `auth-mode` as a flat key, or the nested sub-commands `logging level` and `mcp workspace-allowlist` for section-scoped knobs.
 
 **Synopsis**
 
@@ -242,7 +212,6 @@ fdw config set retry-deadline SECONDS
 fdw config set sql-retry-deadline SECONDS
 fdw config set sql-retry-executes true|false
 fdw config set auth-mode MODE
-fdw config set telemetry disabled true|false
 fdw config set logging level LEVEL
 fdw config set mcp workspace-allowlist WS1,WS2,...
 ```
@@ -257,7 +226,6 @@ fdw config set retry-deadline 600
 fdw config set sql-retry-deadline 300
 fdw config set sql-retry-executes true
 fdw config set auth-mode interactive
-fdw config set telemetry disabled true
 fdw config set logging level DEBUG
 fdw config set mcp workspace-allowlist "Sales WS,Finance WS"
 ```
@@ -286,7 +254,7 @@ warehouse  MyWarehouse
 
 ### config unset
 
-Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, or `auth-mode` as a flat key, or the nested sub-commands `telemetry disabled`, `logging level`, and `mcp workspace-allowlist` for section-scoped knobs.
+Clear a single default value. Accepts `workspace`, `warehouse`, `max-429-retries`, `retry-deadline`, `sql-retry-deadline`, `sql-retry-executes`, or `auth-mode` as a flat key, or the nested sub-commands `logging level` and `mcp workspace-allowlist` for section-scoped knobs.
 
 **Synopsis**
 
@@ -298,7 +266,6 @@ fdw config unset retry-deadline
 fdw config unset sql-retry-deadline
 fdw config unset sql-retry-executes
 fdw config unset auth-mode
-fdw config unset telemetry disabled
 fdw config unset logging level
 fdw config unset mcp workspace-allowlist
 ```
