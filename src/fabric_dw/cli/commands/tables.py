@@ -349,6 +349,65 @@ async def health_check_cmd(
         raise click.ClickException(str(exc)) from exc
 
 
+@tables_group.command("sync-status")
+@click.argument("item", required=False, default=None)
+@click.option("--schema", "filter_schema", default=None, metavar="NAME", help="Filter by schema.")
+@click.option(
+    "--table",
+    "filter_table",
+    default=None,
+    metavar="SCHEMA.TABLE",
+    help="Filter to a single qualified table (e.g. dbo.FactSales). Exclusive with --schema.",
+)
+@click.pass_obj
+@coro
+async def sync_status_cmd(
+    ctx: CliContext,
+    item: str | None,
+    filter_schema: str | None,
+    filter_table: str | None,
+) -> None:
+    """Show per-table metadata sync freshness on ITEM (SQL Analytics Endpoint only).
+
+    Reads sys.dm_db_external_tables_log_status, left-joined onto sys.tables so
+    that a table with no DMV row still appears, with empty sync fields --
+    meaning no sync information is available, not that the table provably
+    never synced. Only supported on SQL Analytics Endpoints created after the
+    workspace's 'New metadata sync' (preview) setting was enabled.
+
+    Coverage limit: only tables present in sys.tables are listed. On a SQL
+    Analytics Endpoint that catalog is itself maintained by the metadata sync,
+    so a Lakehouse table whose discovery has not completed, or has failed,
+    does not appear at all. If a table you expect is missing, run
+    'fdw sql-endpoints refresh' to force an item-level sync and check again.
+    """
+    if filter_schema is not None and filter_table is not None:
+        raise click.UsageError("--schema and --table are mutually exclusive.")
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema = filter_schema
+    table_name: str | None = None
+    if filter_table is not None:
+        schema, table_name = parse_qualified_name(filter_table, kind="table")
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            items = await _tables_svc.list_table_sync_status(
+                target,
+                schema=schema,
+                table=table_name,
+                kind=entry.kind,
+                mode=ctx.auth,
+            )
+            render(
+                [t.model_dump(mode="json") for t in items],
+                json_output=ctx.json_output,
+                table_title="Table Metadata Sync Status",
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @tables_group.command("create")
 @click.argument("item", required=False, default=None)
 @click.option("--name", "qualified_name", required=True, help="Qualified name: schema.table.")

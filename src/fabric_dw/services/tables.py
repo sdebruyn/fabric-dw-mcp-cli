@@ -19,6 +19,7 @@ Public API
 - :func:`recluster_table`         — transactional CTAS-swap to change (or remove) clustering.
 - :func:`get_table_dependents`    — objects referencing a table by name.
 - :func:`get_table_health_metrics` — ``EXEC sp_get_table_health_metrics`` (SQL endpoint only).
+- :func:`list_table_sync_status`  — ``sys.dm_db_external_tables_log_status`` (SQL endpoint only).
 
 List-source note
 ----------------
@@ -45,6 +46,7 @@ from fabric_dw.models import (
     ColumnSpec,
     ResultSet,
     Table,
+    TableMetadataSyncStatus,
     TableRowCount,
     WarehouseKind,
 )
@@ -82,6 +84,7 @@ __all__ = [
     "infer_columns_from_csv",
     "infer_columns_from_json",
     "infer_columns_from_parquet",
+    "list_table_sync_status",
     "list_tables",
     "read_table",
     "recluster_table",
@@ -106,22 +109,43 @@ _WAREHOUSE_HEALTH_CHECK_MSG = (
     "Table health-check (sp_get_table_health_metrics) is only "
     "available on SQL Analytics Endpoints, not Data Warehouses."
 )
+_WAREHOUSE_SYNC_STATUS_MSG = (
+    "Table metadata sync-status (sys.dm_db_external_tables_log_status) is only "
+    "available on SQL Analytics Endpoints, not Data Warehouses."
+)
+
+# Fragment (lower-cased) of the "invalid object name" driver error that names the
+# DMV specifically, distinguishing "this endpoint predates the new metadata sync
+# preview" from an unrelated 208 raised for some other reason.
+_SYNC_STATUS_DMV_FRAGMENT = "dm_db_external_tables_log_status"
+_SYNC_STATUS_LEGACY_SYNC_MSG = (
+    "Table metadata sync-status requires the new metadata sync (preview) for "
+    "this SQL analytics endpoint. It only applies to endpoints created after "
+    "'New metadata sync' was enabled under Workspace settings, Warehouse "
+    "settings, in the workspace hosting this endpoint. On endpoints using the "
+    "legacy metadata sync, use 'fdw sql-endpoints refresh' to refresh the "
+    "whole item instead."
+)
 
 
-def _assert_sql_endpoint(kind: WarehouseKind) -> None:
+def _assert_sql_endpoint(kind: WarehouseKind, msg: str = _WAREHOUSE_HEALTH_CHECK_MSG) -> None:
     """Raise :class:`~fabric_dw.exceptions.ItemKindError` for non-SQL-Endpoint items.
 
-    ``sp_get_table_health_metrics`` targets the SQL Analytics Endpoint over
-    lakehouse Delta tables only — it is not available on Data Warehouses.
+    Shared guard for SQL-Analytics-Endpoint-only operations such as
+    ``sp_get_table_health_metrics`` and ``sys.dm_db_external_tables_log_status``,
+    neither of which is available on Data Warehouses.
 
     Args:
         kind: The :class:`~fabric_dw.models.WarehouseKind` of the resolved item.
+        msg: The error message to raise. Defaults to the health-check message
+            so the existing call site is unaffected; callers for other
+            SQL-Analytics-Endpoint-only operations should pass their own.
 
     Raises:
         ItemKindError: If *kind* is not :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
     """
     if kind != WarehouseKind.SQL_ENDPOINT:
-        raise ItemKindError(_WAREHOUSE_HEALTH_CHECK_MSG)
+        raise ItemKindError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +161,29 @@ SELECT
 FROM sys.tables t
 JOIN sys.schemas s ON s.schema_id = t.schema_id
 WHERE ({schema_filter})
+ORDER BY s.name, t.name;
+"""
+
+# sys.dm_db_external_tables_log_status is a catalog DMV keyed by object_id — this
+# is metadata lookup, not SQL text parsing.  The listing is driven from sys.tables
+# with a LEFT JOIN so a table with no DMV row (no sync information available)
+# still appears, with the DMV columns NULL, instead of vanishing. Coverage
+# limit: sys.tables itself is populated by the metadata sync on a SQL Analytics
+# Endpoint, so a table whose discovery has not completed, or has failed, has no
+# sys.tables row and is absent from this listing entirely — see
+# list_table_sync_status's docstring.
+_TABLE_SYNC_STATUS_SQL = """\
+SELECT
+    s.name AS schema_name,
+    t.name,
+    dm.last_update_time_utc,
+    dm.latest_log_version,
+    dm.latest_checkpoint_version,
+    dm.is_blocked
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+LEFT JOIN sys.dm_db_external_tables_log_status dm ON dm.object_id = t.object_id
+WHERE ({filter})
 ORDER BY s.name, t.name;
 """
 
@@ -207,6 +254,43 @@ def _row_to_table(cols: list[str], row: tuple[object, ...]) -> Table:
         qualified_name=f"{schema_name}.{name}",
         created=cast(datetime, data["created"]),
         modified=cast(datetime, data["modified"]),
+    )
+
+
+def _row_to_sync_status(cols: list[str], row: tuple[object, ...]) -> TableMetadataSyncStatus:
+    """Build a :class:`TableMetadataSyncStatus` from a column-name list and a result row.
+
+    The four DMV-sourced columns are ``None`` when the table has no matching
+    row in ``sys.dm_db_external_tables_log_status`` — the LEFT JOIN in
+    :data:`_TABLE_SYNC_STATUS_SQL` leaves them unmatched rather than dropping
+    the row. This means no sync information is available for that table, not
+    that it provably never synced.
+    """
+    data = dict(zip(cols, row, strict=True))
+    schema_name = str(data["schema_name"])
+    name = str(data["name"])
+    last_update_time_utc = data.get("last_update_time_utc")
+    latest_log_version = data.get("latest_log_version")
+    latest_checkpoint_version = data.get("latest_checkpoint_version")
+    is_blocked = data.get("is_blocked")
+    return TableMetadataSyncStatus(
+        schema_name=schema_name,
+        name=name,
+        qualified_name=f"{schema_name}.{name}",
+        last_update_time_utc=(
+            coerce_to_utc(last_update_time_utc)
+            if isinstance(last_update_time_utc, datetime)
+            else None
+        ),
+        latest_log_version=(
+            int(cast("int", latest_log_version)) if latest_log_version is not None else None
+        ),
+        latest_checkpoint_version=(
+            int(cast("int", latest_checkpoint_version))
+            if latest_checkpoint_version is not None
+            else None
+        ),
+        is_blocked=bool(is_blocked) if is_blocked is not None else None,
     )
 
 
@@ -1283,6 +1367,105 @@ async def get_table_health_metrics(
     def _run() -> ResultSet:
         cols, rows = run_query(target, sql, mode=mode)
         return ResultSet(columns=cols, rows=list(rows))
+
+    return await asyncio.to_thread(_run)
+
+
+async def list_table_sync_status(
+    target: SqlTarget,
+    *,
+    schema: str | None = None,
+    table: str | None = None,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> list[TableMetadataSyncStatus]:
+    """Return per-table metadata sync freshness via ``sys.dm_db_external_tables_log_status``.
+
+    Lists every table on *target* (driven from ``sys.tables``, left-joined to
+    the DMV on ``object_id``) so a table with no matching DMV row still
+    appears, with its sync fields ``None`` instead of being dropped from the
+    result. ``None`` sync fields mean no sync information is available for
+    that table -- Microsoft documents the DMV as describing the most recent
+    update, not as proof a table has never synced.
+
+    Coverage limit: this listing only covers tables present in ``sys.tables``,
+    which on a SQL Analytics Endpoint is itself populated by the metadata
+    sync. A Lakehouse table whose discovery has not completed, or has failed,
+    has no ``sys.tables`` row and so is missing from this result entirely, not
+    merely shown with empty sync fields. If an expected table is absent, run
+    ``fdw sql-endpoints refresh`` to force an item-level sync and check again.
+
+    Only available on SQL Analytics Endpoints created after the workspace's
+    ``New metadata sync`` (preview) setting was enabled. On every other
+    endpoint the DMV does not exist; the raw "invalid object name" driver
+    error is translated into an actionable message pointing at the workspace
+    setting and at ``fdw sql-endpoints refresh`` as the fallback.
+
+    Args:
+        target: The SQL Analytics Endpoint to query. Data Warehouses are
+            rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
+        schema: When provided, only tables in this schema are returned.
+            Must pass :func:`validate_identifier`.
+        table: When provided, filter to this single (bare, unqualified) table
+            name. Requires *schema* to also be given. Must pass
+            :func:`validate_identifier`.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Only :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT` is
+            accepted; Warehouse items raise :class:`~fabric_dw.exceptions.ItemKindError`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        A (possibly empty) list of :class:`~fabric_dw.models.TableMetadataSyncStatus`
+        instances, ordered by schema then table name.
+
+    Raises:
+        ItemKindError: If *kind* is not
+            :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+            Message: ``"Table metadata sync-status
+            (sys.dm_db_external_tables_log_status) is only available on SQL
+            Analytics Endpoints, not Data Warehouses."``.
+        ValueError: If *table* is given without *schema*, or if *schema* or
+            *table* fails identifier validation.
+        NotFoundError: If the endpoint is on the legacy metadata sync (the DMV
+            does not exist), with a message naming the preview feature, the
+            workspace setting, and the ``fdw sql-endpoints refresh`` fallback.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    _assert_sql_endpoint(kind, _WAREHOUSE_SYNC_STATUS_MSG)
+
+    if table is not None and schema is None:
+        msg = "The table filter requires schema to also be given."
+        raise ValueError(msg)
+
+    filter_params: list[object]
+    if schema is None:
+        filter_clause = "1=1"
+        filter_params = []
+    elif table is None:
+        validate_identifier(schema)
+        filter_clause = "s.name = ?"
+        filter_params = [schema]
+    else:
+        validate_identifier(schema)
+        validate_identifier(table)
+        filter_clause = "s.name = ? AND t.name = ?"
+        filter_params = [schema, table]
+
+    sync_status_sql = _TABLE_SYNC_STATUS_SQL.format(filter=filter_clause)
+
+    def _run() -> list[TableMetadataSyncStatus]:
+        try:
+            cols, rows = run_query(
+                target,
+                sync_status_sql,
+                params=filter_params or None,
+                mode=mode,
+            )
+        except NotFoundError as exc:
+            if _SYNC_STATUS_DMV_FRAGMENT in str(exc).lower():
+                raise NotFoundError(_SYNC_STATUS_LEGACY_SYNC_MSG) from exc
+            raise
+        return [_row_to_sync_status(cols, r) for r in rows]
 
     return await asyncio.to_thread(_run)
 

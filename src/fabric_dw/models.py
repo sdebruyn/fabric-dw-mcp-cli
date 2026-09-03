@@ -603,6 +603,40 @@ class Table(_FabricBase):
     modified: datetime
 
 
+class TableMetadataSyncStatus(_FabricBase):
+    """Per-table metadata sync freshness from ``sys.dm_db_external_tables_log_status``.
+
+    This is a distinct model from :class:`TableSyncStatus`, which is the
+    per-table result of an item-level SQL Analytics Endpoint metadata refresh
+    (Fabric REST LRO). This model instead answers "when was this table's
+    metadata last synced?" for a single table on a SQL Analytics Endpoint.
+
+    A table with no matching DMV row still appears, with all four DMV-sourced
+    fields ``None`` -- absent sync information is a real, distinct answer, not
+    a missing row. It means no sync information is available for that table,
+    not that the table provably never synced: Microsoft documents the DMV as
+    describing the most recent update, not as a complete sync history.
+
+    Coverage limit: this listing is driven from ``sys.tables``, which on a SQL
+    Analytics Endpoint is itself populated by the metadata sync. A table whose
+    discovery has not completed, or has failed, has no ``sys.tables`` row and
+    so does not appear in this listing at all -- its absence from the result
+    set is not visible here.
+
+    Unlike :attr:`Table.created` / :attr:`Table.modified`, which pass the
+    driver's native datetime through unchanged, ``last_update_time_utc`` here
+    is always coerced to a timezone-aware UTC value (or ``None``).
+    """
+
+    schema_name: str
+    name: str
+    qualified_name: str
+    last_update_time_utc: datetime | None
+    latest_log_version: int | None
+    latest_checkpoint_version: int | None
+    is_blocked: bool | None
+
+
 # ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
