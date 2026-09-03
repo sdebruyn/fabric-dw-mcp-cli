@@ -29,11 +29,11 @@ import io
 import json
 import logging
 import math
-import sys
 from enum import StrEnum
 from pathlib import Path
 from typing import IO, Any
 
+import click
 import pyarrow as pa
 import pyarrow.csv as pa_csv
 import pyarrow.parquet as pq
@@ -223,8 +223,11 @@ def write_arrow(
         fmt: One of ``"json"``, ``"csv"``, ``"parquet"``.
         output: Path to write to.  Required for ``csv`` and ``parquet``.
             When ``None`` and format is ``json``, output goes to *out*.
-        out: Text stream for JSON stdout output.  When ``None``, ``sys.stdout``
-            is used.  Ignored when *output* is provided.
+        out: Text stream for JSON stdout output.  When ``None``,
+            :func:`click.echo` is used, which re-encodes stdout as UTF-8 when
+            it is misconfigured as ASCII (e.g. ``LANG=C``) instead of raising
+            :class:`UnicodeEncodeError` on non-ASCII table/column names or
+            string values.  Ignored when *output* is provided.
 
     Raises:
         ValueError: If *fmt* is not a known format, or if *output* is ``None``
@@ -246,10 +249,11 @@ def write_arrow(
             payload = json.dumps(records, default=str, ensure_ascii=False, indent=2)
             if output is not None:
                 output.write_text(payload, encoding="utf-8")
+            elif out is not None:
+                out.write(payload)
+                out.write("\n")
             else:
-                stream = out if out is not None else sys.stdout
-                stream.write(payload)
-                stream.write("\n")
+                click.echo(payload)
         case OutputFormat.CSV:
             assert output is not None  # noqa: S101  # guarded by ValueError above
             buf = io.BytesIO()
