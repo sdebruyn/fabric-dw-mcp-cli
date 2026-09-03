@@ -3144,6 +3144,198 @@ class TestGetTableHealthMetrics:
 
 
 # ===========================================================================
+# list_table_sync_status — sys.dm_db_external_tables_log_status (#1061)
+# ===========================================================================
+
+_SYNC_STATUS_COLS = [
+    "schema_name",
+    "name",
+    "last_update_time_utc",
+    "latest_log_version",
+    "latest_checkpoint_version",
+    "is_blocked",
+]
+_SYNC_ROW_SYNCED: tuple[object, ...] = ("dbo", "FactSales", _NOW, 1284, 1200, 0)
+_SYNC_ROW_NO_DMV_ROW: tuple[object, ...] = ("dbo", "StagingRaw", None, None, None, None)
+
+
+class TestListTableSyncStatus:
+    """Tests for :func:`tables.list_table_sync_status`."""
+
+    async def test_returns_empty_when_no_rows(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
+        assert result == []
+
+    async def test_happy_path_parses_all_fields(self) -> None:
+        target = _make_target()
+        conn = _make_conn([_SYNC_ROW_SYNCED], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
+        assert len(result) == 1
+        row = result[0]
+        assert row.schema_name == "dbo"
+        assert row.name == "FactSales"
+        assert row.qualified_name == "dbo.FactSales"
+        assert row.last_update_time_utc == _NOW
+        assert row.last_update_time_utc is not None
+        assert row.last_update_time_utc.tzinfo is not None
+        assert row.latest_log_version == 1284
+        assert row.latest_checkpoint_version == 1200
+        assert row.is_blocked is False
+        assert isinstance(row.is_blocked, bool)
+
+    async def test_sql_references_dmv_with_left_join(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
+        cursor = conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "sys.dm_db_external_tables_log_status" in call_sql
+        assert "LEFT JOIN" in call_sql
+
+    async def test_schema_filter_binds_param(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.list_table_sync_status(
+                target, schema="dbo", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        cursor = conn.cursor.return_value
+        call_args = cursor.execute.call_args
+        call_sql: str = call_args[0][0]
+        assert "s.name = ?" in call_sql
+        assert "t.name = ?" not in call_sql
+        params = call_args[0][1] if len(call_args[0]) > 1 else (call_args[1] or {}).get("params")
+        assert params is not None
+        assert list(params) == ["dbo"]
+
+    async def test_schema_and_table_filter_binds_both(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            await tables.list_table_sync_status(
+                target, schema="dbo", table="FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        cursor = conn.cursor.return_value
+        call_args = cursor.execute.call_args
+        call_sql: str = call_args[0][0]
+        assert "s.name = ? AND t.name = ?" in call_sql
+        params = call_args[0][1] if len(call_args[0]) > 1 else (call_args[1] or {}).get("params")
+        assert params is not None
+        assert list(params) == ["dbo", "FactSales"]
+
+    async def test_table_without_schema_raises_value_error(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], _SYNC_STATUS_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(ValueError, match="requires schema"),
+        ):
+            await tables.list_table_sync_status(
+                target, table="FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_bad_schema_identifier_raises_value_error(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], _SYNC_STATUS_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(ValueError, match="Invalid SQL identifier"),
+        ):
+            await tables.list_table_sync_status(
+                target, schema="bad]schema", kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_bad_table_identifier_raises_value_error(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], _SYNC_STATUS_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(ValueError, match="Invalid SQL identifier"),
+        ):
+            await tables.list_table_sync_status(
+                target, schema="dbo", table="bad;table", kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_warehouse_kind_raises_item_kind_error(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], _SYNC_STATUS_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(ItemKindError, match="SQL Analytics Endpoints"),
+        ):
+            await tables.list_table_sync_status(target, kind=WarehouseKind.WAREHOUSE)
+
+    async def test_sql_endpoint_kind_is_allowed(self) -> None:
+        target = _make_target()
+        conn = _make_conn([], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            # Must not raise:
+            await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
+
+    async def test_legacy_endpoint_error_is_translated(self) -> None:
+        """A legacy (non-preview) endpoint raises an actionable NotFoundError."""
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception(
+            "Invalid object name 'sys.dm_db_external_tables_log_status'."
+        )
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError) as exc_info,
+        ):
+            await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
+        msg = str(exc_info.value)
+        assert "new metadata sync" in msg.lower()
+        assert "fdw sql-endpoints refresh" in msg
+
+    async def test_unrelated_not_found_error_propagates_unchanged(self) -> None:
+        """An invalid-object-name error naming something other than the DMV is untouched."""
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = Exception("Invalid object name 'dbo.SomeOtherTable'.")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError) as exc_info,
+        ):
+            await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
+        msg = str(exc_info.value)
+        assert "new metadata sync" not in msg.lower()
+        assert "SomeOtherTable" in msg
+
+    async def test_row_with_null_dmv_columns_yields_none_last_update(self) -> None:
+        target = _make_target()
+        conn = _make_conn([_SYNC_ROW_NO_DMV_ROW], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
+        assert len(result) == 1
+        row = result[0]
+        assert row.schema_name == "dbo"
+        assert row.name == "StagingRaw"
+        assert row.qualified_name == "dbo.StagingRaw"
+        assert row.last_update_time_utc is None
+        assert row.latest_log_version is None
+        assert row.latest_checkpoint_version is None
+        assert row.is_blocked is None
+
+    async def test_mixed_result_set_returns_both(self) -> None:
+        target = _make_target()
+        conn = _make_conn([_SYNC_ROW_SYNCED, _SYNC_ROW_NO_DMV_ROW], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", return_value=conn):
+            result = await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
+        assert len(result) == 2
+        assert {r.name for r in result} == {"FactSales", "StagingRaw"}
+
+
+# ===========================================================================
 # read_table — Row normalisation (#718)
 # ===========================================================================
 # _FakeRow is imported from tests.unit.services._helpers (shared definition).
