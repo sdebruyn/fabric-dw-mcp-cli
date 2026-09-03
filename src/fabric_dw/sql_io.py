@@ -224,8 +224,10 @@ def write_arrow(
         output: Path to write to.  Required for ``csv`` and ``parquet``.
             When ``None`` and format is ``json``, output goes to *out*.
         out: Text stream for JSON stdout output.  When ``None``,
-            :func:`click.get_text_stream` is used so Click's pager / redirect
-            handling is respected.  Ignored when *output* is provided.
+            :func:`click.echo` is used, which re-encodes stdout as UTF-8 when
+            it is misconfigured as ASCII (e.g. ``LANG=C``) instead of raising
+            :class:`UnicodeEncodeError` on non-ASCII table/column names or
+            string values.  Ignored when *output* is provided.
 
     Raises:
         ValueError: If *fmt* is not a known format, or if *output* is ``None``
@@ -247,10 +249,11 @@ def write_arrow(
             payload = json.dumps(records, default=str, ensure_ascii=False, indent=2)
             if output is not None:
                 output.write_text(payload, encoding="utf-8")
+            elif out is not None:
+                out.write(payload)
+                out.write("\n")
             else:
-                stream = out if out is not None else click.get_text_stream("stdout")
-                stream.write(payload)
-                stream.write("\n")
+                click.echo(payload)
         case OutputFormat.CSV:
             assert output is not None  # noqa: S101  # guarded by ValueError above
             buf = io.BytesIO()

@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import math
+import sys
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -219,6 +220,27 @@ class TestWriteArrowJson:
         out = capsys.readouterr().out
         parsed = json.loads(out)
         assert parsed[0]["data"] == base64.b64encode(raw).decode("ascii")
+
+    def test_json_writes_non_ascii_to_ascii_configured_stdout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: an ASCII-configured stdout must not blow up on non-ASCII payloads.
+
+        ``write_arrow`` builds JSON with ``ensure_ascii=False``, so non-ASCII table
+        and column names or string values reach stdout as literal Unicode. A plain
+        ``sys.stdout.write()`` raises ``UnicodeEncodeError`` when stdout's encoding
+        is ASCII (e.g. a ``LANG=C`` environment); ``click.echo`` re-encodes such a
+        stream as UTF-8 instead, matching what ``click.get_text_stream`` used to do.
+        """
+        table = columns_rows_to_arrow(["name"], [("héllo wörld — 日本語",)])
+        fake_stdout = io.TextIOWrapper(io.BytesIO(), encoding="ascii", newline="\n")
+        monkeypatch.setattr(sys, "stdout", fake_stdout)
+
+        write_arrow(table, OutputFormat.JSON)
+
+        fake_stdout.flush()
+        parsed = json.loads(fake_stdout.buffer.getvalue().decode("utf-8"))
+        assert parsed[0]["name"] == "héllo wörld — 日本語"
 
     def test_json_writes_to_out_stream(self) -> None:
         table = columns_rows_to_arrow(["id"], [(1,)])

@@ -7,8 +7,10 @@ Covers:
 
 from __future__ import annotations
 
+import io
 import json
 import re
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -22,6 +24,7 @@ from click.testing import CliRunner, Result
 
 from fabric_dw.cache import ItemEntry
 from fabric_dw.cli._main import cli
+from fabric_dw.cli.commands.sql import _write_or_echo_bytes
 from fabric_dw.exceptions import FabricError, NotFoundError, PermissionDeniedError
 from fabric_dw.models import SqlResult, WarehouseKind
 from fabric_dw.sql import SqlTarget
@@ -1490,6 +1493,26 @@ class TestSqlPlanFormatSvg:
         # The actual lowercase-vs-uppercase is tested via the Choice parameter;
         # here we simply confirm the happy path works.
         assert result.exit_code == 0
+
+
+class TestWriteOrEchoBytes:
+    """_write_or_echo_bytes — direct unit coverage of the stdout binary-write path."""
+
+    def test_echoes_to_stdout_already_in_binary_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression: stdout already in binary mode has no further ``.buffer``.
+
+        ``sys.stdout.buffer.write(data)`` raises ``AttributeError`` here, because a
+        stream that is itself already binary (e.g. detached the way Python's own
+        docs describe) does not expose a nested ``.buffer``. ``click.echo`` detects
+        an already-binary stream and writes straight to it, matching what
+        ``click.get_binary_stream`` used to do.
+        """
+        binary_stdout = io.BytesIO()
+        monkeypatch.setattr(sys, "stdout", binary_stdout)
+
+        _write_or_echo_bytes(b"<svg>ok</svg>", None, "SVG written to {path}")
+
+        assert binary_stdout.getvalue() == b"<svg>ok</svg>"
 
 
 class TestSqlPlanFormatHtml:
