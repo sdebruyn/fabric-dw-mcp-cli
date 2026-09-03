@@ -29,11 +29,11 @@ import io
 import json
 import logging
 import math
+import sys
 from enum import StrEnum
 from pathlib import Path
 from typing import IO, Any
 
-import click
 import pyarrow as pa
 import pyarrow.csv as pa_csv
 import pyarrow.parquet as pq
@@ -223,9 +223,8 @@ def write_arrow(
         fmt: One of ``"json"``, ``"csv"``, ``"parquet"``.
         output: Path to write to.  Required for ``csv`` and ``parquet``.
             When ``None`` and format is ``json``, output goes to *out*.
-        out: Text stream for JSON stdout output.  When ``None``,
-            :func:`click.get_text_stream` is used so Click's pager / redirect
-            handling is respected.  Ignored when *output* is provided.
+        out: Text stream for JSON stdout output.  When ``None``, ``sys.stdout``
+            is used.  Ignored when *output* is provided.
 
     Raises:
         ValueError: If *fmt* is not a known format, or if *output* is ``None``
@@ -248,7 +247,7 @@ def write_arrow(
             if output is not None:
                 output.write_text(payload, encoding="utf-8")
             else:
-                stream = out if out is not None else click.get_text_stream("stdout")
+                stream = out if out is not None else sys.stdout
                 stream.write(payload)
                 stream.write("\n")
         case OutputFormat.CSV:

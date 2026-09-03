@@ -9,6 +9,7 @@ Commands
 from __future__ import annotations
 
 import json as _json
+import sys
 
 import click
 
@@ -345,7 +346,7 @@ def _write_or_echo_bytes(data: bytes, output_path: str | None, file_msg_template
     Args:
         data: The binary content to write or echo.
         output_path: File path to write to; when ``None``, the raw bytes are
-            written to stdout via :func:`click.get_binary_stream`.
+            written to ``sys.stdout.buffer``.
         file_msg_template: Message template for the confirmation echo; ``{path}``
             is replaced with the actual path.
     """
@@ -354,4 +355,4 @@ def _write_or_echo_bytes(data: bytes, output_path: str | None, file_msg_template
             fh.write(data)
         click.echo(file_msg_template.format(path=output_path))
     else:
-        click.get_binary_stream("stdout").write(data)
+        sys.stdout.buffer.write(data)
