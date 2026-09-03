@@ -31,7 +31,8 @@ from fabric_dw.cli.commands._utils import (
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import ColumnSpec, CopyIntoResult
+from fabric_dw.models import ColumnSpec, CopyIntoResult, TableMetadataSyncStatus
+from fabric_dw.services import sql_endpoints as _sql_endpoints_svc
 from fabric_dw.services import tables as _tables_svc
 from fabric_dw.services.columns import get_object_columns_or_raise as _get_columns
 from fabric_dw.services.load import (
@@ -359,6 +360,18 @@ async def health_check_cmd(
     metavar="SCHEMA.TABLE",
     help="Filter to a single qualified table (e.g. dbo.FactSales). Exclusive with --schema.",
 )
+@click.option(
+    "--check-lakehouse",
+    "check_lakehouse",
+    is_flag=True,
+    default=False,
+    help=(
+        "Cross-reference the backing Lakehouse's table inventory and add rows for "
+        "tables it has but the endpoint catalog does not (in_endpoint_catalog=false). "
+        "Costs at least one extra REST call; only works for a non-schema-enabled "
+        "Lakehouse-backed endpoint. Exclusive with --schema and --table."
+    ),
+)
 @click.pass_obj
 @coro
 async def sync_status_cmd(
@@ -366,6 +379,7 @@ async def sync_status_cmd(
     item: str | None,
     filter_schema: str | None,
     filter_table: str | None,
+    check_lakehouse: bool,
 ) -> None:
     """Show per-table metadata sync freshness on ITEM (SQL Analytics Endpoint only).
 
@@ -375,14 +389,26 @@ async def sync_status_cmd(
     never synced. Only supported on SQL Analytics Endpoints created after the
     workspace's 'New metadata sync' (preview) setting was enabled.
 
-    Coverage limit: only tables present in sys.tables are listed. On a SQL
-    Analytics Endpoint that catalog is itself maintained by the metadata sync,
-    so a Lakehouse table whose discovery has not completed, or has failed,
-    does not appear at all. If a table you expect is missing, run
-    'fdw sql-endpoints refresh' to force an item-level sync and check again.
+    Coverage limit: only tables present in sys.tables are listed by default.
+    On a SQL Analytics Endpoint that catalog is itself maintained by the
+    metadata sync, so a Lakehouse table whose discovery has not completed, or
+    has failed, does not appear at all. Pass --check-lakehouse to close this
+    gap: it cross-references the backing Lakehouse's own table inventory and
+    adds a row (in_endpoint_catalog=false, all sync fields empty) for every
+    table found there but missing from the endpoint catalog. This only works
+    for an endpoint backed by a non-schema-enabled Lakehouse -- for anything
+    else (a mirrored database, a schema-enabled Lakehouse, ...) the flag
+    prints an explanatory note and the listing falls back to today's
+    catalog-only behaviour, it never silently claims full coverage. Otherwise,
+    run 'fdw sql-endpoints refresh' to force an item-level sync and check again.
     """
     if filter_schema is not None and filter_table is not None:
         raise click.UsageError("--schema and --table are mutually exclusive.")
+    if check_lakehouse and (filter_schema is not None or filter_table is not None):
+        raise click.UsageError(
+            "--check-lakehouse cannot be combined with --schema or --table; it always "
+            "compares the whole endpoint against its backing Lakehouse."
+        )
     ws = resolve_workspace(ctx)
     wh = resolve_warehouse_arg(ctx, item)
     schema = filter_schema
@@ -399,6 +425,10 @@ async def sync_status_cmd(
                 kind=entry.kind,
                 mode=ctx.auth,
             )
+            if check_lakehouse:
+                items = await _apply_lakehouse_discovery_gap(
+                    http, UUID(target.workspace_id), entry.id, items, json_output=ctx.json_output
+                )
             render(
                 [t.model_dump(mode="json") for t in items],
                 json_output=ctx.json_output,
@@ -406,6 +436,58 @@ async def sync_status_cmd(
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+
+async def _apply_lakehouse_discovery_gap(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    endpoint_id: UUID,
+    items: list[TableMetadataSyncStatus],
+    *,
+    json_output: bool,
+) -> list[TableMetadataSyncStatus]:
+    """Cross-reference the backing Lakehouse and append discovery-gap rows to *items*.
+
+    Prints an explanatory note to stdout (human output only, never --json) when
+    the cross-check could not run, so the CLI never silently claims coverage it
+    does not have. Returns *items* unchanged when the check could not run.
+    """
+    known_dbo = frozenset(t.name for t in items if t.schema_name.casefold() == "dbo")
+    gap = await _sql_endpoints_svc.find_undiscovered_lakehouse_tables(
+        http, workspace_id, endpoint_id, known_dbo
+    )
+    if gap.status == _sql_endpoints_svc.LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED:
+        if not json_output:
+            click.echo(
+                "Note: --check-lakehouse could not run: this endpoint's backing item "
+                "could not be resolved to a Lakehouse (it may be backed by a mirrored "
+                "database or similar). Catalog-only results shown below."
+            )
+        return items
+    if gap.status == _sql_endpoints_svc.LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED:
+        if not json_output:
+            click.echo(
+                "Note: --check-lakehouse could not run: the backing Lakehouse has "
+                "schema support enabled, and the Lakehouse table-listing API does not "
+                "attribute tables to schemas. Catalog-only results shown below."
+            )
+        return items
+    if not gap.missing_table_names:
+        return items
+    extra = [
+        TableMetadataSyncStatus(
+            schema_name="dbo",
+            name=name,
+            qualified_name=f"dbo.{name}",
+            last_update_time_utc=None,
+            latest_log_version=None,
+            latest_checkpoint_version=None,
+            is_blocked=None,
+            in_endpoint_catalog=False,
+        )
+        for name in gap.missing_table_names
+    ]
+    return sorted([*items, *extra], key=lambda t: (t.schema_name, t.name))
 
 
 @tables_group.command("refresh")

@@ -4327,6 +4327,275 @@ class TestTablesSyncStatus:
         assert "StagingRaw" in result.output
 
 
+class TestTablesSyncStatusCheckLakehouse:
+    """Tests for ``tables sync-status --check-lakehouse`` (#1064)."""
+
+    def test_check_lakehouse_with_schema_is_usage_error(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "tables",
+                "sync-status",
+                SE_GUID,
+                "--check-lakehouse",
+                "--schema",
+                "dbo",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--check-lakehouse cannot be combined" in result.output
+
+    def test_check_lakehouse_with_table_is_usage_error(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        result = runner.invoke(
+            cli,
+            [
+                "-w",
+                WS_GUID,
+                "tables",
+                "sync-status",
+                SE_GUID,
+                "--check-lakehouse",
+                "--table",
+                "dbo.FactSales",
+            ],
+        )
+        assert result.exit_code != 0
+        assert "--check-lakehouse cannot be combined" in result.output
+
+    def test_check_lakehouse_adds_missing_row(self, runner: CliRunner, cache_env: Path) -> None:
+        from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+            LakehouseDiscoveryGap,
+            LakehouseDiscoveryStatus,
+        )
+
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
+                new=AsyncMock(
+                    return_value=LakehouseDiscoveryGap(
+                        status=LakehouseDiscoveryStatus.OK,
+                        missing_table_names=("StagingRaw",),
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "tables",
+                    "sync-status",
+                    SE_GUID,
+                    "--check-lakehouse",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert len(parsed) == 2
+        by_name = {row["name"]: row for row in parsed}
+        assert by_name["FactSales"]["in_endpoint_catalog"] is True
+        assert by_name["StagingRaw"]["in_endpoint_catalog"] is False
+        assert by_name["StagingRaw"]["qualified_name"] == "dbo.StagingRaw"
+        assert by_name["StagingRaw"]["last_update_time_utc"] is None
+
+    def test_check_lakehouse_no_gap_leaves_rows_unchanged(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+            LakehouseDiscoveryGap,
+            LakehouseDiscoveryStatus,
+        )
+
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
+                new=AsyncMock(
+                    return_value=LakehouseDiscoveryGap(status=LakehouseDiscoveryStatus.OK)
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "tables",
+                    "sync-status",
+                    SE_GUID,
+                    "--check-lakehouse",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert len(parsed) == 1
+
+    def test_check_lakehouse_not_lakehouse_backed_prints_note_human(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+            LakehouseDiscoveryGap,
+            LakehouseDiscoveryStatus,
+        )
+
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
+                new=AsyncMock(
+                    return_value=LakehouseDiscoveryGap(
+                        status=LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "sync-status", SE_GUID, "--check-lakehouse"]
+            )
+        assert result.exit_code == 0, result.output
+        assert "could not run" in result.output
+        assert "mirrored" in result.output
+
+    def test_check_lakehouse_schema_enabled_prints_note_human(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+            LakehouseDiscoveryGap,
+            LakehouseDiscoveryStatus,
+        )
+
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
+                new=AsyncMock(
+                    return_value=LakehouseDiscoveryGap(
+                        status=LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "sync-status", SE_GUID, "--check-lakehouse"]
+            )
+        assert result.exit_code == 0, result.output
+        assert "could not run" in result.output
+        assert "schema" in result.output.lower()
+
+    def test_check_lakehouse_inconclusive_json_has_no_note_text(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """--json stays a clean array with no note text mixed in, even when inconclusive."""
+        from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+            LakehouseDiscoveryGap,
+            LakehouseDiscoveryStatus,
+        )
+
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
+                new=AsyncMock(
+                    return_value=LakehouseDiscoveryGap(
+                        status=LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "tables",
+                    "sync-status",
+                    SE_GUID,
+                    "--check-lakehouse",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)  # must not raise: no stray note text in --json output
+        assert len(parsed) == 1
+
+
 class TestTablesRefresh:
     """Tests for the ``tables refresh`` CLI command (#1062)."""
 

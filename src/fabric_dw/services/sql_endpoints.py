@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
+from enum import StrEnum
 from uuid import UUID
 
-from fabric_dw._fabric_api import resolve_lakehouse_connection_string
+from fabric_dw._fabric_api import resolve_backing_lakehouse, resolve_lakehouse_connection_string
 from fabric_dw.exceptions import (
     CapacityInactiveError,
     FabricServerError,
@@ -32,10 +34,14 @@ _CONN_STRING_POLL_INTERVAL: float = 5.0
 _CONN_STRING_POLL_TIMEOUT: float = 120.0
 
 __all__ = [
+    "LakehouseDiscoveryGap",
+    "LakehouseDiscoveryStatus",
+    "find_undiscovered_lakehouse_tables",
     "get_endpoint",
     "get_endpoint_connection_string",
     "list_all_workspaces",
     "list_endpoints",
+    "list_lakehouse_table_names",
     "refresh_metadata",
 ]
 
@@ -330,3 +336,160 @@ async def refresh_metadata(
 
     raw_items = raw_value if isinstance(raw_value, list) else []
     return [TableSyncStatus.model_validate(item) for item in raw_items]
+
+
+# ---------------------------------------------------------------------------
+# Lakehouse discovery-gap cross-check (#1064)
+# ---------------------------------------------------------------------------
+#
+# tables.list_table_sync_status (TDS-only) lists tables from sys.tables, which
+# on a SQL Analytics Endpoint is itself populated by the metadata sync -- a
+# Lakehouse Delta table whose discovery has not completed, or has failed, has
+# no sys.tables row and so is invisible to that function no matter what filter
+# is passed. The functions below close that gap for the one case Fabric's REST
+# API actually lets us check: a non-schema-enabled Lakehouse-backed endpoint.
+#
+# What was investigated and what it ruled out:
+#
+# - Resolving the endpoint back to its backing item: there is no reverse link
+#   on GET /sqlEndpoints/{id} itself. resolve_backing_lakehouse (_fabric_api.py)
+#   pages GET /workspaces/{ws}/lakehouses and matches on
+#   properties.sqlEndpointProperties.id -- the same scan get_endpoint already
+#   performs for the connection-string fallback. Returns None for anything that
+#   isn't a Lakehouse (a mirrored database, a mirrored warehouse, etc.), which
+#   this module cannot enumerate tables for at all -- there is no
+#   "list source tables" REST API for those item kinds, so a SQL-endpoint whose
+#   backing item is one of them keeps today's catalog-only coverage, degraded
+#   but stated rather than silently claimed complete.
+#
+# - Enumerating a Lakehouse's tables: GET /workspaces/{ws}/lakehouses/{id}/tables
+#   ("Lakehouse - List Tables") returns {name, type, format, location} per
+#   table -- no schema field. Microsoft's own Lakehouse-schemas documentation
+#   says explicitly that for a SCHEMA-ENABLED lakehouse you must use a
+#   different, Unity-Catalog-compatible API family instead
+#   (onelake.table.fabric.microsoft.com/delta/...), which needs its own base
+#   URL, its own name-based addressing scheme, and (unconfirmed from the docs
+#   alone) a different OAuth scope than FABRIC_SCOPE -- a materially bigger,
+#   riskier change to make untested. So List Tables is used here instead, and
+#   only when it is safe to: a lakehouse GET/list response's
+#   properties.defaultSchema field is documented as present ONLY for a
+#   schema-enabled lakehouse -- its presence is the signal used to refuse the
+#   cross-check rather than guess at which schema a bare table name belongs to.
+
+
+class LakehouseDiscoveryStatus(StrEnum):
+    """Outcome of :func:`find_undiscovered_lakehouse_tables`."""
+
+    #: The comparison ran; ``LakehouseDiscoveryGap.missing_table_names`` holds
+    #: the (possibly empty) result.
+    OK = "ok"
+    #: *endpoint_id* has no matching Lakehouse in the workspace's ``/lakehouses``
+    #: listing -- it backs something else (a mirrored database, a mirrored
+    #: warehouse, etc.), or its parent Lakehouse has since been deleted. There is
+    #: no REST API this codebase can use to enumerate that item kind's tables.
+    NOT_LAKEHOUSE_BACKED = "not_lakehouse_backed"
+    #: The backing Lakehouse has schema support enabled (``properties.defaultSchema``
+    #: is present). The classic "List Tables" REST API returns bare table names
+    #: with no schema attribution, so a comparison against ``sys.tables`` cannot
+    #: be trusted to attribute a table to the right schema -- refused rather
+    #: than risking a false "missing" report for a table that actually exists
+    #: under a different schema.
+    SCHEMA_ENABLED_UNSUPPORTED = "schema_enabled_unsupported"
+
+
+@dataclass(frozen=True)
+class LakehouseDiscoveryGap:
+    """Result of comparing a Lakehouse's table inventory against a known set.
+
+    Attributes:
+        status: Which of the three outcomes in :class:`LakehouseDiscoveryStatus`
+            applies.
+        missing_table_names: Bare (unqualified) table names present in the
+            Lakehouse's default (``dbo``) schema but absent from the
+            ``known_dbo_names`` set passed to
+            :func:`find_undiscovered_lakehouse_tables`. Only ever non-empty
+            when ``status is LakehouseDiscoveryStatus.OK``.
+    """
+
+    status: LakehouseDiscoveryStatus
+    missing_table_names: tuple[str, ...] = field(default_factory=tuple)
+
+
+async def list_lakehouse_table_names(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    lakehouse_id: UUID,
+) -> list[str]:
+    """Return every table name in a Lakehouse via the "List Tables" REST API.
+
+    Pages ``GET /workspaces/{ws}/lakehouses/{id}/tables``. The response array
+    lives under the ``"data"`` key (not the usual ``"value"``) and each entry
+    carries ``name``, ``type`` (``Managed``/``External``), ``format``, and
+    ``location`` -- no schema attribution, so callers must only use this for a
+    non-schema-enabled Lakehouse (see :func:`find_undiscovered_lakehouse_tables`,
+    which enforces that).
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The UUID of the workspace containing the Lakehouse.
+        lakehouse_id: The UUID of the Lakehouse to list tables for.
+
+    Returns:
+        A (possibly empty) list of bare table names, in API response order.
+    """
+    names: list[str] = []
+    async for tbl in http.iter_paginated(
+        HttpBase.FABRIC,
+        f"/workspaces/{workspace_id}/lakehouses/{lakehouse_id}/tables",
+        key="data",
+    ):
+        name = tbl.get("name")
+        if name:
+            names.append(str(name))
+    return names
+
+
+async def find_undiscovered_lakehouse_tables(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    endpoint_id: UUID,
+    known_dbo_names: frozenset[str],
+) -> LakehouseDiscoveryGap:
+    """Find Lakehouse tables missing from a SQL endpoint's ``sys.tables`` catalog.
+
+    Resolves *endpoint_id* to its backing Lakehouse via
+    :func:`~fabric_dw._fabric_api.resolve_backing_lakehouse`, refuses the
+    comparison for anything that isn't a non-schema-enabled Lakehouse (see
+    :class:`LakehouseDiscoveryStatus`), and otherwise lists the Lakehouse's
+    tables (:func:`list_lakehouse_table_names`) and returns the ones absent
+    from *known_dbo_names* -- case-insensitively, matching T-SQL identifier
+    semantics.
+
+    This costs at least one extra REST call beyond ``list_table_sync_status``'s
+    single TDS query (a lakehouse scan, plus a paginated table listing when a
+    non-schema-enabled Lakehouse is found), so callers on a command that may
+    run repeatedly should make this opt-in rather than call it
+    unconditionally -- see ``tables sync-status --check-lakehouse`` /
+    ``list_table_sync_status(check_lakehouse=True)``.
+
+    Args:
+        http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
+        workspace_id: The UUID of the workspace containing the endpoint.
+        endpoint_id: The UUID of the SQL analytics endpoint to check.
+        known_dbo_names: Bare table names already known to be present in the
+            endpoint's ``dbo`` schema (typically every ``dbo``-schema row
+            already returned by ``list_table_sync_status`` for this endpoint).
+
+    Returns:
+        A :class:`LakehouseDiscoveryGap` describing the outcome.
+    """
+    lakehouse = await resolve_backing_lakehouse(http, workspace_id, endpoint_id)
+    if lakehouse is None:
+        return LakehouseDiscoveryGap(status=LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED)
+    if lakehouse.default_schema is not None:
+        return LakehouseDiscoveryGap(status=LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED)
+
+    table_names = await list_lakehouse_table_names(http, workspace_id, lakehouse.id)
+    known_lower = {n.casefold() for n in known_dbo_names}
+    missing = tuple(n for n in table_names if n.casefold() not in known_lower)
+    return LakehouseDiscoveryGap(status=LakehouseDiscoveryStatus.OK, missing_table_names=missing)

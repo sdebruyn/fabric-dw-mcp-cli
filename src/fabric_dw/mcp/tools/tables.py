@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
+from uuid import UUID
 
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
@@ -23,9 +24,13 @@ from fabric_dw.mcp._helpers import (
     safe_rows,
     tool_err,
 )
-from fabric_dw.models import ColumnSpec
+from fabric_dw.models import ColumnSpec, TableMetadataSyncStatus
+from fabric_dw.services import sql_endpoints as sql_endpoints_svc
 from fabric_dw.services import tables as tables_svc
 from fabric_dw.services.columns import get_object_columns_or_raise as _get_columns
+
+if TYPE_CHECKING:
+    from fabric_dw.http_client import FabricHttpClient
 
 __all__ = ["register"]
 
@@ -44,6 +49,41 @@ def _parse_column_dict(i: int, col: object) -> ColumnSpec:
         raise ValueError(f"columns[{i}] must have 'name' and 'sql_type' keys")
     nullable = bool(col.get("nullable", True))
     return ColumnSpec(name=str(name), sql_type=str(sql_type), nullable=nullable)
+
+
+async def _apply_lakehouse_discovery_gap(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    endpoint_id: UUID,
+    items: list[TableMetadataSyncStatus],
+) -> list[TableMetadataSyncStatus]:
+    """Cross-reference the backing Lakehouse and append discovery-gap rows to *items*.
+
+    Returns *items* unchanged when the cross-check could not run (no matching
+    Lakehouse, or the Lakehouse has schema support enabled) -- callers must not
+    treat an unchanged result as proof of full discovery; see
+    ``list_table_sync_status``'s docstring for why.
+    """
+    known_dbo = frozenset(t.name for t in items if t.schema_name.casefold() == "dbo")
+    gap = await sql_endpoints_svc.find_undiscovered_lakehouse_tables(
+        http, workspace_id, endpoint_id, known_dbo
+    )
+    if gap.status != sql_endpoints_svc.LakehouseDiscoveryStatus.OK or not gap.missing_table_names:
+        return items
+    extra = [
+        TableMetadataSyncStatus(
+            schema_name="dbo",
+            name=name,
+            qualified_name=f"dbo.{name}",
+            last_update_time_utc=None,
+            latest_log_version=None,
+            latest_checkpoint_version=None,
+            is_blocked=None,
+            in_endpoint_catalog=False,
+        )
+        for name in gap.missing_table_names
+    ]
+    return sorted([*items, *extra], key=lambda t: (t.schema_name, t.name))
 
 
 _log = logging.getLogger(__name__)
@@ -556,6 +596,7 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
         item: str,
         schema: str | None = None,
         table: str | None = None,
+        check_lakehouse: bool = False,  # noqa: FBT001, FBT002
     ) -> list[dict[str, Any]]:
         """Show per-table metadata sync freshness via ``sys.dm_db_external_tables_log_status``.
 
@@ -566,16 +607,31 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
         sync information is available for that table, NOT that it has never
         synced; do not treat a ``null`` row as proof the table has never synced.
 
-        IMPORTANT for agents: this listing only includes tables already present
-        in the endpoint's catalog (``sys.tables``), which is itself maintained by
-        the metadata sync. A Lakehouse table whose discovery has not completed,
-        or has failed, has no catalog row and so is **absent from this result
-        entirely** -- it will not appear as a row with empty fields, it simply
-        will not be there. Do not conclude a table does not exist, or was
-        deleted, just because it is missing from this list. If an expected
-        table is missing, call ``refresh_sql_endpoint_metadata`` (or tell the
-        user to run ``fdw sql-endpoints refresh``) to force an item-level sync,
-        then check again.
+        IMPORTANT for agents: by default this listing only includes tables
+        already present in the endpoint's catalog (``sys.tables``), which is
+        itself maintained by the metadata sync. A Lakehouse table whose
+        discovery has not completed, or has failed, has no catalog row and so
+        is **absent from this result entirely** -- it will not appear as a row
+        with empty fields, it simply will not be there. Do not conclude a
+        table does not exist, or was deleted, just because it is missing from
+        this list.
+
+        Pass ``check_lakehouse=True`` to close part of that gap: it
+        cross-references the backing Lakehouse's own table inventory (one or
+        more extra REST calls -- avoid setting this on every call of a tool an
+        agent may invoke repeatedly) and adds a row with
+        ``in_endpoint_catalog=false`` and all sync fields ``null`` for every
+        table it finds there but not in the catalog. This only works for an
+        endpoint backed by a non-schema-enabled Lakehouse; for anything else
+        (a mirrored database, a schema-enabled Lakehouse, or no lakehouse
+        match at all) it is a no-op -- the result is unchanged, identical to
+        ``check_lakehouse=False``, so getting no extra rows back does NOT by
+        itself prove the endpoint is fully discovered. ``check_lakehouse=True``
+        cannot be combined with *schema* or *table*. If an expected table is
+        still missing after trying this, call
+        ``refresh_sql_endpoint_metadata`` (or tell the user to run
+        ``fdw sql-endpoints refresh``) to force an item-level sync, then check
+        again.
 
         Args:
             workspace: Workspace name or GUID.
@@ -584,7 +640,17 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
             schema: When provided, only tables in this schema are returned.
             table: When provided, filter to this single (bare, unqualified)
                 table name. Requires *schema* to also be given.
+            check_lakehouse: When ``True``, cross-reference the backing
+                Lakehouse's table inventory for tables missing from the
+                endpoint catalog entirely. See above for its limits. Mutually
+                exclusive with *schema* and *table*.
         """
+        if check_lakehouse and (schema is not None or table is not None):
+            msg = (
+                "check_lakehouse cannot be combined with schema or table; it always "
+                "compares the whole endpoint against its backing Lakehouse."
+            )
+            raise tool_err(ValueError(msg))
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
@@ -593,16 +659,19 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
                 workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
             )
             _log.debug(
-                "list_table_sync_status ws=%s item=%s schema=%r table=%r",
+                "list_table_sync_status ws=%s item=%s schema=%r table=%r check_lakehouse=%s",
                 ws_id,
                 entry.id,
                 schema,
                 table,
+                check_lakehouse,
             )
             target = make_sql_target(ws_id, entry, item)
             result = await tables_svc.list_table_sync_status(
                 target, schema=schema, table=table, kind=entry.kind, mode=ctx.auth_mode
             )
+            if check_lakehouse:
+                result = await _apply_lakehouse_discovery_gap(ctx.http, ws_id, entry.id, result)
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return [t.model_dump(mode="json") for t in result]

@@ -149,3 +149,78 @@ async def test_refresh_metadata_returns_table_sync_statuses(
         assert isinstance(entry, TableSyncStatus)
         assert entry.table_name
         assert entry.status
+
+
+# ---------------------------------------------------------------------------
+# Lakehouse discovery-gap cross-check (#1064)
+# ---------------------------------------------------------------------------
+#
+# ephemeral_sql_endpoint is backed by a SCHEMA-ENABLED Lakehouse (see its
+# fixture docstring above ephemeral_lakehouse), so it exercises the
+# SCHEMA_ENABLED_UNSUPPORTED refusal path deterministically and proves that
+# properties.defaultSchema really is present on a live schema-enabled
+# Lakehouse -- the assumption the whole refusal is built on.
+#
+# It cannot exercise the OK (successful comparison, gap found or not) path:
+# that needs a non-schema-enabled Lakehouse with a Delta table written
+# directly to OneLake but not yet synced to the endpoint catalog, a state
+# issue #1064 itself flagged as "awkward to produce on demand". That path is
+# unverified against a live tenant -- see the PR description.
+
+
+async def test_resolve_backing_lakehouse_finds_schema_enabled_lakehouse(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    ephemeral_lakehouse: dict[str, object],
+    ephemeral_sql_endpoint: Warehouse,
+) -> None:
+    """resolve_backing_lakehouse resolves the endpoint back to its Lakehouse.
+
+    Also confirms the core assumption find_undiscovered_lakehouse_tables relies
+    on: a live schema-enabled Lakehouse's GET/list response really does carry
+    properties.defaultSchema (here "dbo"), which is the documented signal used
+    to refuse the table comparison rather than guess at a bare name's schema.
+    """
+    from fabric_dw._fabric_api import resolve_backing_lakehouse  # noqa: PLC0415
+
+    match = await resolve_backing_lakehouse(http, workspace_id, ephemeral_sql_endpoint.id)
+    assert match is not None, (
+        f"expected to resolve endpoint {ephemeral_sql_endpoint.id} back to its "
+        f"Lakehouse {ephemeral_lakehouse.get('id')!r}"
+    )
+    assert str(match.id) == str(ephemeral_lakehouse.get("id"))
+    assert match.default_schema == "dbo", (
+        f"expected a schema-enabled lakehouse to report defaultSchema='dbo', got "
+        f"{match.default_schema!r}"
+    )
+
+
+async def test_find_undiscovered_tables_schema_enabled_lakehouse_is_unsupported(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    ephemeral_sql_endpoint: Warehouse,
+) -> None:
+    """A real schema-enabled Lakehouse-backed endpoint refuses the comparison."""
+    result = await sql_endpoints.find_undiscovered_lakehouse_tables(
+        http, workspace_id, ephemeral_sql_endpoint.id, frozenset()
+    )
+    assert result.status == sql_endpoints.LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED
+    assert result.missing_table_names == ()
+
+
+async def test_find_undiscovered_tables_non_lakehouse_endpoint_id(
+    http: FabricHttpClient, workspace_id: UUID
+) -> None:
+    """A UUID that pairs with no lakehouse at all resolves as NOT_LAKEHOUSE_BACKED.
+
+    No lakehouse in the workspace's /lakehouses listing pairs with a random
+    UUID, so the scan simply finds no match -- the same code path an endpoint
+    backed by a mirrored database (or anything else that isn't a Lakehouse)
+    would take.
+    """
+    bogus = uuid.uuid4()
+    result = await sql_endpoints.find_undiscovered_lakehouse_tables(
+        http, workspace_id, bogus, frozenset()
+    )
+    assert result.status == sql_endpoints.LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED
+    assert result.missing_table_names == ()

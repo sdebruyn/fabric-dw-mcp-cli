@@ -1366,6 +1366,114 @@ async def test_list_table_sync_status_legacy_endpoint_raises_tool_error(
 
 
 # ---------------------------------------------------------------------------
+# list_table_sync_status(check_lakehouse=True) — Lakehouse discovery gap (#1064)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_table_sync_status_check_lakehouse_with_schema_raises_tool_error(
+    mock_ctx, ctx_patch
+) -> None:
+    """check_lakehouse=True combined with schema is rejected before any service call."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.list_table_sync_status",
+            new=AsyncMock(side_effect=AssertionError("must not be called")),
+        ),
+        pytest.raises(ToolError, match="cannot be combined"),
+    ):
+        await call_tool(
+            mcp,
+            "list_table_sync_status",
+            {"workspace": WS_NAME, "item": WH_NAME, "schema": "dbo", "check_lakehouse": True},
+        )
+
+
+async def test_list_table_sync_status_check_lakehouse_adds_missing_row(mock_ctx, ctx_patch) -> None:
+    """check_lakehouse=True appends a synthetic in_endpoint_catalog=False row."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryGap,
+        LakehouseDiscoveryStatus,
+    )
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.list_table_sync_status",
+            new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+        ),
+        patch(
+            "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
+            new=AsyncMock(
+                return_value=LakehouseDiscoveryGap(
+                    status=LakehouseDiscoveryStatus.OK,
+                    missing_table_names=("StagingRaw",),
+                )
+            ),
+        ),
+    ):
+        result = await call_tool(
+            mcp,
+            "list_table_sync_status",
+            {"workspace": WS_NAME, "item": WH_NAME, "check_lakehouse": True},
+        )
+
+    assert len(result) == 2
+    by_name = {row["name"]: row for row in result}
+    assert by_name["FactSales"]["in_endpoint_catalog"] is True
+    assert by_name["StagingRaw"]["in_endpoint_catalog"] is False
+    assert by_name["StagingRaw"]["qualified_name"] == "dbo.StagingRaw"
+    assert by_name["StagingRaw"]["last_update_time_utc"] is None
+
+
+async def test_list_table_sync_status_check_lakehouse_inconclusive_is_no_op(
+    mock_ctx, ctx_patch
+) -> None:
+    """check_lakehouse=True returns the unchanged result when the cross-check cannot run."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryGap,
+        LakehouseDiscoveryStatus,
+    )
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.list_table_sync_status",
+            new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+        ),
+        patch(
+            "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
+            new=AsyncMock(
+                return_value=LakehouseDiscoveryGap(
+                    status=LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED
+                )
+            ),
+        ),
+    ):
+        result = await call_tool(
+            mcp,
+            "list_table_sync_status",
+            {"workspace": WS_NAME, "item": WH_NAME, "check_lakehouse": True},
+        )
+
+    assert len(result) == 1
+    assert result[0]["name"] == "FactSales"
+
+
+# ---------------------------------------------------------------------------
 # refresh_table_metadata — contract tests (mutating, non-destructive, #1062)
 # ---------------------------------------------------------------------------
 
