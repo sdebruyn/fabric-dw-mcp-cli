@@ -408,6 +408,51 @@ async def sync_status_cmd(
         raise click.ClickException(str(exc)) from exc
 
 
+@tables_group.command("refresh")
+@click.argument("item", required=False, default=None)
+@click.argument("qualified_name")
+@click.pass_obj
+@coro
+async def refresh_cmd(
+    ctx: CliContext,
+    item: str | None,
+    qualified_name: str,
+) -> None:
+    """Refresh QUALIFIED_NAME (schema.table) on ITEM via sys.sp_dw_refresh_ext_table.
+
+    Refreshes a single table's data by re-reading its underlying Delta log,
+    without a full item-level metadata sync. Only supported on SQL Analytics
+    Endpoints created after the workspace's 'New metadata sync' (preview)
+    setting was enabled. This does not pick up schema changes (tables added
+    or dropped) -- for that, use 'fdw sql-endpoints refresh' instead.
+
+    On success, prints a one-line confirmation followed by the table's
+    refreshed sync-status row (the same shape as 'tables sync-status'), so
+    the new last_update_time_utc is visible without a second command.
+    --json emits a single JSON object (not an array), since this command
+    always acts on exactly one table.
+    """
+    ws = resolve_workspace(ctx)
+    wh = resolve_warehouse_arg(ctx, item)
+    schema, table_name = parse_qualified_name(qualified_name, kind="table")
+    try:
+        async with build_http_client(ctx) as http:
+            target, entry = await build_sql_target(http, ws, wh)
+            result = await _tables_svc.refresh_table_metadata(
+                target, schema, table_name, kind=entry.kind, mode=ctx.auth
+            )
+    except (ValueError, FabricError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if not ctx.json_output:
+        click.echo(f"Refreshed table metadata for {schema}.{table_name}.")
+    render(
+        result.model_dump(mode="json"),
+        json_output=ctx.json_output,
+        table_title="Table Metadata Sync Status",
+    )
+
+
 @tables_group.command("create")
 @click.argument("item", required=False, default=None)
 @click.option("--name", "qualified_name", required=True, help="Qualified name: schema.table.")

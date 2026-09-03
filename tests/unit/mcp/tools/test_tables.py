@@ -1366,6 +1366,155 @@ async def test_list_table_sync_status_legacy_endpoint_raises_tool_error(
 
 
 # ---------------------------------------------------------------------------
+# refresh_table_metadata — contract tests (mutating, non-destructive, #1062)
+# ---------------------------------------------------------------------------
+
+
+async def test_refresh_table_metadata_is_registered() -> None:
+    """refresh_table_metadata is registered as an MCP tool."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    tool_names = {t.name for t in mcp._tool_manager.list_tools()}
+    assert "refresh_table_metadata" in tool_names
+
+
+async def test_refresh_table_metadata_readonly_blocked(mock_ctx, ctx_patch) -> None:
+    """refresh_table_metadata raises ToolError when FABRIC_MCP_READONLY is set."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_READONLY": "1"}),
+        pytest.raises(ToolError, match="read-only"),
+    ):
+        await call_tool(
+            mcp,
+            "refresh_table_metadata",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.FactSales"},
+        )
+
+
+async def test_refresh_table_metadata_does_not_require_destructive_opt_in(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """refresh_table_metadata succeeds without FABRIC_MCP_ALLOW_DESTRUCTIVE."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_ALLOW_DESTRUCTIVE", raising=False)
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch.dict(os.environ, {"FABRIC_MCP_WRITES": "true"}),
+        patch(
+            "fabric_dw.services.tables.refresh_table_metadata",
+            new=AsyncMock(return_value=_make_sync_status()),
+        ),
+    ):
+        result = await call_tool(
+            mcp,
+            "refresh_table_metadata",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.FactSales"},
+        )
+    assert isinstance(result, dict)
+
+
+async def test_refresh_table_metadata_happy_path(mock_ctx, ctx_patch) -> None:
+    """refresh_table_metadata forwards schema/table and returns the typed dict."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    mock_svc = AsyncMock(return_value=_make_sync_status())
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.refresh_table_metadata", new=mock_svc),
+        patch.dict(os.environ, {"FABRIC_MCP_WRITES": "true"}),
+    ):
+        result = await call_tool(
+            mcp,
+            "refresh_table_metadata",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.FactSales"},
+        )
+
+    args, _kwargs = mock_svc.call_args
+    # service is called positionally: target, schema, table_name
+    assert args[1] == "dbo"
+    assert args[2] == "FactSales"
+    assert result["schema_name"] == "dbo"
+    assert result["name"] == "FactSales"
+    assert result["qualified_name"] == "dbo.FactSales"
+
+
+async def test_refresh_table_metadata_warehouse_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """refresh_table_metadata raises ToolError when the service raises ItemKindError."""
+    from fabric_dw.exceptions import ItemKindError  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    # Use a Warehouse entry so the service receives WarehouseKind.WAREHOUSE
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.refresh_table_metadata",
+            new=AsyncMock(
+                side_effect=ItemKindError(
+                    "Table metadata refresh (sys.sp_dw_refresh_ext_table) is only "
+                    "available on SQL Analytics Endpoints, not Data Warehouses."
+                )
+            ),
+        ),
+        patch.dict(os.environ, {"FABRIC_MCP_WRITES": "true"}),
+        pytest.raises(ToolError),
+    ):
+        await call_tool(
+            mcp,
+            "refresh_table_metadata",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.FactSales"},
+        )
+
+
+async def test_refresh_table_metadata_legacy_endpoint_raises_tool_error(
+    mock_ctx, ctx_patch
+) -> None:
+    """refresh_table_metadata raises ToolError carrying the actionable preview message."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.refresh_table_metadata",
+            new=AsyncMock(
+                side_effect=NotFoundError(
+                    "Table metadata refresh requires the new metadata sync "
+                    "(preview) for this SQL analytics endpoint. On endpoints using "
+                    "the legacy metadata sync, use 'fdw sql-endpoints refresh' to "
+                    "refresh the whole item instead."
+                )
+            ),
+        ),
+        patch.dict(os.environ, {"FABRIC_MCP_WRITES": "true"}),
+        pytest.raises(ToolError, match="new metadata sync"),
+    ):
+        await call_tool(
+            mcp,
+            "refresh_table_metadata",
+            {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.FactSales"},
+        )
+
+
+# ---------------------------------------------------------------------------
 # transfer_table
 # ---------------------------------------------------------------------------
 

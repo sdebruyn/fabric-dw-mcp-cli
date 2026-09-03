@@ -25,6 +25,7 @@ from fabric_dw.models import (
     ColumnSpec,
     ResultSet,
     Table,
+    TableMetadataSyncStatus,
     TableRowCount,
     WarehouseKind,
 )
@@ -3333,6 +3334,212 @@ class TestListTableSyncStatus:
             result = await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
         assert len(result) == 2
         assert {r.name for r in result} == {"FactSales", "StagingRaw"}
+
+
+# ===========================================================================
+# refresh_table_metadata — sys.sp_dw_refresh_ext_table (#1062)
+# ===========================================================================
+
+
+class _DriverError(Exception):
+    """Mock driver exception carrying a ``ddbc_error`` attribute.
+
+    ``map_driver_error`` classifies known SQL Server error numbers (e.g. 2812,
+    "Could not find stored procedure") primarily by scanning ``exc.ddbc_error``
+    for an embedded native error number (see ``sql_errors._NATIVE_ERROR_RE``).
+    A plain ``Exception("Could not find stored procedure ...")`` does NOT match
+    any fragment in ``_NOT_FOUND_FRAGMENTS`` (unlike "invalid object name" used
+    by the sync-status tests), so it would NOT be mapped to ``NotFoundError``.
+    This mimics what the real mssql_python driver sets so the legacy-sync
+    translation path is exercised the same way it is in production.
+    """
+
+    def __init__(self, msg: str, ddbc_error: str) -> None:
+        super().__init__(msg)
+        self.ddbc_error = ddbc_error
+
+
+def _missing_procedure_error(proc_name: str) -> _DriverError:
+    msg = f"Could not find stored procedure '{proc_name}'."
+    return _DriverError(msg, f"[SQL Server]{msg} (2812)")
+
+
+def _make_conn_for_rc(rc: int, *, col_name: str = "rc") -> MagicMock:
+    """Return a mock DB-API connection for the DECLARE/EXEC/SELECT rc batch.
+
+    Unlike ``_make_conn`` (which only wires ``fetchall``), this wires
+    ``fetchone`` since ``refresh_table_metadata`` reads the return code via
+    ``run_query(..., fetch="one")``.
+    """
+    cursor = MagicMock()
+    cursor.description = [(col_name, None)]
+    cursor.fetchone.return_value = (rc,)
+    cursor.fetchall.return_value = []
+    cursor.rowcount = -1
+    cursor.nextset.return_value = False
+    conn = MagicMock()
+    conn.cursor.return_value = cursor
+    return conn
+
+
+class TestRefreshTableMetadata:
+    """Tests for :func:`tables.refresh_table_metadata`."""
+
+    async def test_happy_path_returns_refreshed_status(self) -> None:
+        target = _make_target()
+        refresh_conn = _make_conn_for_rc(0)
+        fetch_conn = _make_conn([_SYNC_ROW_SYNCED], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[refresh_conn, fetch_conn]):
+            result = await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        assert isinstance(result, TableMetadataSyncStatus)
+        assert result.schema_name == "dbo"
+        assert result.name == "FactSales"
+        assert result.qualified_name == "dbo.FactSales"
+
+    async def test_commits_after_execute(self) -> None:
+        target = _make_target()
+        refresh_conn = _make_conn_for_rc(0)
+        fetch_conn = _make_conn([_SYNC_ROW_SYNCED], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[refresh_conn, fetch_conn]):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        refresh_conn.commit.assert_called_once()
+
+    async def test_qualified_name_is_bound_param_not_interpolated(self) -> None:
+        target = _make_target()
+        refresh_conn = _make_conn_for_rc(0)
+        fetch_conn = _make_conn([_SYNC_ROW_SYNCED], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[refresh_conn, fetch_conn]):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        cursor = refresh_conn.cursor.return_value
+        call_args = cursor.execute.call_args
+        call_sql: str = call_args[0][0]
+        assert "dbo.FactSales" not in call_sql
+        assert "sp_dw_refresh_ext_table" in call_sql.lower()
+        params = call_args[0][1] if len(call_args[0]) > 1 else (call_args[1] or {}).get("params")
+        assert params is not None
+        assert list(params) == ["dbo.FactSales"]
+
+    async def test_nonzero_return_code_raises_with_code_and_table(self) -> None:
+        target = _make_target()
+        refresh_conn = _make_conn_for_rc(1)
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=refresh_conn),
+            pytest.raises(FabricError) as exc_info,
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        msg = str(exc_info.value)
+        assert "1" in msg
+        assert "dbo.FactSales" in msg
+
+    async def test_unexpected_column_shape_raises_clear_error(self) -> None:
+        target = _make_target()
+        conn = _make_conn_for_rc(0, col_name="return_value")
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(FabricError, match="unexpected result shape"),
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_empty_row_shape_raises_clear_error(self) -> None:
+        target = _make_target()
+        conn = _make_conn_for_rc(0)
+        conn.cursor.return_value.fetchone.return_value = None
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(FabricError, match="unexpected result shape"),
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+
+    async def test_warehouse_kind_raises_before_any_sql(self) -> None:
+        target = _make_target()
+        with (
+            patch("fabric_dw.sql.open_connection") as mock_open,
+            pytest.raises(ItemKindError, match="SQL Analytics Endpoints"),
+        ):
+            await tables.refresh_table_metadata(target, "dbo", "FactSales")
+        mock_open.assert_not_called()
+
+    async def test_invalid_schema_raises_before_any_sql(self) -> None:
+        target = _make_target()
+        with (
+            patch("fabric_dw.sql.open_connection") as mock_open,
+            pytest.raises(ValueError, match="Invalid SQL identifier"),
+        ):
+            await tables.refresh_table_metadata(
+                target, "bad]schema", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        mock_open.assert_not_called()
+
+    async def test_invalid_table_raises_before_any_sql(self) -> None:
+        target = _make_target()
+        with (
+            patch("fabric_dw.sql.open_connection") as mock_open,
+            pytest.raises(ValueError, match="Invalid SQL identifier"),
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "bad;table", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        mock_open.assert_not_called()
+
+    async def test_legacy_endpoint_missing_procedure_is_translated(self) -> None:
+        """A legacy (non-preview) endpoint raises an actionable NotFoundError."""
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = _missing_procedure_error("sys.sp_dw_refresh_ext_table")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError) as exc_info,
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        msg = str(exc_info.value)
+        assert "new metadata sync" in msg.lower()
+        assert "fdw sql-endpoints refresh" in msg
+
+    async def test_unrelated_missing_procedure_error_propagates_unchanged(self) -> None:
+        """A missing-procedure error naming something else is untouched."""
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = _missing_procedure_error("sys.some_other_proc")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError) as exc_info,
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        msg = str(exc_info.value)
+        assert "new metadata sync" not in msg.lower()
+        assert "some_other_proc" in msg
+
+    async def test_empty_post_refresh_lookup_raises_not_in_catalog(self) -> None:
+        target = _make_target()
+        refresh_conn = _make_conn_for_rc(0)
+        fetch_conn = _make_conn([], _SYNC_STATUS_COLS)
+        with (
+            patch("fabric_dw.sql.open_connection", side_effect=[refresh_conn, fetch_conn]),
+            pytest.raises(NotFoundError, match=r"dbo\.FactSales"),
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
 
 
 # ===========================================================================

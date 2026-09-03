@@ -791,6 +791,162 @@ async def test_list_table_sync_status_schema_filter_on_sql_endpoint(
 
 
 # ===========================================================================
+# refresh_table_metadata — sys.sp_dw_refresh_ext_table (#1062)
+# ===========================================================================
+
+# Driver message fragments that mean the procedure exists by name but this
+# endpoint's SQL engine version does not implement it yet (a tenant-level GA
+# rollout gap, not a bug) -- mirrors _HEALTH_METRICS_UNAVAILABLE_FRAGMENTS
+# above. Kept as its own list rather than reused verbatim: sp_dw_refresh_ext_table
+# is a different (newer) procedure and Fabric's wording for it is not yet
+# confirmed against a live endpoint.
+_REFRESH_TABLE_UNAVAILABLE_FRAGMENTS = (
+    "is not available in this version",
+    "stored procedure is not available",
+)
+
+
+def _is_refresh_table_unavailable(exc: BaseException) -> bool:
+    """Return True when *exc* means sp_dw_refresh_ext_table is not yet deployed."""
+    msg = str(exc).lower()
+    return any(frag in msg for frag in _REFRESH_TABLE_UNAVAILABLE_FRAGMENTS)
+
+
+@pytest.mark.sql_endpoint
+async def test_refresh_table_metadata_on_sql_endpoint(
+    shared_sql_endpoint: SharedSqlEndpointTarget,
+) -> None:
+    """refresh_table_metadata against the seeded probe table; skips on the legacy sync.
+
+    Uses ``sample.colors`` (seeded via the parent Lakehouse during fixture
+    setup) as the probe table, mirroring
+    ``test_list_table_sync_status_on_sql_endpoint`` and
+    ``test_get_table_health_metrics_on_sql_endpoint`` above.
+
+    Also guards against a #1000-class bug (a write that looks like it
+    succeeded but never actually committed): after the refresh, a second,
+    independent ``list_table_sync_status`` call must still see the table with
+    a populated ``last_update_time_utc``.
+    """
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+    sql_target = shared_sql_endpoint.sql_target
+    try:
+        result = await tables.refresh_table_metadata(
+            sql_target,
+            SEED_SCHEMA_NAME,
+            "colors",
+            kind=WarehouseKind.SQL_ENDPOINT,
+        )
+    except NotFoundError as exc:
+        pytest.skip(
+            f"sys.sp_dw_refresh_ext_table is not available on this endpoint "
+            f"(legacy metadata sync); skipping ({exc})"
+        )
+    except Exception as exc:
+        # Mirrors test_get_table_health_metrics_on_sql_endpoint: an engine
+        # version that recognises the proc name but doesn't implement it yet
+        # is NOT classified by map_driver_error() and propagates raw.
+        if not _is_refresh_table_unavailable(exc):
+            raise
+        pytest.skip(
+            f"sys.sp_dw_refresh_ext_table is not available in this SQL Analytics "
+            f"Endpoint's engine version ({exc}); skipping — re-run when the GA "
+            f"rollout reaches this endpoint"
+        )
+
+    assert result.schema_name == SEED_SCHEMA_NAME
+    assert result.name == "colors"
+    assert result.qualified_name == f"{SEED_SCHEMA_NAME}.colors"
+
+    verify_rows = await tables.list_table_sync_status(
+        sql_target,
+        schema=SEED_SCHEMA_NAME,
+        table="colors",
+        kind=WarehouseKind.SQL_ENDPOINT,
+    )
+    assert verify_rows, "expected the refreshed table to still be visible after refresh"
+    assert verify_rows[0].last_update_time_utc is not None, (
+        "last_update_time_utc is still empty after refresh_table_metadata — this "
+        "would indicate the EXEC did not actually commit (see #1000)"
+    )
+
+
+@pytest.mark.sql_endpoint
+async def test_refresh_table_metadata_on_unknown_table_settles_open_question(
+    shared_sql_endpoint: SharedSqlEndpointTarget,
+) -> None:
+    """Settles issue #1060's open question: does refreshing an unknown table create it?
+
+    Microsoft's guidance implies ``sp_dw_refresh_ext_table`` refreshes
+    existing tables only (schema changes -- tables added or dropped -- are
+    routed to the item-level REST API instead), but that is inference, not
+    documentation. This test observes the real behaviour against a live
+    endpoint rather than assuming it, and distinguishes outcomes by message
+    content rather than by exception type alone:
+
+    - **Expected** (per Microsoft's guidance): the procedure or the
+      post-refresh catalog lookup reports the table is not found --
+      ``refresh_table_metadata`` raises :class:`NotFoundError` naming the
+      table or the catalog. This test passes.
+    - **Unexpected**: the procedure succeeds and returns a row for a table
+      that was never created. This would mean ``tables refresh`` has an
+      item-scoped side effect, which #1060 flags as grounds to revisit its
+      group placement (currently under ``tables``, not ``sql-endpoints``).
+      This test fails loudly so the finding gets reported rather than
+      silently coded around.
+    - A :class:`NotFoundError` whose message matches neither the
+      not-in-catalog shape nor a legacy-sync/engine-unavailable shape means
+      the live driver returned something genuinely unrecognised; this also
+      fails loudly rather than being swallowed by a broad skip.
+    """
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+    sql_target = shared_sql_endpoint.sql_target
+    bogus_table = f"pytest_refresh_nonexistent_{int(time.time())}"
+
+    try:
+        result = await tables.refresh_table_metadata(
+            sql_target,
+            SEED_SCHEMA_NAME,
+            bogus_table,
+            kind=WarehouseKind.SQL_ENDPOINT,
+        )
+    except NotFoundError as exc:
+        msg = str(exc).lower()
+        if "new metadata sync" in msg:
+            pytest.skip(
+                f"sys.sp_dw_refresh_ext_table is not available on this endpoint "
+                f"(legacy metadata sync); skipping ({exc})"
+            )
+        if "not present in the endpoint" in msg or bogus_table.lower() in msg:
+            # Expected per Microsoft's guidance: the procedure does not create
+            # tables that are not already present in the endpoint's catalog.
+            return
+        pytest.fail(
+            "refresh_table_metadata raised NotFoundError with an unrecognised "
+            "message shape for an unknown table (neither the not-in-catalog "
+            f"message nor a legacy-sync message): {exc}"
+        )
+    except Exception as exc:
+        if _is_refresh_table_unavailable(exc):
+            pytest.skip(
+                f"sys.sp_dw_refresh_ext_table is not available in this SQL Analytics "
+                f"Endpoint's engine version ({exc}); skipping"
+            )
+        raise
+    else:
+        pytest.fail(
+            "sys.sp_dw_refresh_ext_table succeeded for a table that does not exist "
+            f"in the endpoint's catalog (got {result!r}). This means the procedure "
+            "DOES create tables on demand — report this finding on issue #1060: it "
+            "gives 'tables refresh' an item-scoped side effect and its group "
+            "placement (currently under 'tables', not 'sql-endpoints') needs "
+            "revisiting."
+        )
+
+
+# ===========================================================================
 # export_table — Parquet round-trip
 # ===========================================================================
 

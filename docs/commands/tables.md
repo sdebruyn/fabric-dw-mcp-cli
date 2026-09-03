@@ -441,6 +441,41 @@ fdw -w MyWorkspace tables sync-status MyLakehouseEP --schema dbo
 fdw -w MyWorkspace tables sync-status MyLakehouseEP --table dbo.FactSales
 ```
 
+### tables refresh
+
+**Targets:** SQL Analytics Endpoint
+
+Refresh a single table's data via `sys.sp_dw_refresh_ext_table`, without a full item-level metadata sync. Only applies to SQL Analytics Endpoints created after `New metadata sync` (preview) was enabled under Workspace settings, Warehouse settings, for the workspace hosting the endpoint. On an endpoint using the legacy metadata sync, the command fails with the same actionable message as `tables sync-status`.
+
+This refreshes **data only** - it re-reads the underlying Delta log for that one table. It does not pick up **schema** changes (tables added or dropped); for that, use [`fdw sql-endpoints refresh`](sql-endpoints.md#sql-endpoints-refresh) instead. See the "which refresh do I want" comparison on that page.
+
+On success, the command prints a one-line confirmation followed by the table's refreshed sync-status row (the same shape as [`tables sync-status`](#tables-sync-status)), so the new `last_update_time_utc` is visible without a second command. A non-zero procedure return code (the procedure returns `0` for success, `1` for failure) fails with a clear error and a non-zero exit code.
+
+`--json` emits a single JSON object, not an array - the command always acts on exactly one table, so `fdw tables refresh MyLakehouseEP dbo.FactSales --json | jq .last_update_time_utc` works without indexing.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables refresh [ENDPOINT] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace tables refresh MyLakehouseEP dbo.FactSales
+```
+
+```
+Refreshed table metadata for dbo.FactSales.
+ schema_name  name       last_update_time_utc  latest_log_version  latest_checkpoint_version  is_blocked
+ ------------ ---------- --------------------- ------------------- -------------------------- ----------
+ dbo          FactSales  2026-09-03T09:14:03Z  1285                1200                       False
+```
+
+```shell
+fdw -w MyWorkspace --json tables refresh MyLakehouseEP dbo.FactSales | jq .last_update_time_utc
+```
+
 ### tables list
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
@@ -883,6 +918,28 @@ The listing is driven from `sys.tables`, so a table with no matching DMV row sti
 On an endpoint using the legacy metadata sync, the tool raises a `ToolError` with an actionable message naming the `New metadata sync` preview setting and pointing at `fdw sql-endpoints refresh` (or the `refresh_sql_endpoint_metadata` MCP tool) as the fallback for refreshing the whole item.
 
 Reference: [sys.dm_db_external_tables_log_status](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-external-tables-log-status-transact-sql?view=fabric&WT.mc_id=MVP_310840)
+
+### refresh_table_metadata
+
+**Targets:** SQL Analytics Endpoint
+
+Refresh one table's metadata via `sys.sp_dw_refresh_ext_table`. This is the cheap, per-table refresh for **data**-only staleness: it re-reads the table's underlying Delta log without a full item-level sync. Use [`refresh_sql_endpoint_metadata`](sql-endpoints.md#refresh_sql_endpoint_metadata) instead when the **schema** changed (tables added or dropped) - this tool does not pick up schema changes.
+
+Only supported on SQL Analytics Endpoints (not Data Warehouses), and only on endpoints created after the workspace's `New metadata sync` (preview) setting was enabled.
+
+Mutating (respects `FABRIC_MCP_READONLY`) but **not** destructive: it never drops or recreates anything, so it does not require the `FABRIC_MCP_ALLOW_DESTRUCTIVE` opt-in.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): SQL Analytics Endpoint name or GUID. Data Warehouses are rejected with a `ToolError`.
+- `qualified_name` (`str`): dot-separated qualified table name, e.g. `dbo.sales`.
+
+**Returns:** `TableMetadataSyncStatus`: the refreshed sync-status row for the table (same shape as [`list_table_sync_status`](#list_table_sync_status)).
+
+On an endpoint using the legacy metadata sync, the tool raises a `ToolError` with the same actionable message as `list_table_sync_status`. A non-zero procedure return code (the procedure returns `0` for success, `1` for failure) also raises a `ToolError`. If the table is not present in the endpoint's catalog after a successful refresh, the tool raises a `ToolError` naming the table and pointing at `refresh_sql_endpoint_metadata` (or `fdw sql-endpoints refresh`) as the fallback.
+
+Reference: [sys.sp_dw_refresh_ext_table](https://learn.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sp-dw-refresh-ext-table-transact-sql?view=fabric&WT.mc_id=MVP_310840)
 
 ### import_table_from_url
 

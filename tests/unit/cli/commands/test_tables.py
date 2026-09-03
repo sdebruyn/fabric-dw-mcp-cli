@@ -4327,6 +4327,188 @@ class TestTablesSyncStatus:
         assert "StagingRaw" in result.output
 
 
+class TestTablesRefresh:
+    """Tests for the ``tables refresh`` CLI command (#1062)."""
+
+    def test_refresh_exits_zero_prints_confirmation_and_row(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.refresh_table_metadata",
+                new=AsyncMock(return_value=_make_sync_status()),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "refresh", SE_GUID, "dbo.FactSales"]
+            )
+        assert result.exit_code == 0, result.output
+        assert "Refreshed" in result.output
+        assert "dbo.FactSales" in result.output
+        assert "Table Metadata Sync Status" in result.output
+
+    def test_refresh_json_output_is_bare_object(self, runner: CliRunner, cache_env: Path) -> None:
+        """--json emits a single JSON object, not an array (coordinator amendment 2)."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.refresh_table_metadata",
+                new=AsyncMock(return_value=_make_sync_status()),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "--json", "tables", "refresh", SE_GUID, "dbo.FactSales"]
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, dict)
+        assert parsed["schema_name"] == "dbo"
+        assert parsed["name"] == "FactSales"
+        assert parsed["qualified_name"] == "dbo.FactSales"
+        # No human-readable confirmation text is mixed into --json output.
+        assert "Refreshed" not in result.output
+
+    def test_refresh_forwards_schema_and_table(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_svc = AsyncMock(return_value=_make_sync_status())
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch("fabric_dw.services.tables.refresh_table_metadata", new=mock_svc),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "refresh", SE_GUID, "dbo.FactSales"]
+            )
+        assert result.exit_code == 0, result.output
+        args, _kwargs = mock_svc.call_args
+        assert args[1] == "dbo"
+        assert args[2] == "FactSales"
+
+    def test_refresh_warehouse_target_fails_with_clear_message(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Warehouse target rejected via the real _assert_sql_endpoint guard."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                # Warehouse entry — kind=WarehouseKind.WAREHOUSE
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            # Do NOT mock the service — let _assert_sql_endpoint fire for real.
+            patch("fabric_dw.sql.open_connection", return_value=MagicMock()),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "refresh", WH_GUID, "dbo.FactSales"]
+            )
+        assert result.exit_code != 0
+        assert "SQL Analytics Endpoints" in result.output
+
+    def test_refresh_nonzero_return_code_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.refresh_table_metadata",
+                new=AsyncMock(
+                    side_effect=FabricError(
+                        "sys.sp_dw_refresh_ext_table reported failure (return code 1) "
+                        "refreshing table 'dbo.FactSales'."
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "refresh", SE_GUID, "dbo.FactSales"]
+            )
+        assert result.exit_code != 0
+        assert "return code 1" in result.output
+
+    def test_refresh_legacy_endpoint_error_has_no_raw_driver_text(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.refresh_table_metadata",
+                new=AsyncMock(
+                    side_effect=NotFoundError(
+                        "Table metadata refresh requires the new metadata sync "
+                        "(preview) for this SQL analytics endpoint. On endpoints using "
+                        "the legacy metadata sync, use 'fdw sql-endpoints refresh' to "
+                        "refresh the whole item instead."
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "refresh", SE_GUID, "dbo.FactSales"]
+            )
+        assert result.exit_code != 0
+        assert "new metadata sync" in result.output
+        assert "Could not find" not in result.output
+
+    def test_refresh_qualified_name_without_dot_fails(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with patch(
+            "fabric_dw.cli.commands.tables.build_http_client",
+            new=_make_http_cm(mock_http),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "refresh", SE_GUID, "nodot"])
+        assert result.exit_code != 0
+
+
 class TestTablesHealthCheckDuplicateColumns:
     """tables health-check — duplicate column name handling (issue #833)."""
 

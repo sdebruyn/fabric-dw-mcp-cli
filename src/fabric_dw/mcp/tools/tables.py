@@ -607,6 +607,55 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
             raise tool_err(exc) from exc
         return [t.model_dump(mode="json") for t in result]
 
+    @mutating_tool(mcp, "refresh_table_metadata")
+    async def refresh_table_metadata(
+        workspace: str, item: str, qualified_name: str
+    ) -> dict[str, Any]:
+        """Refresh one table's metadata via ``sys.sp_dw_refresh_ext_table``.
+
+        This is the cheap, per-table refresh for DATA-only staleness: it
+        re-reads the table's underlying Delta log without a full item-level
+        sync. Use ``refresh_sql_endpoint_metadata`` instead when the SCHEMA
+        changed (tables added or dropped) -- this tool does not pick up
+        schema changes.
+
+        Only supported on SQL Analytics Endpoints (not Data Warehouses), and
+        only on endpoints created after the workspace's 'New metadata sync'
+        (preview) setting was enabled. Mutating (respects
+        ``FABRIC_MCP_READONLY``) but NOT destructive -- it never drops or
+        recreates anything, so it does not require the
+        ``FABRIC_MCP_ALLOW_DESTRUCTIVE`` opt-in.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: SQL Analytics Endpoint name or GUID. Data Warehouses are
+                rejected with a ``ToolError``.
+            qualified_name: Dot-separated qualified table name, e.g.
+                ``dbo.sales``.
+        """
+        schema, table_name = parse_qualified_name(qualified_name, kind="table")
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "refresh_table_metadata ws=%s item=%s table=%s.%s",
+                ws_id,
+                entry.id,
+                schema,
+                table_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await tables_svc.refresh_table_metadata(
+                target, schema, table_name, kind=entry.kind, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return result.model_dump(mode="json")
+
     @mutating_tool(mcp, "rename_table")
     async def rename_table(
         workspace: str, item: str, qualified_name: str, new_name: str
