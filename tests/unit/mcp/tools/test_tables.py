@@ -23,7 +23,14 @@ import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
 from fabric_dw.exceptions import ItemKindError, NotFoundError
-from fabric_dw.models import ClusterColumn, ResultSet, Table, TableRowCount, WarehouseKind
+from fabric_dw.models import (
+    ClusterColumn,
+    ResultSet,
+    Table,
+    TableMetadataSyncStatus,
+    TableRowCount,
+    WarehouseKind,
+)
 from tests.unit._call import call_tool
 from tests.unit.mcp.conftest import (
     WH_NAME,
@@ -1192,6 +1199,169 @@ async def test_get_table_health_metrics_warehouse_raises_tool_error(mock_ctx, ct
             mcp,
             "get_table_health_metrics",
             {"workspace": WS_NAME, "item": WH_NAME, "qualified_name": "dbo.FactSales"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# list_table_sync_status — contract tests (read-only, SQL-endpoint-only, #1061)
+# ---------------------------------------------------------------------------
+
+
+def _make_sync_status(schema: str = "dbo", name: str = "FactSales") -> TableMetadataSyncStatus:
+    _now = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
+    return TableMetadataSyncStatus(
+        schema_name=schema,
+        name=name,
+        qualified_name=f"{schema}.{name}",
+        last_update_time_utc=_now,
+        latest_log_version=1284,
+        latest_checkpoint_version=1200,
+        is_blocked=False,
+    )
+
+
+async def test_list_table_sync_status_is_registered() -> None:
+    """list_table_sync_status is registered as an MCP tool."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    tool_names = {t.name for t in mcp._tool_manager.list_tools()}
+    assert "list_table_sync_status" in tool_names
+
+
+async def test_list_table_sync_status_is_not_mutating(
+    mock_ctx, ctx_patch, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """list_table_sync_status must NOT require the FABRIC_MCP_ALLOW_MUTATING flag."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    monkeypatch.delenv("FABRIC_MCP_ALLOW_MUTATING", raising=False)
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.list_table_sync_status",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        # Must NOT raise ToolError — read-only tools don't check writes_allowed.
+        result = await call_tool(
+            mcp,
+            "list_table_sync_status",
+            {"workspace": WS_NAME, "item": WH_NAME},
+        )
+    assert isinstance(result, list)
+
+
+async def test_list_table_sync_status_happy_path(mock_ctx, ctx_patch) -> None:
+    """list_table_sync_status forwards args to the service and returns typed dicts."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    mock_svc = AsyncMock(return_value=[_make_sync_status()])
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.list_table_sync_status", new=mock_svc),
+    ):
+        result = await call_tool(
+            mcp,
+            "list_table_sync_status",
+            {"workspace": WS_NAME, "item": WH_NAME},
+        )
+
+    assert isinstance(result, list)
+    assert result[0]["schema_name"] == "dbo"
+    assert result[0]["name"] == "FactSales"
+    assert result[0]["qualified_name"] == "dbo.FactSales"
+    assert result[0]["latest_log_version"] == 1284
+    assert result[0]["is_blocked"] is False
+
+
+async def test_list_table_sync_status_forwards_schema_and_table(mock_ctx, ctx_patch) -> None:
+    """list_table_sync_status passes schema and table straight through to the service."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+    mock_svc = AsyncMock(return_value=[])
+
+    with (
+        ctx_patch,
+        patch("fabric_dw.services.tables.list_table_sync_status", new=mock_svc),
+    ):
+        await call_tool(
+            mcp,
+            "list_table_sync_status",
+            {"workspace": WS_NAME, "item": WH_NAME, "schema": "dbo", "table": "FactSales"},
+        )
+
+    _args, kwargs = mock_svc.call_args
+    assert kwargs["schema"] == "dbo"
+    assert kwargs["table"] == "FactSales"
+
+
+async def test_list_table_sync_status_warehouse_raises_tool_error(mock_ctx, ctx_patch) -> None:
+    """list_table_sync_status raises ToolError when the service raises ItemKindError."""
+    from fabric_dw.exceptions import ItemKindError  # noqa: PLC0415
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    # Use a Warehouse entry so the service receives WarehouseKind.WAREHOUSE
+    mock_ctx.resolver.item = AsyncMock(return_value=make_item_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.list_table_sync_status",
+            new=AsyncMock(
+                side_effect=ItemKindError(
+                    "Table metadata sync-status (sys.dm_db_external_tables_log_status) is "
+                    "only available on SQL Analytics Endpoints, not Data Warehouses."
+                )
+            ),
+        ),
+        pytest.raises(ToolError),
+    ):
+        await call_tool(
+            mcp,
+            "list_table_sync_status",
+            {"workspace": WS_NAME, "item": WH_NAME},
+        )
+
+
+async def test_list_table_sync_status_legacy_endpoint_raises_tool_error(
+    mock_ctx, ctx_patch
+) -> None:
+    """list_table_sync_status raises ToolError carrying the actionable preview message."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.list_table_sync_status",
+            new=AsyncMock(
+                side_effect=NotFoundError(
+                    "Table metadata sync-status requires the new metadata sync "
+                    "(preview) for this SQL analytics endpoint. On endpoints using "
+                    "the legacy metadata sync, use 'fdw sql-endpoints refresh' to "
+                    "refresh the whole item instead."
+                )
+            ),
+        ),
+        pytest.raises(ToolError, match="new metadata sync"),
+    ):
+        await call_tool(
+            mcp,
+            "list_table_sync_status",
+            {"workspace": WS_NAME, "item": WH_NAME},
         )
 
 

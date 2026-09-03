@@ -550,6 +550,50 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
             "rows": safe_rows(result.rows),
         }
 
+    @mcp.tool(name="list_table_sync_status")
+    async def list_table_sync_status(
+        workspace: str,
+        item: str,
+        schema: str | None = None,
+        table: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Show per-table metadata sync freshness via ``sys.dm_db_external_tables_log_status``.
+
+        Only supported on SQL Analytics Endpoints (not Data Warehouses), and only
+        on endpoints created after the workspace's 'New metadata sync' (preview)
+        setting was enabled. Tables that have never been synced still appear,
+        with their sync fields ``null`` instead of the row being dropped.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: SQL Analytics Endpoint name or GUID. Data Warehouses are
+                rejected with a ``ToolError``.
+            schema: When provided, only tables in this schema are returned.
+            table: When provided, filter to this single (bare, unqualified)
+                table name. Requires *schema* to also be given.
+        """
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "list_table_sync_status ws=%s item=%s schema=%r table=%r",
+                ws_id,
+                entry.id,
+                schema,
+                table,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await tables_svc.list_table_sync_status(
+                target, schema=schema, table=table, kind=entry.kind, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return [t.model_dump(mode="json") for t in result]
+
     @mutating_tool(mcp, "rename_table")
     async def rename_table(
         workspace: str, item: str, qualified_name: str, new_name: str

@@ -96,6 +96,7 @@ TOOL_DOMAINS: dict[str, str] = {
     # Tables
     "get_table_columns": "tables",
     "get_table_health_metrics": "tables",
+    "list_table_sync_status": "tables",
     "list_tables": "tables",
     "read_table": "tables",
     "count_table_rows": "tables",

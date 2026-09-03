@@ -720,6 +720,77 @@ async def test_get_table_health_metrics_on_sql_endpoint(
 
 
 # ===========================================================================
+# list_table_sync_status — sys.dm_db_external_tables_log_status (#1061)
+# ===========================================================================
+
+
+@pytest.mark.sql_endpoint
+async def test_list_table_sync_status_on_sql_endpoint(
+    shared_sql_endpoint: SharedSqlEndpointTarget,
+) -> None:
+    """list_table_sync_status against a live endpoint; skips on the legacy metadata sync.
+
+    Uses ``sample.colors`` (seeded via the parent Lakehouse during fixture setup)
+    as the probe table. ``sys.dm_db_external_tables_log_status`` only exists on
+    SQL Analytics Endpoints created after the workspace's 'New metadata sync'
+    (preview) setting was enabled, so a legacy endpoint is skipped rather than
+    failed — mirrors the skip idiom in
+    ``test_get_table_health_metrics_on_sql_endpoint`` above.
+    """
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+    sql_target = shared_sql_endpoint.sql_target
+    try:
+        rows = await tables.list_table_sync_status(
+            sql_target,
+            kind=WarehouseKind.SQL_ENDPOINT,
+        )
+    except NotFoundError as exc:
+        pytest.skip(
+            f"sys.dm_db_external_tables_log_status is not available on this endpoint "
+            f"(legacy metadata sync); skipping ({exc})"
+        )
+
+    assert isinstance(rows, list)
+    qualified_names = [r.qualified_name for r in rows]
+    seeded = [r for r in rows if r.schema_name == SEED_SCHEMA_NAME and r.name == "colors"]
+    assert seeded, f"expected seeded table {SEED_SCHEMA_NAME}.colors in {qualified_names!r}"
+    assert seeded[0].qualified_name == f"{SEED_SCHEMA_NAME}.colors"
+
+    # Microsoft's docs imply one DMV row per table, but that is inference, not
+    # documentation — verify rather than assume. If this fails the LEFT JOIN is
+    # duplicating rows and the query needs a deduplicating shape; report this
+    # back rather than silently working around it.
+    assert len(qualified_names) == len(set(qualified_names)), (
+        f"expected unique qualified_name per row, got duplicates in {qualified_names!r}"
+    )
+
+
+@pytest.mark.sql_endpoint
+async def test_list_table_sync_status_schema_filter_on_sql_endpoint(
+    shared_sql_endpoint: SharedSqlEndpointTarget,
+) -> None:
+    """--schema filter returns only rows from the seeded schema."""
+    from fabric_dw.models import WarehouseKind  # noqa: PLC0415
+
+    sql_target = shared_sql_endpoint.sql_target
+    try:
+        rows = await tables.list_table_sync_status(
+            sql_target,
+            schema=SEED_SCHEMA_NAME,
+            kind=WarehouseKind.SQL_ENDPOINT,
+        )
+    except NotFoundError as exc:
+        pytest.skip(
+            f"sys.dm_db_external_tables_log_status is not available on this endpoint "
+            f"(legacy metadata sync); skipping ({exc})"
+        )
+
+    assert rows, f"expected at least the seeded tables in schema {SEED_SCHEMA_NAME!r}"
+    assert all(r.schema_name == SEED_SCHEMA_NAME for r in rows)
+
+
+# ===========================================================================
 # export_table — Parquet round-trip
 # ===========================================================================
 

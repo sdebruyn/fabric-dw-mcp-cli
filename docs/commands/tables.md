@@ -405,6 +405,40 @@ fdw -w MyWorkspace tables health-check MySqlEndpoint dbo.FactSales
 fdw -w MyWorkspace --json tables health-check MySqlEndpoint dbo.FactSales
 ```
 
+### tables sync-status
+
+**Targets:** SQL Analytics Endpoint
+
+Show when each table was last updated by the metadata sync, via `sys.dm_db_external_tables_log_status`. Only applies to SQL Analytics Endpoints created after `New metadata sync` (preview) was enabled under Workspace settings, Warehouse settings, for the workspace hosting the endpoint. On an endpoint using the legacy metadata sync, the command fails with an actionable message pointing back at that setting and at `fdw sql-endpoints refresh` as the fallback for refreshing the whole item.
+
+The listing is driven from `sys.tables`, so a table that has never been synced still appears, with `last_update_time_utc`, `latest_log_version`, `latest_checkpoint_version`, and `is_blocked` all empty. "Never updated" is a real answer to "when was this table last synced?".
+
+| Field | Meaning |
+| --- | --- |
+| `last_update_time_utc` | When the metadata sync last processed this table (UTC). Empty if never synced. |
+| `latest_log_version` | The Delta transaction log version that was last processed. |
+| `latest_checkpoint_version` | The Delta checkpoint version that was last processed. |
+| `is_blocked` | Whether the last update attempt was blocked (for example, by a multi-part checkpoint, which the preview does not support). |
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables sync-status [OPTIONS] [ENDPOINT]
+```
+
+| Option | Description |
+| --- | --- |
+| `--schema NAME` | Only show tables in this schema. |
+| `--table SCHEMA.TABLE` | Only show this one table. Mutually exclusive with `--schema`. |
+
+**Example**
+
+```shell
+fdw -w MyWorkspace tables sync-status MyLakehouseEP
+fdw -w MyWorkspace tables sync-status MyLakehouseEP --schema dbo
+fdw -w MyWorkspace tables sync-status MyLakehouseEP --table dbo.FactSales
+```
+
 ### tables list
 
 **Targets:** Data Warehouse / SQL Analytics Endpoint
@@ -814,6 +848,35 @@ The proc is Generally Available (announced at Build 2026) but its output column 
 - `qualified_name` (`str`): dot-separated table name, e.g. `dbo.FactSales`.
 
 **Returns:** `{ "columns": list[str], "rows": list[list] }`: column names and rows passed through verbatim from the proc.
+
+### list_table_sync_status
+
+**Targets:** SQL Analytics Endpoint
+
+Show per-table metadata sync freshness via `sys.dm_db_external_tables_log_status`. Only supported on SQL Analytics Endpoints (not Data Warehouses), and only on endpoints created after the workspace's `New metadata sync` (preview) setting was enabled.
+
+The listing is driven from `sys.tables`, so a table that has never been synced still appears, with its sync fields `null` instead of the row being dropped.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): SQL Analytics Endpoint name or GUID. Data Warehouses are rejected with a `ToolError`.
+- `schema` (`str | null`, optional): when provided, only tables in this schema are returned.
+- `table` (`str | null`, optional): when provided, filter to this single (bare, unqualified) table name. Requires `schema` to also be given.
+
+**Returns:** `list[TableMetadataSyncStatus]`, one dict per table, each containing:
+
+- `schema_name` (`str`): schema name.
+- `name` (`str`): table name.
+- `qualified_name` (`str`): `schema.table`.
+- `last_update_time_utc` (`str | null`): ISO-8601 UTC timestamp of the last metadata sync update, or `null` if the table has never been synced.
+- `latest_log_version` (`int | null`): the Delta transaction log version last processed.
+- `latest_checkpoint_version` (`int | null`): the Delta checkpoint version last processed.
+- `is_blocked` (`bool | null`): whether the last update attempt was blocked.
+
+On an endpoint using the legacy metadata sync, the tool raises a `ToolError` with an actionable message naming the `New metadata sync` preview setting and pointing at `fdw sql-endpoints refresh` (or the `refresh_sql_endpoint_metadata` MCP tool) as the fallback for refreshing the whole item.
+
+Reference: [sys.dm_db_external_tables_log_status](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-external-tables-log-status-transact-sql?view=fabric&WT.mc_id=MVP_310840)
 
 ### import_table_from_url
 

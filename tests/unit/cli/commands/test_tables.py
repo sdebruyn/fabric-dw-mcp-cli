@@ -4064,6 +4064,267 @@ class TestTablesHealthCheck:
         assert "(0 rows)" in result.output
 
 
+def _make_sync_status(
+    schema: str = "dbo",
+    name: str = "FactSales",
+    *,
+    synced: bool = True,
+) -> object:
+    """Build a TableMetadataSyncStatus. Pass synced=False for a never-synced row."""
+    from fabric_dw.models import TableMetadataSyncStatus  # noqa: PLC0415
+
+    if not synced:
+        return TableMetadataSyncStatus(
+            schema_name=schema,
+            name=name,
+            qualified_name=f"{schema}.{name}",
+            last_update_time_utc=None,
+            latest_log_version=None,
+            latest_checkpoint_version=None,
+            is_blocked=None,
+        )
+    return TableMetadataSyncStatus(
+        schema_name=schema,
+        name=name,
+        qualified_name=f"{schema}.{name}",
+        last_update_time_utc=_NOW,
+        latest_log_version=1284,
+        latest_checkpoint_version=1200,
+        is_blocked=False,
+    )
+
+
+class TestTablesSyncStatus:
+    """Tests for the ``tables sync-status`` CLI command (#1061)."""
+
+    def test_sync_status_exits_zero_on_endpoint(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(return_value=[_make_sync_status()]),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "sync-status", SE_GUID])
+        assert result.exit_code == 0, result.output
+        assert "Table Metadata Sync Status" in result.output
+
+    def test_sync_status_json_output(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(return_value=[_make_sync_status()]),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "tables", "sync-status", SE_GUID])
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
+        assert parsed[0]["schema_name"] == "dbo"
+        assert parsed[0]["name"] == "FactSales"
+        assert parsed[0]["qualified_name"] == "dbo.FactSales"
+        assert parsed[0]["latest_log_version"] == 1284
+        assert parsed[0]["latest_checkpoint_version"] == 1200
+        assert parsed[0]["is_blocked"] is False
+
+    def test_sync_status_zero_rows_json_output_is_empty_list(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "--json", "tables", "sync-status", SE_GUID])
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed == []
+
+    def test_sync_status_forwards_schema_filter(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_svc = AsyncMock(return_value=[])
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch("fabric_dw.services.tables.list_table_sync_status", new=mock_svc),
+        ):
+            result = runner.invoke(
+                cli, ["-w", WS_GUID, "tables", "sync-status", SE_GUID, "--schema", "dbo"]
+            )
+        assert result.exit_code == 0, result.output
+        _args, kwargs = mock_svc.call_args
+        assert kwargs["schema"] == "dbo"
+        assert kwargs["table"] is None
+
+    def test_sync_status_forwards_table_filter(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        mock_svc = AsyncMock(return_value=[])
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch("fabric_dw.services.tables.list_table_sync_status", new=mock_svc),
+        ):
+            result = runner.invoke(
+                cli,
+                ["-w", WS_GUID, "tables", "sync-status", SE_GUID, "--table", "dbo.FactSales"],
+            )
+        assert result.exit_code == 0, result.output
+        _args, kwargs = mock_svc.call_args
+        assert kwargs["schema"] == "dbo"
+        assert kwargs["table"] == "FactSales"
+
+    def test_sync_status_both_filters_is_usage_error(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "tables",
+                    "sync-status",
+                    SE_GUID,
+                    "--schema",
+                    "dbo",
+                    "--table",
+                    "dbo.FactSales",
+                ],
+            )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output
+
+    def test_sync_status_warehouse_raises_click_exception(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """sync-status on a Warehouse raises via the real _assert_sql_endpoint guard."""
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                # Warehouse entry — kind=WarehouseKind.WAREHOUSE
+                new=AsyncMock(return_value=(_make_sql_target(), _make_item_entry())),
+            ),
+            # Do NOT mock the service — let _assert_sql_endpoint fire for real.
+            patch("fabric_dw.sql.open_connection", return_value=MagicMock()),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "sync-status", WH_GUID])
+        assert result.exit_code != 0
+        assert "SQL Analytics Endpoints" in result.output
+
+    def test_sync_status_legacy_endpoint_error_surfaces(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(
+                    side_effect=NotFoundError(
+                        "Table metadata sync-status requires the new metadata sync "
+                        "(preview) for this SQL analytics endpoint. On endpoints using "
+                        "the legacy metadata sync, use 'fdw sql-endpoints refresh' to "
+                        "refresh the whole item instead."
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "sync-status", SE_GUID])
+        assert result.exit_code != 0
+        assert "new metadata sync" in result.output
+        assert "fdw sql-endpoints refresh" in result.output
+
+    def test_sync_status_null_fields_still_render(self, runner: CliRunner, cache_env: Path) -> None:
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(return_value=[_make_sync_status("dbo", "StagingRaw", synced=False)]),
+            ),
+        ):
+            result = runner.invoke(cli, ["-w", WS_GUID, "tables", "sync-status", SE_GUID])
+        assert result.exit_code == 0, result.output
+        assert "StagingRaw" in result.output
+
+
 class TestTablesHealthCheckDuplicateColumns:
     """tables health-check — duplicate column name handling (issue #833)."""
 
