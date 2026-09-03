@@ -166,8 +166,12 @@ ORDER BY s.name, t.name;
 
 # sys.dm_db_external_tables_log_status is a catalog DMV keyed by object_id — this
 # is metadata lookup, not SQL text parsing.  The listing is driven from sys.tables
-# with a LEFT JOIN so a table that has never been synced by the new metadata sync
-# (preview) still appears, with the DMV columns NULL, instead of vanishing.
+# with a LEFT JOIN so a table with no DMV row (no sync information available)
+# still appears, with the DMV columns NULL, instead of vanishing. Coverage
+# limit: sys.tables itself is populated by the metadata sync on a SQL Analytics
+# Endpoint, so a table whose discovery has not completed, or has failed, has no
+# sys.tables row and is absent from this listing entirely — see
+# list_table_sync_status's docstring.
 _TABLE_SYNC_STATUS_SQL = """\
 SELECT
     s.name AS schema_name,
@@ -256,10 +260,11 @@ def _row_to_table(cols: list[str], row: tuple[object, ...]) -> Table:
 def _row_to_sync_status(cols: list[str], row: tuple[object, ...]) -> TableMetadataSyncStatus:
     """Build a :class:`TableMetadataSyncStatus` from a column-name list and a result row.
 
-    The four DMV-sourced columns are ``None`` for a table that has never been
-    synced by the new metadata sync (preview) — the LEFT JOIN in
+    The four DMV-sourced columns are ``None`` when the table has no matching
+    row in ``sys.dm_db_external_tables_log_status`` — the LEFT JOIN in
     :data:`_TABLE_SYNC_STATUS_SQL` leaves them unmatched rather than dropping
-    the row.
+    the row. This means no sync information is available for that table, not
+    that it provably never synced.
     """
     data = dict(zip(cols, row, strict=True))
     schema_name = str(data["schema_name"])
@@ -1377,9 +1382,18 @@ async def list_table_sync_status(
     """Return per-table metadata sync freshness via ``sys.dm_db_external_tables_log_status``.
 
     Lists every table on *target* (driven from ``sys.tables``, left-joined to
-    the DMV on ``object_id``) so a table that has never been synced by the new
-    metadata sync (preview) still appears, with its sync fields ``None``
-    instead of being dropped from the result.
+    the DMV on ``object_id``) so a table with no matching DMV row still
+    appears, with its sync fields ``None`` instead of being dropped from the
+    result. ``None`` sync fields mean no sync information is available for
+    that table -- Microsoft documents the DMV as describing the most recent
+    update, not as proof a table has never synced.
+
+    Coverage limit: this listing only covers tables present in ``sys.tables``,
+    which on a SQL Analytics Endpoint is itself populated by the metadata
+    sync. A Lakehouse table whose discovery has not completed, or has failed,
+    has no ``sys.tables`` row and so is missing from this result entirely, not
+    merely shown with empty sync fields. If an expected table is absent, run
+    ``fdw sql-endpoints refresh`` to force an item-level sync and check again.
 
     Only available on SQL Analytics Endpoints created after the workspace's
     ``New metadata sync`` (preview) setting was enabled. On every other

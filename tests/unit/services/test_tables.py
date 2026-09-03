@@ -3156,7 +3156,7 @@ _SYNC_STATUS_COLS = [
     "is_blocked",
 ]
 _SYNC_ROW_SYNCED: tuple[object, ...] = ("dbo", "FactSales", _NOW, 1284, 1200, 0)
-_SYNC_ROW_NEVER_SYNCED: tuple[object, ...] = ("dbo", "StagingRaw", None, None, None, None)
+_SYNC_ROW_NO_DMV_ROW: tuple[object, ...] = ("dbo", "StagingRaw", None, None, None, None)
 
 
 class TestListTableSyncStatus:
@@ -3313,7 +3313,7 @@ class TestListTableSyncStatus:
 
     async def test_row_with_null_dmv_columns_yields_none_last_update(self) -> None:
         target = _make_target()
-        conn = _make_conn([_SYNC_ROW_NEVER_SYNCED], _SYNC_STATUS_COLS)
+        conn = _make_conn([_SYNC_ROW_NO_DMV_ROW], _SYNC_STATUS_COLS)
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             result = await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
         assert len(result) == 1
@@ -3328,7 +3328,7 @@ class TestListTableSyncStatus:
 
     async def test_mixed_result_set_returns_both(self) -> None:
         target = _make_target()
-        conn = _make_conn([_SYNC_ROW_SYNCED, _SYNC_ROW_NEVER_SYNCED], _SYNC_STATUS_COLS)
+        conn = _make_conn([_SYNC_ROW_SYNCED, _SYNC_ROW_NO_DMV_ROW], _SYNC_STATUS_COLS)
         with patch("fabric_dw.sql.open_connection", return_value=conn):
             result = await tables.list_table_sync_status(target, kind=WarehouseKind.SQL_ENDPOINT)
         assert len(result) == 2

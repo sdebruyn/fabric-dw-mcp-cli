@@ -411,11 +411,13 @@ fdw -w MyWorkspace --json tables health-check MySqlEndpoint dbo.FactSales
 
 Show when each table was last updated by the metadata sync, via `sys.dm_db_external_tables_log_status`. Only applies to SQL Analytics Endpoints created after `New metadata sync` (preview) was enabled under Workspace settings, Warehouse settings, for the workspace hosting the endpoint. On an endpoint using the legacy metadata sync, the command fails with an actionable message pointing back at that setting and at `fdw sql-endpoints refresh` as the fallback for refreshing the whole item.
 
-The listing is driven from `sys.tables`, so a table that has never been synced still appears, with `last_update_time_utc`, `latest_log_version`, `latest_checkpoint_version`, and `is_blocked` all empty. "Never updated" is a real answer to "when was this table last synced?".
+The listing is driven from `sys.tables`, so a table with no matching DMV row still appears, with `last_update_time_utc`, `latest_log_version`, `latest_checkpoint_version`, and `is_blocked` all empty. This means no sync information is available for that table, not that it provably never synced - Microsoft documents the DMV as describing the most recent update, not as a complete sync history.
+
+**Coverage limit:** only tables that exist in the endpoint catalog (`sys.tables`) are listed. On a SQL Analytics Endpoint that catalog is itself maintained by the metadata sync, so a Lakehouse table whose discovery has not completed, or has failed, does not appear at all - it is not shown as a row with empty fields, it is simply absent. If a table you expect is missing, run `fdw sql-endpoints refresh` to force an item-level sync and check again.
 
 | Field | Meaning |
 | --- | --- |
-| `last_update_time_utc` | When the metadata sync last processed this table (UTC). Empty if never synced. |
+| `last_update_time_utc` | When the metadata sync last processed this table (UTC). Empty when no sync information is available for this table. |
 | `latest_log_version` | The Delta transaction log version that was last processed. |
 | `latest_checkpoint_version` | The Delta checkpoint version that was last processed. |
 | `is_blocked` | Whether the last update attempt was blocked (for example, by a multi-part checkpoint, which the preview does not support). |
@@ -855,7 +857,11 @@ The proc is Generally Available (announced at Build 2026) but its output column 
 
 Show per-table metadata sync freshness via `sys.dm_db_external_tables_log_status`. Only supported on SQL Analytics Endpoints (not Data Warehouses), and only on endpoints created after the workspace's `New metadata sync` (preview) setting was enabled.
 
-The listing is driven from `sys.tables`, so a table that has never been synced still appears, with its sync fields `null` instead of the row being dropped.
+The listing is driven from `sys.tables`, so a table with no matching DMV row still appears, with its sync fields `null` instead of the row being dropped. A `null` row means no sync information is available for that table - it is not proof the table has never synced.
+
+!!! warning "Coverage limit: a missing table is not proof it doesn't exist"
+
+    This tool only returns tables already present in the endpoint's catalog (`sys.tables`), which is itself maintained by the metadata sync. A Lakehouse table whose discovery has not completed, or has failed, has no catalog row and is **absent from this result entirely** - it does not appear as a row with empty fields. Do not conclude a table was deleted, or never existed, just because it is missing from this list. If an expected table is missing, call `refresh_sql_endpoint_metadata` (or `fdw sql-endpoints refresh`) to force an item-level sync and check again.
 
 **Parameters:**
 
@@ -869,7 +875,7 @@ The listing is driven from `sys.tables`, so a table that has never been synced s
 - `schema_name` (`str`): schema name.
 - `name` (`str`): table name.
 - `qualified_name` (`str`): `schema.table`.
-- `last_update_time_utc` (`str | null`): ISO-8601 UTC timestamp of the last metadata sync update, or `null` if the table has never been synced.
+- `last_update_time_utc` (`str | null`): ISO-8601 UTC timestamp of the last metadata sync update, or `null` when no sync information is available for this table.
 - `latest_log_version` (`int | null`): the Delta transaction log version last processed.
 - `latest_checkpoint_version` (`int | null`): the Delta checkpoint version last processed.
 - `is_blocked` (`bool | null`): whether the last update attempt was blocked.

@@ -561,8 +561,21 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
 
         Only supported on SQL Analytics Endpoints (not Data Warehouses), and only
         on endpoints created after the workspace's 'New metadata sync' (preview)
-        setting was enabled. Tables that have never been synced still appear,
-        with their sync fields ``null`` instead of the row being dropped.
+        setting was enabled. A table with no matching DMV row still appears, with
+        its sync fields ``null`` instead of the row being dropped -- this means no
+        sync information is available for that table, NOT that it has never
+        synced; do not treat a ``null`` row as proof the table has never synced.
+
+        IMPORTANT for agents: this listing only includes tables already present
+        in the endpoint's catalog (``sys.tables``), which is itself maintained by
+        the metadata sync. A Lakehouse table whose discovery has not completed,
+        or has failed, has no catalog row and so is **absent from this result
+        entirely** -- it will not appear as a row with empty fields, it simply
+        will not be there. Do not conclude a table does not exist, or was
+        deleted, just because it is missing from this list. If an expected
+        table is missing, call ``refresh_sql_endpoint_metadata`` (or tell the
+        user to run ``fdw sql-endpoints refresh``) to force an item-level sync,
+        then check again.
 
         Args:
             workspace: Workspace name or GUID.

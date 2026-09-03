@@ -370,9 +370,16 @@ async def sync_status_cmd(
     """Show per-table metadata sync freshness on ITEM (SQL Analytics Endpoint only).
 
     Reads sys.dm_db_external_tables_log_status, left-joined onto sys.tables so
-    that a table which has never been synced still appears, with empty sync
-    fields. Only supported on SQL Analytics Endpoints created after the
+    that a table with no DMV row still appears, with empty sync fields --
+    meaning no sync information is available, not that the table provably
+    never synced. Only supported on SQL Analytics Endpoints created after the
     workspace's 'New metadata sync' (preview) setting was enabled.
+
+    Coverage limit: only tables present in sys.tables are listed. On a SQL
+    Analytics Endpoint that catalog is itself maintained by the metadata sync,
+    so a Lakehouse table whose discovery has not completed, or has failed,
+    does not appear at all. If a table you expect is missing, run
+    'fdw sql-endpoints refresh' to force an item-level sync and check again.
     """
     if filter_schema is not None and filter_table is not None:
         raise click.UsageError("--schema and --table are mutually exclusive.")

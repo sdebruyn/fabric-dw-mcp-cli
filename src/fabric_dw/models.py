@@ -611,9 +611,17 @@ class TableMetadataSyncStatus(_FabricBase):
     (Fabric REST LRO). This model instead answers "when was this table's
     metadata last synced?" for a single table on a SQL Analytics Endpoint.
 
-    Tables from ``sys.tables`` that have never been synced by the new metadata
-    sync (preview) still appear, with all four DMV-sourced fields ``None`` --
-    "never updated" is a real answer, not a missing row.
+    A table with no matching DMV row still appears, with all four DMV-sourced
+    fields ``None`` -- absent sync information is a real, distinct answer, not
+    a missing row. It means no sync information is available for that table,
+    not that the table provably never synced: Microsoft documents the DMV as
+    describing the most recent update, not as a complete sync history.
+
+    Coverage limit: this listing is driven from ``sys.tables``, which on a SQL
+    Analytics Endpoint is itself populated by the metadata sync. A table whose
+    discovery has not completed, or has failed, has no ``sys.tables`` row and
+    so does not appear in this listing at all -- its absence from the result
+    set is not visible here.
 
     Unlike :attr:`Table.created` / :attr:`Table.modified`, which pass the
     driver's native datetime through unchanged, ``last_update_time_utc`` here

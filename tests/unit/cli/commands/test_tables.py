@@ -4068,12 +4068,12 @@ def _make_sync_status(
     schema: str = "dbo",
     name: str = "FactSales",
     *,
-    synced: bool = True,
+    has_dmv_row: bool = True,
 ) -> object:
-    """Build a TableMetadataSyncStatus. Pass synced=False for a never-synced row."""
+    """Build a TableMetadataSyncStatus. Pass has_dmv_row=False for a row with no sync info."""
     from fabric_dw.models import TableMetadataSyncStatus  # noqa: PLC0415
 
-    if not synced:
+    if not has_dmv_row:
         return TableMetadataSyncStatus(
             schema_name=schema,
             name=name,
@@ -4317,7 +4317,9 @@ class TestTablesSyncStatus:
             ),
             patch(
                 "fabric_dw.services.tables.list_table_sync_status",
-                new=AsyncMock(return_value=[_make_sync_status("dbo", "StagingRaw", synced=False)]),
+                new=AsyncMock(
+                    return_value=[_make_sync_status("dbo", "StagingRaw", has_dmv_row=False)]
+                ),
             ),
         ):
             result = runner.invoke(cli, ["-w", WS_GUID, "tables", "sync-status", SE_GUID])
