@@ -621,7 +621,27 @@ class TableMetadataSyncStatus(_FabricBase):
     Analytics Endpoint is itself populated by the metadata sync. A table whose
     discovery has not completed, or has failed, has no ``sys.tables`` row and
     so does not appear in this listing at all -- its absence from the result
-    set is not visible here.
+    set is not visible here, UNLESS the caller opted into the Lakehouse
+    discovery-gap cross-check (``tables sync-status --check-lakehouse`` /
+    ``list_table_sync_status(check_lakehouse=True)``). That cross-check appends
+    a synthetic row for exactly this case, with ``in_endpoint_catalog=False``:
+    a table present in the backing Lakehouse's OneLake table inventory but
+    absent from ``sys.tables`` entirely. This is a distinct condition from a
+    ``None`` ``last_update_time_utc`` on an ``in_endpoint_catalog=True`` row,
+    which means the table IS in the catalog but has no DMV row yet -- a
+    ``False`` row has no catalog row at all, so its four DMV-sourced fields
+    are always ``None`` too, for the same reason. See
+    :func:`~fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables`
+    for the cross-check's own coverage limits (Lakehouse-backed, non-schema-enabled
+    endpoints only), and for why the Lakehouse-vs-catalog comparison it performs
+    is exact (case-sensitive), matching Fabric's case-sensitive default collation.
+
+    A ``False`` row whose Lakehouse name differs from an existing catalog row
+    only by case (e.g. Lakehouse ``FactSales`` vs. catalog ``factsales``) sets
+    :attr:`case_mismatched_catalog_name` to that existing catalog name instead
+    of leaving it ``None``: a likely casing drift is a more specific, more
+    useful finding than a flat "missing", since the two names may in fact
+    resolve to the same object once the metadata sync catches up.
 
     Unlike :attr:`Table.created` / :attr:`Table.modified`, which pass the
     driver's native datetime through unchanged, ``last_update_time_utc`` here
@@ -635,6 +655,8 @@ class TableMetadataSyncStatus(_FabricBase):
     latest_log_version: int | None
     latest_checkpoint_version: int | None
     is_blocked: bool | None
+    in_endpoint_catalog: bool = True
+    case_mismatched_catalog_name: str | None = None
 
 
 # ---------------------------------------------------------------------------

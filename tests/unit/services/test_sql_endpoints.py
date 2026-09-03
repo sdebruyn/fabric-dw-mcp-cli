@@ -896,3 +896,269 @@ async def test_get_endpoint_connection_string_resolves_via_lakehouse_no_sleep() 
 
     assert result == _LAKEHOUSE_CONN_STRING
     mock_sleep.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# find_undiscovered_lakehouse_tables / list_lakehouse_table_names (#1064)
+# ---------------------------------------------------------------------------
+
+_GAP_LAKEHOUSE_ID = "11111111-0000-0000-0000-000000000001"
+_GAP_TABLES_URL = f"{_BASE}/workspaces/{_WORKSPACE_ID}/lakehouses/{_GAP_LAKEHOUSE_ID}/tables"
+
+# Lakehouse payload whose sqlEndpointProperties.id matches _ENDPOINT_ID and that
+# is NOT schema-enabled (no "defaultSchema" key), reused across the
+# find_undiscovered_lakehouse_tables tests below.
+_GAP_LAKEHOUSE_MATCH_PAYLOAD: dict[str, Any] = _LAKEHOUSES_WITH_MATCH_PAYLOAD
+
+# Same match, but schema-enabled (properties.defaultSchema present).
+_GAP_LAKEHOUSE_MATCH_SCHEMA_ENABLED_PAYLOAD: dict[str, Any] = {
+    "value": [
+        {
+            "id": _GAP_LAKEHOUSE_ID,
+            "displayName": "SalesLakehouse",
+            "workspaceId": str(_WORKSPACE_ID),
+            "properties": {
+                "sqlEndpointProperties": {
+                    "id": str(_ENDPOINT_ID),
+                    "connectionString": _LAKEHOUSE_CONN_STRING,
+                    "provisioningStatus": "Success",
+                },
+                "defaultSchema": "dbo",
+            },
+        }
+    ]
+}
+
+
+def _tables_page(names: list[str], *, continuation: str | None = None) -> dict[str, Any]:
+    """Build a "List Tables" response page (data[] + optional continuationUri)."""
+    page: dict[str, Any] = {
+        "data": [
+            {"type": "Managed", "name": n, "format": "Delta", "location": f".../Tables/{n}"}
+            for n in names
+        ]
+    }
+    if continuation:
+        page["continuationUri"] = continuation
+    return page
+
+
+async def test_find_undiscovered_tables_not_lakehouse_backed() -> None:
+    """No lakehouse in the workspace pairs with the endpoint -> NOT_LAKEHOUSE_BACKED.
+
+    The /tables endpoint must never be called in this case -- there is no
+    lakehouse ID to call it with.
+    """
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryStatus,
+        find_undiscovered_lakehouse_tables,
+    )
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_LAKEHOUSES_NO_MATCH_PAYLOAD)
+        )
+        mock_router.get(url__regex=r".*/tables.*").mock(
+            side_effect=AssertionError("must not call /tables when no lakehouse matches")
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await find_undiscovered_lakehouse_tables(
+                client, _WORKSPACE_ID, _ENDPOINT_ID, frozenset()
+            )
+
+    assert result.status == LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED
+    assert result.missing_table_names == ()
+
+
+async def test_find_undiscovered_tables_schema_enabled_unsupported() -> None:
+    """A schema-enabled backing lakehouse refuses the comparison rather than risk a false report."""
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryStatus,
+        find_undiscovered_lakehouse_tables,
+    )
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_GAP_LAKEHOUSE_MATCH_SCHEMA_ENABLED_PAYLOAD)
+        )
+        mock_router.get(url__regex=r".*/tables.*").mock(
+            side_effect=AssertionError("must not call /tables for a schema-enabled lakehouse")
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await find_undiscovered_lakehouse_tables(
+                client, _WORKSPACE_ID, _ENDPOINT_ID, frozenset()
+            )
+
+    assert result.status == LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED
+    assert result.missing_table_names == ()
+
+
+async def test_find_undiscovered_tables_ok_no_gap() -> None:
+    """Every Lakehouse table is already known -> OK with an empty gap."""
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryStatus,
+        find_undiscovered_lakehouse_tables,
+    )
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_GAP_LAKEHOUSE_MATCH_PAYLOAD)
+        )
+        mock_router.get(_GAP_TABLES_URL).mock(
+            return_value=httpx.Response(200, json=_tables_page(["FactSales", "DimCustomer"]))
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await find_undiscovered_lakehouse_tables(
+                client, _WORKSPACE_ID, _ENDPOINT_ID, frozenset({"FactSales", "DimCustomer"})
+            )
+
+    assert result.status == LakehouseDiscoveryStatus.OK
+    assert result.missing_table_names == ()
+
+
+async def test_find_undiscovered_tables_ok_with_gap() -> None:
+    """A Lakehouse table absent from known_dbo_names is reported as missing."""
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryStatus,
+        find_undiscovered_lakehouse_tables,
+    )
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_GAP_LAKEHOUSE_MATCH_PAYLOAD)
+        )
+        mock_router.get(_GAP_TABLES_URL).mock(
+            return_value=httpx.Response(200, json=_tables_page(["FactSales", "StagingRaw"]))
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await find_undiscovered_lakehouse_tables(
+                client, _WORKSPACE_ID, _ENDPOINT_ID, frozenset({"FactSales"})
+            )
+
+    assert result.status == LakehouseDiscoveryStatus.OK
+    assert result.missing_table_names == ("StagingRaw",)
+
+
+async def test_find_undiscovered_tables_comparison_is_case_sensitive_by_default() -> None:
+    """Regression for the case-folding bug (#1065 review): comparison is exact.
+
+    Fabric's default collation (FABRIC_DEFAULT_COLLATION) is case-sensitive, so
+    a Lakehouse "FactSales" and a catalog "factsales" are two distinct, valid
+    identifiers. Case-folding the comparison (the original implementation)
+    would silently treat them as the same table and hide a real gap. The fixed
+    behaviour must NOT report this as a plain match with an empty gap: it must
+    surface it, distinguished as a case mismatch rather than a flat "missing"
+    (see the next test) -- but it must not be silently absorbed either.
+    """
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryStatus,
+        find_undiscovered_lakehouse_tables,
+    )
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_GAP_LAKEHOUSE_MATCH_PAYLOAD)
+        )
+        mock_router.get(_GAP_TABLES_URL).mock(
+            return_value=httpx.Response(200, json=_tables_page(["factsales"]))
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await find_undiscovered_lakehouse_tables(
+                client, _WORKSPACE_ID, _ENDPOINT_ID, frozenset({"FactSales"})
+            )
+
+    assert result.status == LakehouseDiscoveryStatus.OK
+    # Not an exact match, so NOT silently treated as present:
+    assert result.missing_table_names == ()
+    # ... but surfaced as a case mismatch, not dropped entirely:
+    assert result.case_mismatched_table_names == (("factsales", "FactSales"),)
+
+
+async def test_find_undiscovered_tables_exact_match_is_not_reported_at_all() -> None:
+    """An exact-name match is neither missing nor a case mismatch."""
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryStatus,
+        find_undiscovered_lakehouse_tables,
+    )
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_GAP_LAKEHOUSE_MATCH_PAYLOAD)
+        )
+        mock_router.get(_GAP_TABLES_URL).mock(
+            return_value=httpx.Response(200, json=_tables_page(["FactSales"]))
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await find_undiscovered_lakehouse_tables(
+                client, _WORKSPACE_ID, _ENDPOINT_ID, frozenset({"FactSales"})
+            )
+
+    assert result.status == LakehouseDiscoveryStatus.OK
+    assert result.missing_table_names == ()
+    assert result.case_mismatched_table_names == ()
+
+
+async def test_find_undiscovered_tables_true_miss_is_not_a_case_mismatch() -> None:
+    """A table with no name match at all (exact or case-insensitive) is a true miss."""
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryStatus,
+        find_undiscovered_lakehouse_tables,
+    )
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_GAP_LAKEHOUSE_MATCH_PAYLOAD)
+        )
+        mock_router.get(_GAP_TABLES_URL).mock(
+            return_value=httpx.Response(200, json=_tables_page(["StagingRaw"]))
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await find_undiscovered_lakehouse_tables(
+                client, _WORKSPACE_ID, _ENDPOINT_ID, frozenset({"FactSales"})
+            )
+
+    assert result.status == LakehouseDiscoveryStatus.OK
+    assert result.missing_table_names == ("StagingRaw",)
+    assert result.case_mismatched_table_names == ()
+
+
+async def test_list_lakehouse_table_names_follows_pagination() -> None:
+    """list_lakehouse_table_names must follow continuationUri across pages."""
+    from fabric_dw.services.sql_endpoints import list_lakehouse_table_names  # noqa: PLC0415
+
+    call_count = 0
+
+    def side_effect(_request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(
+                200, json=_tables_page(["Table1"], continuation=f"{_GAP_TABLES_URL}?page=2")
+            )
+        return httpx.Response(200, json=_tables_page(["Table2"]))
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(url__regex=r".*/tables.*").mock(side_effect=side_effect)
+
+        client = await _make_client()
+        async with client:
+            result = await list_lakehouse_table_names(
+                client, _WORKSPACE_ID, UUID(_GAP_LAKEHOUSE_ID)
+            )
+
+    assert call_count == 2
+    assert result == ["Table1", "Table2"]

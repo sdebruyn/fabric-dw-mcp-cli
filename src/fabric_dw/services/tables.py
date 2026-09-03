@@ -20,6 +20,7 @@ Public API
 - :func:`get_table_dependents`    — objects referencing a table by name.
 - :func:`get_table_health_metrics` — ``EXEC sp_get_table_health_metrics`` (SQL endpoint only).
 - :func:`list_table_sync_status`  — ``sys.dm_db_external_tables_log_status`` (SQL endpoint only).
+- :func:`refresh_table_metadata`  — ``EXEC sys.sp_dw_refresh_ext_table`` (SQL endpoint only).
 
 List-source note
 ----------------
@@ -88,6 +89,7 @@ __all__ = [
     "list_tables",
     "read_table",
     "recluster_table",
+    "refresh_table_metadata",
     "rename_table",
     "transfer_table",
     "validate_identifier",
@@ -125,6 +127,23 @@ _SYNC_STATUS_LEGACY_SYNC_MSG = (
     "settings, in the workspace hosting this endpoint. On endpoints using the "
     "legacy metadata sync, use 'fdw sql-endpoints refresh' to refresh the "
     "whole item instead."
+)
+_WAREHOUSE_REFRESH_TABLE_MSG = (
+    "Table metadata refresh (sys.sp_dw_refresh_ext_table) is only "
+    "available on SQL Analytics Endpoints, not Data Warehouses."
+)
+
+# Fragment (lower-cased) of the "could not find stored procedure" driver error that
+# names the refresh procedure specifically, distinguishing "this endpoint predates
+# the new metadata sync preview" from an unrelated missing-procedure error.
+_REFRESH_TABLE_LEGACY_SYNC_FRAGMENT = "sp_dw_refresh_ext_table"
+_REFRESH_TABLE_LEGACY_SYNC_MSG = (
+    "Table metadata refresh requires the new metadata sync (preview) for this "
+    "SQL analytics endpoint. It only applies to endpoints created after 'New "
+    "metadata sync' was enabled under Workspace settings, Warehouse settings, "
+    "in the workspace hosting this endpoint. On endpoints using the legacy "
+    "metadata sync, use 'fdw sql-endpoints refresh' to refresh the whole item "
+    "instead."
 )
 
 
@@ -238,6 +257,19 @@ _SP_RENAME_SQL = "EXEC sp_rename ?, ?, 'OBJECT'"
 # The output schema is GA-but-undocumented; columns are passed through generically.
 _SP_TABLE_HEALTH_METRICS_SQL = "EXEC sp_get_table_health_metrics '{schema}.{table}'"
 
+# sys.sp_dw_refresh_ext_table returns 0 (success) / 1 (failure) via an output
+# parameter and does not raise for a failed refresh, so the return code must be
+# captured explicitly. This is a fixed, code-authored batch; the only caller
+# value (the qualified table name) is bound as a ? parameter, never interpolated
+# into the SQL text -- authoring this constant is not "parsing SQL" under
+# CLAUDE.md, which concerns extracting/rewriting existing SQL, not issuing a
+# new statement.
+_SP_REFRESH_TABLE_SQL = """\
+DECLARE @rc int;
+EXEC @rc = sys.sp_dw_refresh_ext_table ?;
+SELECT @rc AS rc;
+"""
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -265,6 +297,14 @@ def _row_to_sync_status(cols: list[str], row: tuple[object, ...]) -> TableMetada
     :data:`_TABLE_SYNC_STATUS_SQL` leaves them unmatched rather than dropping
     the row. This means no sync information is available for that table, not
     that it provably never synced.
+
+    ``in_endpoint_catalog`` is always ``True`` here: every row this function
+    builds comes from ``sys.tables`` by definition, via the FROM clause in
+    :data:`_TABLE_SYNC_STATUS_SQL`. A ``False`` row is never produced by a SQL
+    query at all -- it is a synthetic row the CLI/MCP layer appends only when
+    the caller opts into the Lakehouse discovery-gap cross-check (see
+    :class:`~fabric_dw.models.TableMetadataSyncStatus` and
+    :func:`~fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables`).
     """
     data = dict(zip(cols, row, strict=True))
     schema_name = str(data["schema_name"])
@@ -291,6 +331,7 @@ def _row_to_sync_status(cols: list[str], row: tuple[object, ...]) -> TableMetada
             else None
         ),
         is_blocked=bool(is_blocked) if is_blocked is not None else None,
+        in_endpoint_catalog=True,
     )
 
 
@@ -1388,12 +1429,22 @@ async def list_table_sync_status(
     that table -- Microsoft documents the DMV as describing the most recent
     update, not as proof a table has never synced.
 
-    Coverage limit: this listing only covers tables present in ``sys.tables``,
-    which on a SQL Analytics Endpoint is itself populated by the metadata
-    sync. A Lakehouse table whose discovery has not completed, or has failed,
-    has no ``sys.tables`` row and so is missing from this result entirely, not
-    merely shown with empty sync fields. If an expected table is absent, run
-    ``fdw sql-endpoints refresh`` to force an item-level sync and check again.
+    Coverage limit: this function alone only covers tables present in
+    ``sys.tables``, which on a SQL Analytics Endpoint is itself populated by
+    the metadata sync. A Lakehouse table whose discovery has not completed, or
+    has failed, has no ``sys.tables`` row and so is missing from this result
+    entirely, not merely shown with empty sync fields. If an expected table is
+    absent, run ``fdw sql-endpoints refresh`` to force an item-level sync and
+    check again, OR pass the ``tables sync-status --check-lakehouse`` CLI flag
+    (``list_table_sync_status(check_lakehouse=True)`` at the MCP layer) to
+    cross-reference the backing Lakehouse's own table inventory and surface
+    exactly this gap as synthetic rows with ``in_endpoint_catalog=False`` --
+    this function itself does not perform that cross-check (it is TDS-only; the
+    cross-check needs a REST call and lives in
+    :func:`~fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables`,
+    orchestrated by the CLI/MCP layer), and it only works for Lakehouse-backed
+    endpoints whose Lakehouse does not have schema support enabled -- see that
+    function's docstring for the full set of cases it cannot cover either.
 
     Only available on SQL Analytics Endpoints created after the workspace's
     ``New metadata sync`` (preview) setting was enabled. On every other
@@ -1468,6 +1519,127 @@ async def list_table_sync_status(
         return [_row_to_sync_status(cols, r) for r in rows]
 
     return await asyncio.to_thread(_run)
+
+
+async def refresh_table_metadata(
+    target: SqlTarget,
+    schema: str,
+    table_name: str,
+    *,
+    kind: WarehouseKind = WarehouseKind.WAREHOUSE,
+    mode: CredentialMode = CredentialMode.DEFAULT,
+) -> TableMetadataSyncStatus:
+    """Refresh one table's metadata via ``EXEC sys.sp_dw_refresh_ext_table``.
+
+    Refreshes the data for a single external table on a SQL Analytics Endpoint
+    by re-reading its underlying Delta log, without triggering a full
+    item-level metadata sync. This is the cheap, targeted counterpart to the
+    item-level Fabric REST LRO (``fdw sql-endpoints refresh`` /
+    ``refresh_sql_endpoint_metadata``), which additionally picks up schema
+    changes (tables added or dropped) at the cost of refreshing the whole item.
+
+    The procedure reports success (``0``) or failure (``1``) via an output
+    parameter and does NOT raise an error for a failed refresh, so the return
+    code is captured with an explicit ``DECLARE`` / ``EXEC @rc = ...`` /
+    ``SELECT`` batch (see :data:`_SP_REFRESH_TABLE_SQL`) and checked. A
+    non-zero return code raises :class:`~fabric_dw.exceptions.FabricError`
+    naming the return code and the table. The batch also guards against
+    misreading an unexpected result shape as the return code: if the returned
+    columns are not exactly a single ``rc`` column with one row,
+    :class:`~fabric_dw.exceptions.FabricError` is raised instead of silently
+    trusting whatever came back.
+
+    After a successful refresh, the table's refreshed sync-status row is
+    fetched via :func:`list_table_sync_status` and returned, so callers see
+    the new ``last_update_time_utc`` without a second call. If the table is
+    not (or no longer) present in the endpoint's catalog, that lookup comes
+    back empty and :class:`~fabric_dw.exceptions.NotFoundError` is raised
+    naming the table and pointing at ``fdw sql-endpoints refresh``.
+
+    Only available on SQL Analytics Endpoints created after the workspace's
+    ``New metadata sync`` (preview) setting was enabled. On every other
+    endpoint the procedure does not exist; the raw "could not find stored
+    procedure" driver error is translated into an actionable message pointing
+    at the workspace setting and at ``fdw sql-endpoints refresh`` as the
+    fallback.
+
+    Args:
+        target: The SQL Analytics Endpoint to refresh. Data Warehouses are
+            rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
+        schema: The schema name. Must pass :func:`validate_identifier`.
+        table_name: The table name. Must pass :func:`validate_identifier`.
+        kind: The :class:`~fabric_dw.models.WarehouseKind` of the item.
+            Only :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT` is
+            accepted; Warehouse items raise :class:`~fabric_dw.exceptions.ItemKindError`.
+        mode: The credential mode for Entra authentication.
+
+    Returns:
+        The refreshed :class:`~fabric_dw.models.TableMetadataSyncStatus` row
+        for *schema*.*table_name*.
+
+    Raises:
+        ItemKindError: If *kind* is not
+            :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
+        ValueError: If *schema* or *table_name* fails identifier validation.
+        NotFoundError: If the endpoint is on the legacy metadata sync (the
+            procedure does not exist), or if the table is not present in the
+            endpoint's catalog after a successful refresh.
+        FabricError: If the procedure reports a non-zero return code, or if
+            its result set does not have the expected single ``rc`` column.
+        PermissionDeniedError: If the driver reports a permission error.
+    """
+    _assert_sql_endpoint(kind, _WAREHOUSE_REFRESH_TABLE_MSG)
+    validate_identifier(schema)
+    validate_identifier(table_name)
+
+    # sp_dw_refresh_ext_table takes the two-part name as a plain string
+    # argument (not an ODBC-quoted identifier), bound as a ? parameter --
+    # mirrors rename_table's sp_rename argument handling.
+    qualified = f"{schema}.{table_name}"
+
+    def _run() -> None:
+        try:
+            cols, rows = run_query(
+                target,
+                _SP_REFRESH_TABLE_SQL,
+                params=[qualified],
+                mode=mode,
+                commit=True,
+                fetch="one",
+            )
+        except NotFoundError as exc:
+            if _REFRESH_TABLE_LEGACY_SYNC_FRAGMENT in str(exc).lower():
+                raise NotFoundError(_REFRESH_TABLE_LEGACY_SYNC_MSG) from exc
+            raise
+        if not rows or [c.casefold() for c in cols] != ["rc"]:
+            msg = (
+                "sys.sp_dw_refresh_ext_table returned an unexpected result shape "
+                f"while refreshing {qualified!r} (columns={cols!r}); expected a "
+                "single 'rc' column with one row."
+            )
+            raise FabricError(msg)
+        rc = int(rows[0][0])
+        if rc != 0:
+            msg = (
+                f"sys.sp_dw_refresh_ext_table reported failure (return code {rc}) "
+                f"refreshing table {qualified!r}."
+            )
+            raise FabricError(msg)
+
+    await asyncio.to_thread(_run)
+
+    refreshed = await list_table_sync_status(
+        target, schema=schema, table=table_name, kind=kind, mode=mode
+    )
+    if not refreshed:
+        msg = (
+            f"Table {qualified!r} was refreshed but is not present in the "
+            "endpoint's table catalog afterwards. If the table was recently "
+            "added to the underlying Lakehouse, run 'fdw sql-endpoints refresh' "
+            "to force an item-level sync and try again."
+        )
+        raise NotFoundError(msg)
+    return refreshed[0]
 
 
 async def rename_table(

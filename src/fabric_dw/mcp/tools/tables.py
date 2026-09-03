@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
+from uuid import UUID
 
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
@@ -23,9 +24,13 @@ from fabric_dw.mcp._helpers import (
     safe_rows,
     tool_err,
 )
-from fabric_dw.models import ColumnSpec
+from fabric_dw.models import ColumnSpec, TableMetadataSyncStatus
+from fabric_dw.services import sql_endpoints as sql_endpoints_svc
 from fabric_dw.services import tables as tables_svc
 from fabric_dw.services.columns import get_object_columns_or_raise as _get_columns
+
+if TYPE_CHECKING:
+    from fabric_dw.http_client import FabricHttpClient
 
 __all__ = ["register"]
 
@@ -44,6 +49,75 @@ def _parse_column_dict(i: int, col: object) -> ColumnSpec:
         raise ValueError(f"columns[{i}] must have 'name' and 'sql_type' keys")
     nullable = bool(col.get("nullable", True))
     return ColumnSpec(name=str(name), sql_type=str(sql_type), nullable=nullable)
+
+
+#: Shared wording for the CLI (ClickException) and MCP (ToolError) "the
+#: cross-check was explicitly requested but could not run" errors, kept in
+#: sync with the equivalent constants in cli/commands/tables.py by hand (the
+#: two surfaces use their own flag spelling, --check-lakehouse vs
+#: check_lakehouse, so are not literally shared).
+_CHECK_LAKEHOUSE_NOT_LAKEHOUSE_BACKED_MSG = (
+    "check_lakehouse could not run: this endpoint's backing item could not be "
+    "resolved to a Lakehouse (it may be backed by a mirrored database or similar)."
+)
+_CHECK_LAKEHOUSE_SCHEMA_ENABLED_MSG = (
+    "check_lakehouse could not run: the backing Lakehouse has schema support "
+    "enabled, and the Lakehouse table-listing API does not attribute tables to schemas."
+)
+
+
+async def _apply_lakehouse_discovery_gap(
+    http: FabricHttpClient,
+    workspace_id: UUID,
+    endpoint_id: UUID,
+    items: list[TableMetadataSyncStatus],
+) -> list[TableMetadataSyncStatus]:
+    """Cross-reference the backing Lakehouse and append discovery-gap rows to *items*.
+
+    Raises :class:`ValueError` (funnelled to :class:`ToolError` by the caller's
+    ``except (ValueError, FabricError)`` block) when the cross-check cannot run
+    at all (no matching Lakehouse, or the Lakehouse has schema support
+    enabled), rather than silently returning *items* unchanged: the caller
+    explicitly asked for the cross-check, so "no extra rows" must never be
+    readable as "fully discovered" -- see #1064.
+    """
+    known_dbo = frozenset(t.name for t in items if t.schema_name.casefold() == "dbo")
+    gap = await sql_endpoints_svc.find_undiscovered_lakehouse_tables(
+        http, workspace_id, endpoint_id, known_dbo
+    )
+    if gap.status == sql_endpoints_svc.LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED:
+        raise ValueError(_CHECK_LAKEHOUSE_NOT_LAKEHOUSE_BACKED_MSG)
+    if gap.status == sql_endpoints_svc.LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED:
+        raise ValueError(_CHECK_LAKEHOUSE_SCHEMA_ENABLED_MSG)
+    if not gap.missing_table_names and not gap.case_mismatched_table_names:
+        return items
+    extra = [
+        TableMetadataSyncStatus(
+            schema_name="dbo",
+            name=name,
+            qualified_name=f"dbo.{name}",
+            last_update_time_utc=None,
+            latest_log_version=None,
+            latest_checkpoint_version=None,
+            is_blocked=None,
+            in_endpoint_catalog=False,
+        )
+        for name in gap.missing_table_names
+    ] + [
+        TableMetadataSyncStatus(
+            schema_name="dbo",
+            name=lakehouse_name,
+            qualified_name=f"dbo.{lakehouse_name}",
+            last_update_time_utc=None,
+            latest_log_version=None,
+            latest_checkpoint_version=None,
+            is_blocked=None,
+            in_endpoint_catalog=False,
+            case_mismatched_catalog_name=catalog_name,
+        )
+        for lakehouse_name, catalog_name in gap.case_mismatched_table_names
+    ]
+    return sorted([*items, *extra], key=lambda t: (t.schema_name, t.name))
 
 
 _log = logging.getLogger(__name__)
@@ -556,6 +630,7 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
         item: str,
         schema: str | None = None,
         table: str | None = None,
+        check_lakehouse: bool = False,  # noqa: FBT001, FBT002
     ) -> list[dict[str, Any]]:
         """Show per-table metadata sync freshness via ``sys.dm_db_external_tables_log_status``.
 
@@ -566,16 +641,39 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
         sync information is available for that table, NOT that it has never
         synced; do not treat a ``null`` row as proof the table has never synced.
 
-        IMPORTANT for agents: this listing only includes tables already present
-        in the endpoint's catalog (``sys.tables``), which is itself maintained by
-        the metadata sync. A Lakehouse table whose discovery has not completed,
-        or has failed, has no catalog row and so is **absent from this result
-        entirely** -- it will not appear as a row with empty fields, it simply
-        will not be there. Do not conclude a table does not exist, or was
-        deleted, just because it is missing from this list. If an expected
-        table is missing, call ``refresh_sql_endpoint_metadata`` (or tell the
-        user to run ``fdw sql-endpoints refresh``) to force an item-level sync,
-        then check again.
+        IMPORTANT for agents: by default this listing only includes tables
+        already present in the endpoint's catalog (``sys.tables``), which is
+        itself maintained by the metadata sync. A Lakehouse table whose
+        discovery has not completed, or has failed, has no catalog row and so
+        is **absent from this result entirely** -- it will not appear as a row
+        with empty fields, it simply will not be there. Do not conclude a
+        table does not exist, or was deleted, just because it is missing from
+        this list.
+
+        Pass ``check_lakehouse=True`` to close part of that gap: it
+        cross-references the backing Lakehouse's own table inventory (one or
+        more extra REST calls -- avoid setting this on every call of a tool an
+        agent may invoke repeatedly) and adds a row with
+        ``in_endpoint_catalog=false`` and all sync fields ``null`` for every
+        table it finds there but not in the catalog, comparing names exactly
+        (case-sensitively, matching Fabric's default collation). A Lakehouse
+        table that differs from a catalog table only by case gets
+        ``case_mismatched_catalog_name`` set to that catalog name instead of
+        being reported as a flat miss.
+
+        This only works for an endpoint backed by a non-schema-enabled
+        Lakehouse. For anything else (a mirrored database, a schema-enabled
+        Lakehouse, or no lakehouse match at all), ``check_lakehouse=True``
+        raises a ``ToolError`` explaining why, rather than silently returning
+        the unchanged catalog-only result: a caller that explicitly asked for
+        this cross-check must never read "no extra rows" as "fully
+        discovered". ``check_lakehouse=True`` also cannot be combined with
+        *schema* or *table* (raises a ``ToolError``): it always compares the
+        whole endpoint. If ``check_lakehouse=True`` fails or an expected table
+        is still missing after trying it, call
+        ``refresh_sql_endpoint_metadata`` (or tell the user to run
+        ``fdw sql-endpoints refresh``) to force an item-level sync, then check
+        again.
 
         Args:
             workspace: Workspace name or GUID.
@@ -584,7 +682,17 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
             schema: When provided, only tables in this schema are returned.
             table: When provided, filter to this single (bare, unqualified)
                 table name. Requires *schema* to also be given.
+            check_lakehouse: When ``True``, cross-reference the backing
+                Lakehouse's table inventory for tables missing from the
+                endpoint catalog entirely. See above for its limits. Mutually
+                exclusive with *schema* and *table*.
         """
+        if check_lakehouse and (schema is not None or table is not None):
+            msg = (
+                "check_lakehouse cannot be combined with schema or table; it always "
+                "compares the whole endpoint against its backing Lakehouse."
+            )
+            raise tool_err(ValueError(msg))
         ctx = get_context()
         assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
         try:
@@ -593,19 +701,71 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
                 workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
             )
             _log.debug(
-                "list_table_sync_status ws=%s item=%s schema=%r table=%r",
+                "list_table_sync_status ws=%s item=%s schema=%r table=%r check_lakehouse=%s",
                 ws_id,
                 entry.id,
                 schema,
                 table,
+                check_lakehouse,
             )
             target = make_sql_target(ws_id, entry, item)
             result = await tables_svc.list_table_sync_status(
                 target, schema=schema, table=table, kind=entry.kind, mode=ctx.auth_mode
             )
+            if check_lakehouse:
+                result = await _apply_lakehouse_discovery_gap(ctx.http, ws_id, entry.id, result)
         except (ValueError, FabricError) as exc:
             raise tool_err(exc) from exc
         return [t.model_dump(mode="json") for t in result]
+
+    @mutating_tool(mcp, "refresh_table_metadata")
+    async def refresh_table_metadata(
+        workspace: str, item: str, qualified_name: str
+    ) -> dict[str, Any]:
+        """Refresh one table's metadata via ``sys.sp_dw_refresh_ext_table``.
+
+        This is the cheap, per-table refresh for DATA-only staleness: it
+        re-reads the table's underlying Delta log without a full item-level
+        sync. Use ``refresh_sql_endpoint_metadata`` instead when the SCHEMA
+        changed (tables added or dropped) -- this tool does not pick up
+        schema changes.
+
+        Only supported on SQL Analytics Endpoints (not Data Warehouses), and
+        only on endpoints created after the workspace's 'New metadata sync'
+        (preview) setting was enabled. Mutating (respects
+        ``FABRIC_MCP_READONLY``) but NOT destructive -- it never drops or
+        recreates anything, so it does not require the
+        ``FABRIC_MCP_ALLOW_DESTRUCTIVE`` opt-in.
+
+        Args:
+            workspace: Workspace name or GUID.
+            item: SQL Analytics Endpoint name or GUID. Data Warehouses are
+                rejected with a ``ToolError``.
+            qualified_name: Dot-separated qualified table name, e.g.
+                ``dbo.sales``.
+        """
+        schema, table_name = parse_qualified_name(qualified_name, kind="table")
+        ctx = get_context()
+        assert_workspace_allowed(workspace, config_allowlist=ctx.workspace_allowlist)
+        try:
+            ws_id, entry = await resolve_item(ctx.resolver, workspace, item)
+            assert_workspace_allowed(
+                workspace, str(ws_id), config_allowlist=ctx.workspace_allowlist
+            )
+            _log.debug(
+                "refresh_table_metadata ws=%s item=%s table=%s.%s",
+                ws_id,
+                entry.id,
+                schema,
+                table_name,
+            )
+            target = make_sql_target(ws_id, entry, item)
+            result = await tables_svc.refresh_table_metadata(
+                target, schema, table_name, kind=entry.kind, mode=ctx.auth_mode
+            )
+        except (ValueError, FabricError) as exc:
+            raise tool_err(exc) from exc
+        return result.model_dump(mode="json")
 
     @mutating_tool(mcp, "rename_table")
     async def rename_table(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from functools import wraps
@@ -694,3 +694,48 @@ def validate_workspace_option_or_all_workspaces(
     """
     if explicit_workspace is not None and all_workspaces:
         raise click.UsageError("-w/--workspace and --all-workspaces / -A are mutually exclusive.")
+
+
+# ---------------------------------------------------------------------------
+# Command-name hints for a plain click.Group
+# ---------------------------------------------------------------------------
+
+
+def group_with_hints(redirects: Mapping[str, str]) -> type[click.Group]:
+    """Return a :class:`click.Group` subclass that hints at commands living elsewhere.
+
+    Some CLI groups accumulate "shadow" names: a bare command name a user
+    might reasonably type in this group even though the command actually
+    lives in a different group (e.g. someone typing ``sql-endpoints
+    sync-status`` when the command is ``tables sync-status``). Pass a
+    *redirects* mapping from that bare name to the real invocation string
+    (e.g. ``"fdw tables sync-status"``) and use the returned class via
+    ``cls=`` on ``@click.group(...)``.
+
+    Only names that are NOT already registered as real commands in the group
+    are intercepted, so a redirect entry can never shadow an actual command
+    (including one added later). Anything not in *redirects* falls through to
+    Click's normal resolution unchanged, including its own "Did you mean?"
+    typo suggestions.
+
+    Args:
+        redirects: Mapping from a bare (unregistered) command name to the
+            full invocation string to show in the hint.
+
+    Returns:
+        A fresh :class:`click.Group` subclass bound to *redirects*.
+    """
+
+    class _HintedGroup(click.Group):
+        def resolve_command(
+            self, ctx: click.Context, args: list[str]
+        ) -> tuple[str | None, click.Command | None, list[str]]:
+            if args and self.get_command(ctx, args[0]) is None:
+                hint = redirects.get(args[0])
+                if hint is not None:
+                    raise click.UsageError(
+                        f"No such command {args[0]!r}. Did you mean {hint!r}?", ctx=ctx
+                    )
+            return super().resolve_command(ctx, args)
+
+    return _HintedGroup

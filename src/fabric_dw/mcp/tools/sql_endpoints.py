@@ -93,7 +93,11 @@ def register(mcp: MCPServer) -> None:
         """Refresh metadata for a SQL analytics endpoint (sync from the underlying Lakehouse).
 
         This is a long-running operation (LRO) that is polled to completion.
-        Returns a list of per-table sync results.
+        Returns a list of per-table sync results. Use this tool for SCHEMA
+        changes (tables added or dropped). For cheap, per-table DATA-only
+        staleness on a table you already know exists, use
+        ``refresh_table_metadata`` instead -- it does not pick up schema
+        changes.
 
         Args:
             workspace: Workspace name or GUID.

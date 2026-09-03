@@ -8,6 +8,8 @@ Manage Microsoft Fabric SQL Analytics Endpoints.
 
 **Targets:** SQL Analytics Endpoint
 
+Per-table freshness and refresh live in the `tables` group: see [`tables sync-status`](tables.md#tables-sync-status) and [`tables refresh`](tables.md#tables-refresh).
+
 ## CLI
 
 ### sql-endpoints get
@@ -96,6 +98,18 @@ fdw -w MyWorkspace sql-endpoints refresh --recreate-tables MyLakehouseEP
 fdw -w MyWorkspace --json sql-endpoints refresh MyLakehouseEP
 ```
 
+**Which refresh do I want?**
+
+| | `sql-endpoints refresh` | [`tables refresh`](tables.md#tables-refresh) |
+| --- | --- | --- |
+| Scope | Whole item | Single table |
+| Mechanism | Fabric REST LRO | T-SQL `sys.sp_dw_refresh_ext_table` |
+| Availability | Always | Preview: endpoints created after `New metadata sync` was enabled |
+| Picks up schema changes (tables added/dropped) | Yes | No |
+| Blast radius | Whole item; `--recreate-tables` drops and recreates every table | One table's data only |
+
+Use `sql-endpoints refresh` after adding or dropping tables in the underlying Lakehouse, or when a full resync is warranted. Use [`tables refresh`](tables.md#tables-refresh) for a cheap, targeted refresh of a single table you already know exists. Check [`tables sync-status`](tables.md#tables-sync-status) first to see whether a refresh is even needed.
+
 ## MCP tools
 
 ### get_sql_endpoint
@@ -128,7 +142,7 @@ List all SQL analytics endpoints in a workspace, or across all visible workspace
 
 **Targets:** SQL Analytics Endpoint
 
-Refresh metadata for a SQL analytics endpoint by syncing from the underlying Lakehouse delta tables. This is a long-running operation (LRO) polled to completion.
+Refresh metadata for a SQL analytics endpoint by syncing from the underlying Lakehouse delta tables. This is a long-running operation (LRO) polled to completion. Use this for **schema** changes (tables added or dropped). For cheap, per-table **data**-only staleness, use [`refresh_table_metadata`](tables.md#refresh_table_metadata) instead.
 
 **Parameters:**
 

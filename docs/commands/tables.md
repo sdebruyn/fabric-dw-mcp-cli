@@ -413,7 +413,13 @@ Show when each table was last updated by the metadata sync, via `sys.dm_db_exter
 
 The listing is driven from `sys.tables`, so a table with no matching DMV row still appears, with `last_update_time_utc`, `latest_log_version`, `latest_checkpoint_version`, and `is_blocked` all empty. This means no sync information is available for that table, not that it provably never synced - Microsoft documents the DMV as describing the most recent update, not as a complete sync history.
 
-**Coverage limit:** only tables that exist in the endpoint catalog (`sys.tables`) are listed. On a SQL Analytics Endpoint that catalog is itself maintained by the metadata sync, so a Lakehouse table whose discovery has not completed, or has failed, does not appear at all - it is not shown as a row with empty fields, it is simply absent. If a table you expect is missing, run `fdw sql-endpoints refresh` to force an item-level sync and check again.
+**Coverage limit:** by default, only tables that exist in the endpoint catalog (`sys.tables`) are listed. On a SQL Analytics Endpoint that catalog is itself maintained by the metadata sync, so a Lakehouse table whose discovery has not completed, or has failed, does not appear at all - it is not shown as a row with empty fields, it is simply absent. If a table you expect is missing, run `fdw sql-endpoints refresh` to force an item-level sync and check again, or pass `--check-lakehouse` (below) to see it listed directly.
+
+**Closing the gap with `--check-lakehouse`:** this flag cross-references the backing Lakehouse's own table inventory (via the Fabric REST "List Tables" API) and adds a row for every table it finds there but not in the endpoint catalog, with `in_endpoint_catalog: false` and every sync field empty (a table with no catalog row cannot have sync information yet). Names are compared **exactly (case-sensitively)**, matching Fabric's case-sensitive default collation - a Lakehouse `FactSales` and a catalog `factsales` are treated as distinct, and a Lakehouse table whose name differs from a catalog table only by case is reported with `case_mismatched_catalog_name` set to that catalog name, rather than as a flat "missing" table. This costs at least one extra REST call beyond the normal single TDS query, so it is opt-in rather than always-on for a command you may run repeatedly. It only works for an endpoint backed by a **non-schema-enabled** Lakehouse:
+
+- If the endpoint's backing item cannot be resolved to a Lakehouse at all (a mirrored database, or similar), `--check-lakehouse` fails with a clear error.
+- If the backing Lakehouse has schema support enabled, `--check-lakehouse` also fails: the Lakehouse "List Tables" API does not attribute tables to a schema, so a bare table name could belong to any schema, and guessing would risk a false "missing" report for a table that actually exists under a different schema.
+- Both cases are a hard failure (non-zero exit, no rows rendered), not a silent fallback to the catalog-only listing - you asked for the cross-check, so "no extra rows" must never be mistaken for "fully discovered". `--check-lakehouse` is mutually exclusive with `--schema` and `--table`: it always compares the whole endpoint.
 
 | Field | Meaning |
 | --- | --- |
@@ -421,6 +427,8 @@ The listing is driven from `sys.tables`, so a table with no matching DMV row sti
 | `latest_log_version` | The Delta transaction log version that was last processed. |
 | `latest_checkpoint_version` | The Delta checkpoint version that was last processed. |
 | `is_blocked` | Whether the last update attempt was blocked (for example, by a multi-part checkpoint, which the preview does not support). |
+| `in_endpoint_catalog` | `true` for every row sourced from `sys.tables` (i.e. every row without `--check-lakehouse`). `false` only for a `--check-lakehouse` row: present in the Lakehouse, absent from the endpoint catalog under that exact name. |
+| `case_mismatched_catalog_name` | Only set on a `--check-lakehouse` row whose Lakehouse name matches an existing catalog table case-insensitively but not exactly - names the catalog table it likely corresponds to. `null` otherwise. |
 
 **Synopsis**
 
@@ -430,8 +438,9 @@ fdw [-w WORKSPACE] tables sync-status [OPTIONS] [ENDPOINT]
 
 | Option | Description |
 | --- | --- |
-| `--schema NAME` | Only show tables in this schema. |
-| `--table SCHEMA.TABLE` | Only show this one table. Mutually exclusive with `--schema`. |
+| `--schema NAME` | Only show tables in this schema. Exclusive with `--check-lakehouse`. |
+| `--table SCHEMA.TABLE` | Only show this one table. Mutually exclusive with `--schema`. Exclusive with `--check-lakehouse`. |
+| `--check-lakehouse` | Add rows for tables present in the backing Lakehouse but missing from the endpoint catalog entirely. See above for its cost and limits. |
 
 **Example**
 
@@ -439,6 +448,46 @@ fdw [-w WORKSPACE] tables sync-status [OPTIONS] [ENDPOINT]
 fdw -w MyWorkspace tables sync-status MyLakehouseEP
 fdw -w MyWorkspace tables sync-status MyLakehouseEP --schema dbo
 fdw -w MyWorkspace tables sync-status MyLakehouseEP --table dbo.FactSales
+
+# Also surface tables the metadata sync has never discovered at all
+fdw -w MyWorkspace tables sync-status MyLakehouseEP --check-lakehouse
+```
+
+Reference: [Lakehouse - Tables - List Tables](https://learn.microsoft.com/en-us/rest/api/fabric/lakehouse/tables/list-tables?WT.mc_id=MVP_310840)
+
+### tables refresh
+
+**Targets:** SQL Analytics Endpoint
+
+Refresh a single table's data via `sys.sp_dw_refresh_ext_table`, without a full item-level metadata sync. Only applies to SQL Analytics Endpoints created after `New metadata sync` (preview) was enabled under Workspace settings, Warehouse settings, for the workspace hosting the endpoint. On an endpoint using the legacy metadata sync, the command fails with the same actionable message as `tables sync-status`.
+
+This refreshes **data only** - it re-reads the underlying Delta log for that one table. It does not pick up **schema** changes (tables added or dropped); for that, use [`fdw sql-endpoints refresh`](sql-endpoints.md#sql-endpoints-refresh) instead. See the "which refresh do I want" comparison on that page.
+
+On success, the command prints a one-line confirmation followed by the table's refreshed sync-status row (the same shape as [`tables sync-status`](#tables-sync-status)), so the new `last_update_time_utc` is visible without a second command. A non-zero procedure return code (the procedure returns `0` for success, `1` for failure) fails with a clear error and a non-zero exit code.
+
+`--json` emits a single JSON object, not an array - the command always acts on exactly one table, so `fdw tables refresh MyLakehouseEP dbo.FactSales --json | jq .last_update_time_utc` works without indexing.
+
+**Synopsis**
+
+```
+fdw [-w WORKSPACE] tables refresh [ENDPOINT] QUALIFIED_NAME
+```
+
+**Example**
+
+```shell
+fdw -w MyWorkspace tables refresh MyLakehouseEP dbo.FactSales
+```
+
+```
+Refreshed table metadata for dbo.FactSales.
+ schema_name  name       last_update_time_utc  latest_log_version  latest_checkpoint_version  is_blocked
+ ------------ ---------- --------------------- ------------------- -------------------------- ----------
+ dbo          FactSales  2026-09-03T09:14:03Z  1285                1200                       False
+```
+
+```shell
+fdw -w MyWorkspace --json tables refresh MyLakehouseEP dbo.FactSales | jq .last_update_time_utc
 ```
 
 ### tables list
@@ -861,14 +910,19 @@ The listing is driven from `sys.tables`, so a table with no matching DMV row sti
 
 !!! warning "Coverage limit: a missing table is not proof it doesn't exist"
 
-    This tool only returns tables already present in the endpoint's catalog (`sys.tables`), which is itself maintained by the metadata sync. A Lakehouse table whose discovery has not completed, or has failed, has no catalog row and is **absent from this result entirely** - it does not appear as a row with empty fields. Do not conclude a table was deleted, or never existed, just because it is missing from this list. If an expected table is missing, call `refresh_sql_endpoint_metadata` (or `fdw sql-endpoints refresh`) to force an item-level sync and check again.
+    By default, this tool only returns tables already present in the endpoint's catalog (`sys.tables`), which is itself maintained by the metadata sync. A Lakehouse table whose discovery has not completed, or has failed, has no catalog row and is **absent from this result entirely** - it does not appear as a row with empty fields. Do not conclude a table was deleted, or never existed, just because it is missing from this list.
+
+Pass `check_lakehouse=True` to close part of this gap: it cross-references the backing Lakehouse's own table inventory and adds a row with `in_endpoint_catalog: false` (and every sync field `null`) for a table it finds there but not in the catalog. Names are compared **exactly (case-sensitively)**, matching Fabric's case-sensitive default collation - a Lakehouse table whose name matches a catalog table case-insensitively but not exactly gets `case_mismatched_catalog_name` set to that catalog name instead of being reported as a flat miss. This costs one or more extra REST calls, so avoid setting it on every call of a tool an agent may invoke repeatedly.
+
+It only works for an endpoint backed by a **non-schema-enabled** Lakehouse. For anything else (a mirrored database, a schema-enabled Lakehouse, or no Lakehouse match at all), `check_lakehouse=True` raises a `ToolError` explaining why, rather than silently returning the unchanged catalog-only result: a caller that explicitly asked for the cross-check must never read "no extra rows" as "fully discovered". `check_lakehouse=True` also raises a `ToolError` when combined with `schema` or `table`: it always compares the whole endpoint.
 
 **Parameters:**
 
 - `workspace` (`str`): workspace name or GUID.
 - `item` (`str`): SQL Analytics Endpoint name or GUID. Data Warehouses are rejected with a `ToolError`.
-- `schema` (`str | null`, optional): when provided, only tables in this schema are returned.
-- `table` (`str | null`, optional): when provided, filter to this single (bare, unqualified) table name. Requires `schema` to also be given.
+- `schema` (`str | null`, optional): when provided, only tables in this schema are returned. Mutually exclusive with `check_lakehouse`.
+- `table` (`str | null`, optional): when provided, filter to this single (bare, unqualified) table name. Requires `schema` to also be given. Mutually exclusive with `check_lakehouse`.
+- `check_lakehouse` (`bool`, default `false`): also surface tables present in the backing Lakehouse but missing from the endpoint catalog entirely. Raises a `ToolError` if it cannot run. See above for its cost and limits.
 
 **Returns:** `list[TableMetadataSyncStatus]`, one dict per table, each containing:
 
@@ -879,10 +933,34 @@ The listing is driven from `sys.tables`, so a table with no matching DMV row sti
 - `latest_log_version` (`int | null`): the Delta transaction log version last processed.
 - `latest_checkpoint_version` (`int | null`): the Delta checkpoint version last processed.
 - `is_blocked` (`bool | null`): whether the last update attempt was blocked.
+- `in_endpoint_catalog` (`bool`): `true` for every row sourced from `sys.tables` (i.e. every row when `check_lakehouse` is `false`). `false` only for a `check_lakehouse` row.
+- `case_mismatched_catalog_name` (`str | null`): only set on a `check_lakehouse` row whose Lakehouse name matches an existing catalog table case-insensitively but not exactly - names the catalog table it likely corresponds to. `null` otherwise.
 
 On an endpoint using the legacy metadata sync, the tool raises a `ToolError` with an actionable message naming the `New metadata sync` preview setting and pointing at `fdw sql-endpoints refresh` (or the `refresh_sql_endpoint_metadata` MCP tool) as the fallback for refreshing the whole item.
 
-Reference: [sys.dm_db_external_tables_log_status](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-external-tables-log-status-transact-sql?view=fabric&WT.mc_id=MVP_310840)
+References: [sys.dm_db_external_tables_log_status](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-external-tables-log-status-transact-sql?view=fabric&WT.mc_id=MVP_310840), [Lakehouse - Tables - List Tables](https://learn.microsoft.com/en-us/rest/api/fabric/lakehouse/tables/list-tables?WT.mc_id=MVP_310840)
+
+### refresh_table_metadata
+
+**Targets:** SQL Analytics Endpoint
+
+Refresh one table's metadata via `sys.sp_dw_refresh_ext_table`. This is the cheap, per-table refresh for **data**-only staleness: it re-reads the table's underlying Delta log without a full item-level sync. Use [`refresh_sql_endpoint_metadata`](sql-endpoints.md#refresh_sql_endpoint_metadata) instead when the **schema** changed (tables added or dropped) - this tool does not pick up schema changes.
+
+Only supported on SQL Analytics Endpoints (not Data Warehouses), and only on endpoints created after the workspace's `New metadata sync` (preview) setting was enabled.
+
+Mutating (respects `FABRIC_MCP_READONLY`) but **not** destructive: it never drops or recreates anything, so it does not require the `FABRIC_MCP_ALLOW_DESTRUCTIVE` opt-in.
+
+**Parameters:**
+
+- `workspace` (`str`): workspace name or GUID.
+- `item` (`str`): SQL Analytics Endpoint name or GUID. Data Warehouses are rejected with a `ToolError`.
+- `qualified_name` (`str`): dot-separated qualified table name, e.g. `dbo.sales`.
+
+**Returns:** `TableMetadataSyncStatus`: the refreshed sync-status row for the table (same shape as [`list_table_sync_status`](#list_table_sync_status)).
+
+On an endpoint using the legacy metadata sync, the tool raises a `ToolError` with the same actionable message as `list_table_sync_status`. A non-zero procedure return code (the procedure returns `0` for success, `1` for failure) also raises a `ToolError`. If the table is not present in the endpoint's catalog after a successful refresh, the tool raises a `ToolError` naming the table and pointing at `refresh_sql_endpoint_metadata` (or `fdw sql-endpoints refresh`) as the fallback.
+
+Reference: [sys.sp_dw_refresh_ext_table](https://learn.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sp-dw-refresh-ext-table-transact-sql?view=fabric&WT.mc_id=MVP_310840)
 
 ### import_table_from_url
 

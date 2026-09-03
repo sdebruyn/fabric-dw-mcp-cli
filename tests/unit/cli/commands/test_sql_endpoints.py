@@ -705,3 +705,32 @@ class TestRenderRefreshTable:
         output = buf.getvalue()
         # The title must still appear even with no rows.
         assert "Metadata Refresh Results" in output
+
+
+class TestSqlEndpointsCommandHints:
+    """The 'sql-endpoints' group hints at per-table commands living in 'tables' (#1062)."""
+
+    def test_sync_status_names_the_real_command(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["sql-endpoints", "sync-status"])
+        assert result.exit_code != 0
+        assert "fdw tables sync-status" in result.output
+
+    def test_refresh_table_names_the_real_command(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["sql-endpoints", "refresh-table"])
+        assert result.exit_code != 0
+        assert "fdw tables refresh" in result.output
+
+    def test_help_mentions_both_new_commands(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["sql-endpoints", "--help"])
+        assert result.exit_code == 0, result.output
+        # --help word-wraps the docstring, so compare on whitespace-collapsed text.
+        collapsed = " ".join(result.output.split())
+        assert "fdw tables sync-status" in collapsed
+        assert "fdw tables refresh" in collapsed
+
+    def test_unrelated_typo_keeps_clicks_normal_behaviour(self, runner: CliRunner) -> None:
+        """A typo not in the hint mapping falls through to Click's own suggestion."""
+        result = runner.invoke(cli, ["sql-endpoints", "lst"])
+        assert result.exit_code != 0
+        assert "fdw tables" not in result.output
+        assert "No such command 'lst'" in result.output

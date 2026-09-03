@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import click
@@ -14,6 +15,7 @@ from fabric_dw.cli._render import (
 from fabric_dw.cli.commands._utils import (
     build_http_client,
     coro,
+    group_with_hints,
     make_resolver,
     resolve_item,
     resolve_warehouse_arg,
@@ -85,9 +87,23 @@ async def _resolve_endpoint_or_hint(
         ) from None
 
 
-@click.group("sql-endpoints")
+# Bare command names a user might reasonably type in this group even though the
+# command actually lives in 'tables' (scope, not item kind, decides placement --
+# see #1060). Anything not in this mapping falls through to Click's normal
+# command resolution (including its own "Did you mean?" typo suggestions).
+_COMMAND_HINTS: Mapping[str, str] = {
+    "sync-status": "fdw tables sync-status",
+    "refresh-table": "fdw tables refresh",
+}
+
+
+@click.group("sql-endpoints", cls=group_with_hints(_COMMAND_HINTS))
 def sql_endpoints_group() -> None:
-    """Manage Microsoft Fabric SQL Analytics Endpoints."""
+    """Manage Microsoft Fabric SQL Analytics Endpoints.
+
+    Per-table freshness and refresh live in the 'tables' group: see
+    'fdw tables sync-status' and 'fdw tables refresh'.
+    """
 
 
 @sql_endpoints_group.command("list")

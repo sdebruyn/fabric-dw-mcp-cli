@@ -97,6 +97,7 @@ TOOL_DOMAINS: dict[str, str] = {
     "get_table_columns": "tables",
     "get_table_health_metrics": "tables",
     "list_table_sync_status": "tables",
+    "refresh_table_metadata": "tables",
     "list_tables": "tables",
     "read_table": "tables",
     "count_table_rows": "tables",
