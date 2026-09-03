@@ -4468,9 +4468,64 @@ class TestTablesSyncStatusCheckLakehouse:
         parsed = json.loads(result.output)
         assert len(parsed) == 1
 
-    def test_check_lakehouse_not_lakehouse_backed_prints_note_human(
+    def test_check_lakehouse_adds_case_mismatch_row(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
+        from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+            LakehouseDiscoveryGap,
+            LakehouseDiscoveryStatus,
+        )
+
+        _ = cache_env
+        mock_http = AsyncMock()
+        with (
+            patch(
+                "fabric_dw.cli.commands.tables.build_http_client",
+                new=_make_http_cm(mock_http),
+            ),
+            patch(
+                "fabric_dw.cli.commands.tables.build_sql_target",
+                new=AsyncMock(return_value=(_make_sql_target(), _make_sql_endpoint_entry())),
+            ),
+            patch(
+                "fabric_dw.services.tables.list_table_sync_status",
+                new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+            ),
+            patch(
+                "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
+                new=AsyncMock(
+                    return_value=LakehouseDiscoveryGap(
+                        status=LakehouseDiscoveryStatus.OK,
+                        case_mismatched_table_names=(("factsales", "FactSales"),),
+                    )
+                ),
+            ),
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "tables",
+                    "sync-status",
+                    SE_GUID,
+                    "--check-lakehouse",
+                ],
+            )
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert len(parsed) == 2
+        mismatch_row = next(row for row in parsed if row["name"] == "factsales")
+        assert mismatch_row["in_endpoint_catalog"] is False
+        assert mismatch_row["case_mismatched_catalog_name"] == "FactSales"
+        exact_row = next(row for row in parsed if row["name"] == "FactSales")
+        assert exact_row["case_mismatched_catalog_name"] is None
+
+    def test_check_lakehouse_not_lakehouse_backed_fails(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """Requesting the cross-check when it cannot run is a hard failure, not a silent no-op."""
         from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
             LakehouseDiscoveryGap,
             LakehouseDiscoveryStatus,
@@ -4503,13 +4558,12 @@ class TestTablesSyncStatusCheckLakehouse:
             result = runner.invoke(
                 cli, ["-w", WS_GUID, "tables", "sync-status", SE_GUID, "--check-lakehouse"]
             )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code != 0
         assert "could not run" in result.output
         assert "mirrored" in result.output
 
-    def test_check_lakehouse_schema_enabled_prints_note_human(
-        self, runner: CliRunner, cache_env: Path
-    ) -> None:
+    def test_check_lakehouse_schema_enabled_fails(self, runner: CliRunner, cache_env: Path) -> None:
+        """Requesting the cross-check when it cannot run is a hard failure, not a silent no-op."""
         from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
             LakehouseDiscoveryGap,
             LakehouseDiscoveryStatus,
@@ -4542,14 +4596,14 @@ class TestTablesSyncStatusCheckLakehouse:
             result = runner.invoke(
                 cli, ["-w", WS_GUID, "tables", "sync-status", SE_GUID, "--check-lakehouse"]
             )
-        assert result.exit_code == 0, result.output
+        assert result.exit_code != 0
         assert "could not run" in result.output
         assert "schema" in result.output.lower()
 
-    def test_check_lakehouse_inconclusive_json_has_no_note_text(
+    def test_check_lakehouse_inconclusive_fails_in_json_mode_too(
         self, runner: CliRunner, cache_env: Path
     ) -> None:
-        """--json stays a clean array with no note text mixed in, even when inconclusive."""
+        """The inconclusive failure fires the same way regardless of --json; nothing is rendered."""
         from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
             LakehouseDiscoveryGap,
             LakehouseDiscoveryStatus,
@@ -4591,9 +4645,10 @@ class TestTablesSyncStatusCheckLakehouse:
                     "--check-lakehouse",
                 ],
             )
-        assert result.exit_code == 0, result.output
-        parsed = json.loads(result.output)  # must not raise: no stray note text in --json output
-        assert len(parsed) == 1
+        assert result.exit_code != 0
+        # No partial/empty JSON array is emitted -- the command fails before rendering.
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result.output)
 
 
 class TestTablesRefresh:

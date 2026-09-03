@@ -405,14 +405,26 @@ class LakehouseDiscoveryGap:
         status: Which of the three outcomes in :class:`LakehouseDiscoveryStatus`
             applies.
         missing_table_names: Bare (unqualified) table names present in the
-            Lakehouse's default (``dbo``) schema but absent from the
-            ``known_dbo_names`` set passed to
+            Lakehouse's default (``dbo``) schema that have NO match, exact or
+            otherwise, in the ``known_dbo_names`` set passed to
             :func:`find_undiscovered_lakehouse_tables`. Only ever non-empty
             when ``status is LakehouseDiscoveryStatus.OK``.
+        case_mismatched_table_names: ``(lakehouse_name, catalog_name)`` pairs
+            for a Lakehouse table that matches a name in ``known_dbo_names``
+            case-insensitively but not exactly -- e.g. Lakehouse ``FactSales``
+            against catalog ``factsales``. Reported separately from
+            ``missing_table_names`` rather than folded into it: on Fabric's
+            case-sensitive default collation these ARE two distinct possible
+            identifiers, so calling this "missing" would overstate the finding,
+            but an exact-only comparison that dropped it silently would hide
+            real casing drift just as badly as the case-insensitive comparison
+            this replaced did. Only ever non-empty when
+            ``status is LakehouseDiscoveryStatus.OK``.
     """
 
     status: LakehouseDiscoveryStatus
     missing_table_names: tuple[str, ...] = field(default_factory=tuple)
+    case_mismatched_table_names: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
 
 async def list_lakehouse_table_names(
@@ -461,9 +473,32 @@ async def find_undiscovered_lakehouse_tables(
     :func:`~fabric_dw._fabric_api.resolve_backing_lakehouse`, refuses the
     comparison for anything that isn't a non-schema-enabled Lakehouse (see
     :class:`LakehouseDiscoveryStatus`), and otherwise lists the Lakehouse's
-    tables (:func:`list_lakehouse_table_names`) and returns the ones absent
-    from *known_dbo_names* -- case-insensitively, matching T-SQL identifier
-    semantics.
+    tables (:func:`list_lakehouse_table_names`) and compares each one against
+    *known_dbo_names*.
+
+    The comparison is **exact (case-sensitive)**, matching Fabric's default
+    collation (``FABRIC_DEFAULT_COLLATION`` in ``models.py``,
+    ``Latin1_General_100_BIN2_UTF8``, which Microsoft documents as
+    case-sensitive). A case-insensitive comparison would silently hide the
+    exact kind of drift this check exists to catch: on the default collation,
+    ``FactSales`` and ``factsales`` are two distinct, independently valid
+    table names, so folding them together would let a genuinely undiscovered
+    ``FactSales`` disappear behind an unrelated ``factsales`` already in the
+    catalog. Exact comparison is the safer default even for a workspace
+    configured with a case-insensitive collation: it can produce a false
+    positive (a table reported missing that the engine would actually treat
+    as identical to an existing one), which is visible and judgeable by the
+    caller, never a false negative, which is invisible. This function has no
+    cheap way to read the endpoint's actual collation (it is TDS-only
+    information; the SQLEndpoint REST resource does not expose it -- see
+    ``list_endpoints``'s docstring above), so it does not attempt to branch on
+    it.
+
+    A Lakehouse table that fails the exact match but matches a
+    *known_dbo_names* entry case-insensitively is reported separately, in
+    ``case_mismatched_table_names``, rather than folded into
+    ``missing_table_names``: it is a more specific and more useful finding
+    (a likely casing drift) than a flat "missing" would be.
 
     This costs at least one extra REST call beyond ``list_table_sync_status``'s
     single TDS query (a lakehouse scan, plus a paginated table listing when a
@@ -490,6 +525,26 @@ async def find_undiscovered_lakehouse_tables(
         return LakehouseDiscoveryGap(status=LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED)
 
     table_names = await list_lakehouse_table_names(http, workspace_id, lakehouse.id)
-    known_lower = {n.casefold() for n in known_dbo_names}
-    missing = tuple(n for n in table_names if n.casefold() not in known_lower)
-    return LakehouseDiscoveryGap(status=LakehouseDiscoveryStatus.OK, missing_table_names=missing)
+    # Case-insensitive lookup is used ONLY to distinguish "no match at all"
+    # from "a case-only mismatch" below -- never to decide "found"/"not found"
+    # on its own, which is exactly the bug this replaces.
+    known_by_casefold: dict[str, str] = {}
+    for known_name in known_dbo_names:
+        known_by_casefold.setdefault(known_name.casefold(), known_name)
+
+    missing: list[str] = []
+    case_mismatched: list[tuple[str, str]] = []
+    for name in table_names:
+        if name in known_dbo_names:
+            continue
+        catalog_match = known_by_casefold.get(name.casefold())
+        if catalog_match is not None:
+            case_mismatched.append((name, catalog_match))
+        else:
+            missing.append(name)
+
+    return LakehouseDiscoveryGap(
+        status=LakehouseDiscoveryStatus.OK,
+        missing_table_names=tuple(missing),
+        case_mismatched_table_names=tuple(case_mismatched),
+    )

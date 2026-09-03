@@ -51,6 +51,21 @@ def _parse_column_dict(i: int, col: object) -> ColumnSpec:
     return ColumnSpec(name=str(name), sql_type=str(sql_type), nullable=nullable)
 
 
+#: Shared wording for the CLI (ClickException) and MCP (ToolError) "the
+#: cross-check was explicitly requested but could not run" errors, kept in
+#: sync with the equivalent constants in cli/commands/tables.py by hand (the
+#: two surfaces use their own flag spelling, --check-lakehouse vs
+#: check_lakehouse, so are not literally shared).
+_CHECK_LAKEHOUSE_NOT_LAKEHOUSE_BACKED_MSG = (
+    "check_lakehouse could not run: this endpoint's backing item could not be "
+    "resolved to a Lakehouse (it may be backed by a mirrored database or similar)."
+)
+_CHECK_LAKEHOUSE_SCHEMA_ENABLED_MSG = (
+    "check_lakehouse could not run: the backing Lakehouse has schema support "
+    "enabled, and the Lakehouse table-listing API does not attribute tables to schemas."
+)
+
+
 async def _apply_lakehouse_discovery_gap(
     http: FabricHttpClient,
     workspace_id: UUID,
@@ -59,16 +74,22 @@ async def _apply_lakehouse_discovery_gap(
 ) -> list[TableMetadataSyncStatus]:
     """Cross-reference the backing Lakehouse and append discovery-gap rows to *items*.
 
-    Returns *items* unchanged when the cross-check could not run (no matching
-    Lakehouse, or the Lakehouse has schema support enabled) -- callers must not
-    treat an unchanged result as proof of full discovery; see
-    ``list_table_sync_status``'s docstring for why.
+    Raises :class:`ValueError` (funnelled to :class:`ToolError` by the caller's
+    ``except (ValueError, FabricError)`` block) when the cross-check cannot run
+    at all (no matching Lakehouse, or the Lakehouse has schema support
+    enabled), rather than silently returning *items* unchanged: the caller
+    explicitly asked for the cross-check, so "no extra rows" must never be
+    readable as "fully discovered" -- see #1064.
     """
     known_dbo = frozenset(t.name for t in items if t.schema_name.casefold() == "dbo")
     gap = await sql_endpoints_svc.find_undiscovered_lakehouse_tables(
         http, workspace_id, endpoint_id, known_dbo
     )
-    if gap.status != sql_endpoints_svc.LakehouseDiscoveryStatus.OK or not gap.missing_table_names:
+    if gap.status == sql_endpoints_svc.LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED:
+        raise ValueError(_CHECK_LAKEHOUSE_NOT_LAKEHOUSE_BACKED_MSG)
+    if gap.status == sql_endpoints_svc.LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED:
+        raise ValueError(_CHECK_LAKEHOUSE_SCHEMA_ENABLED_MSG)
+    if not gap.missing_table_names and not gap.case_mismatched_table_names:
         return items
     extra = [
         TableMetadataSyncStatus(
@@ -82,6 +103,19 @@ async def _apply_lakehouse_discovery_gap(
             in_endpoint_catalog=False,
         )
         for name in gap.missing_table_names
+    ] + [
+        TableMetadataSyncStatus(
+            schema_name="dbo",
+            name=lakehouse_name,
+            qualified_name=f"dbo.{lakehouse_name}",
+            last_update_time_utc=None,
+            latest_log_version=None,
+            latest_checkpoint_version=None,
+            is_blocked=None,
+            in_endpoint_catalog=False,
+            case_mismatched_catalog_name=catalog_name,
+        )
+        for lakehouse_name, catalog_name in gap.case_mismatched_table_names
     ]
     return sorted([*items, *extra], key=lambda t: (t.schema_name, t.name))
 
@@ -621,14 +655,22 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
         more extra REST calls -- avoid setting this on every call of a tool an
         agent may invoke repeatedly) and adds a row with
         ``in_endpoint_catalog=false`` and all sync fields ``null`` for every
-        table it finds there but not in the catalog. This only works for an
-        endpoint backed by a non-schema-enabled Lakehouse; for anything else
-        (a mirrored database, a schema-enabled Lakehouse, or no lakehouse
-        match at all) it is a no-op -- the result is unchanged, identical to
-        ``check_lakehouse=False``, so getting no extra rows back does NOT by
-        itself prove the endpoint is fully discovered. ``check_lakehouse=True``
-        cannot be combined with *schema* or *table*. If an expected table is
-        still missing after trying this, call
+        table it finds there but not in the catalog, comparing names exactly
+        (case-sensitively, matching Fabric's default collation). A Lakehouse
+        table that differs from a catalog table only by case gets
+        ``case_mismatched_catalog_name`` set to that catalog name instead of
+        being reported as a flat miss.
+
+        This only works for an endpoint backed by a non-schema-enabled
+        Lakehouse. For anything else (a mirrored database, a schema-enabled
+        Lakehouse, or no lakehouse match at all), ``check_lakehouse=True``
+        raises a ``ToolError`` explaining why, rather than silently returning
+        the unchanged catalog-only result: a caller that explicitly asked for
+        this cross-check must never read "no extra rows" as "fully
+        discovered". ``check_lakehouse=True`` also cannot be combined with
+        *schema* or *table* (raises a ``ToolError``): it always compares the
+        whole endpoint. If ``check_lakehouse=True`` fails or an expected table
+        is still missing after trying it, call
         ``refresh_sql_endpoint_metadata`` (or tell the user to run
         ``fdw sql-endpoints refresh``) to force an item-level sync, then check
         again.

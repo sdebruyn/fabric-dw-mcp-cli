@@ -1047,8 +1047,17 @@ async def test_find_undiscovered_tables_ok_with_gap() -> None:
     assert result.missing_table_names == ("StagingRaw",)
 
 
-async def test_find_undiscovered_tables_case_insensitive_match() -> None:
-    """known_dbo_names matches case-insensitively, per T-SQL identifier semantics."""
+async def test_find_undiscovered_tables_comparison_is_case_sensitive_by_default() -> None:
+    """Regression for the case-folding bug (#1065 review): comparison is exact.
+
+    Fabric's default collation (FABRIC_DEFAULT_COLLATION) is case-sensitive, so
+    a Lakehouse "FactSales" and a catalog "factsales" are two distinct, valid
+    identifiers. Case-folding the comparison (the original implementation)
+    would silently treat them as the same table and hide a real gap. The fixed
+    behaviour must NOT report this as a plain match with an empty gap: it must
+    surface it, distinguished as a case mismatch rather than a flat "missing"
+    (see the next test) -- but it must not be silently absorbed either.
+    """
     from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
         LakehouseDiscoveryStatus,
         find_undiscovered_lakehouse_tables,
@@ -1069,7 +1078,62 @@ async def test_find_undiscovered_tables_case_insensitive_match() -> None:
             )
 
     assert result.status == LakehouseDiscoveryStatus.OK
+    # Not an exact match, so NOT silently treated as present:
     assert result.missing_table_names == ()
+    # ... but surfaced as a case mismatch, not dropped entirely:
+    assert result.case_mismatched_table_names == (("factsales", "FactSales"),)
+
+
+async def test_find_undiscovered_tables_exact_match_is_not_reported_at_all() -> None:
+    """An exact-name match is neither missing nor a case mismatch."""
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryStatus,
+        find_undiscovered_lakehouse_tables,
+    )
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_GAP_LAKEHOUSE_MATCH_PAYLOAD)
+        )
+        mock_router.get(_GAP_TABLES_URL).mock(
+            return_value=httpx.Response(200, json=_tables_page(["FactSales"]))
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await find_undiscovered_lakehouse_tables(
+                client, _WORKSPACE_ID, _ENDPOINT_ID, frozenset({"FactSales"})
+            )
+
+    assert result.status == LakehouseDiscoveryStatus.OK
+    assert result.missing_table_names == ()
+    assert result.case_mismatched_table_names == ()
+
+
+async def test_find_undiscovered_tables_true_miss_is_not_a_case_mismatch() -> None:
+    """A table with no name match at all (exact or case-insensitive) is a true miss."""
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryStatus,
+        find_undiscovered_lakehouse_tables,
+    )
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_GAP_LAKEHOUSE_MATCH_PAYLOAD)
+        )
+        mock_router.get(_GAP_TABLES_URL).mock(
+            return_value=httpx.Response(200, json=_tables_page(["StagingRaw"]))
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await find_undiscovered_lakehouse_tables(
+                client, _WORKSPACE_ID, _ENDPOINT_ID, frozenset({"FactSales"})
+            )
+
+    assert result.status == LakehouseDiscoveryStatus.OK
+    assert result.missing_table_names == ("StagingRaw",)
+    assert result.case_mismatched_table_names == ()
 
 
 async def test_list_lakehouse_table_names_follows_pagination() -> None:

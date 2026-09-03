@@ -633,7 +633,15 @@ class TableMetadataSyncStatus(_FabricBase):
     are always ``None`` too, for the same reason. See
     :func:`~fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables`
     for the cross-check's own coverage limits (Lakehouse-backed, non-schema-enabled
-    endpoints only).
+    endpoints only), and for why the Lakehouse-vs-catalog comparison it performs
+    is exact (case-sensitive), matching Fabric's case-sensitive default collation.
+
+    A ``False`` row whose Lakehouse name differs from an existing catalog row
+    only by case (e.g. Lakehouse ``FactSales`` vs. catalog ``factsales``) sets
+    :attr:`case_mismatched_catalog_name` to that existing catalog name instead
+    of leaving it ``None``: a likely casing drift is a more specific, more
+    useful finding than a flat "missing", since the two names may in fact
+    resolve to the same object once the metadata sync catches up.
 
     Unlike :attr:`Table.created` / :attr:`Table.modified`, which pass the
     driver's native datetime through unchanged, ``last_update_time_utc`` here
@@ -648,6 +656,7 @@ class TableMetadataSyncStatus(_FabricBase):
     latest_checkpoint_version: int | None
     is_blocked: bool | None
     in_endpoint_catalog: bool = True
+    case_mismatched_catalog_name: str | None = None
 
 
 # ---------------------------------------------------------------------------

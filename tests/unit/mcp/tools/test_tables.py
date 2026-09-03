@@ -1435,10 +1435,14 @@ async def test_list_table_sync_status_check_lakehouse_adds_missing_row(mock_ctx,
     assert by_name["StagingRaw"]["last_update_time_utc"] is None
 
 
-async def test_list_table_sync_status_check_lakehouse_inconclusive_is_no_op(
+async def test_list_table_sync_status_check_lakehouse_not_lakehouse_backed_raises(
     mock_ctx, ctx_patch
 ) -> None:
-    """check_lakehouse=True returns the unchanged result when the cross-check cannot run."""
+    """check_lakehouse=True raises ToolError rather than silently returning unchanged rows.
+
+    A caller that explicitly asked for the cross-check must not read "no extra
+    rows" as "fully discovered" (#1064 review).
+    """
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
     from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
         LakehouseDiscoveryGap,
@@ -1462,6 +1466,79 @@ async def test_list_table_sync_status_check_lakehouse_inconclusive_is_no_op(
                 )
             ),
         ),
+        pytest.raises(ToolError, match="could not run"),
+    ):
+        await call_tool(
+            mcp,
+            "list_table_sync_status",
+            {"workspace": WS_NAME, "item": WH_NAME, "check_lakehouse": True},
+        )
+
+
+async def test_list_table_sync_status_check_lakehouse_schema_enabled_raises(
+    mock_ctx, ctx_patch
+) -> None:
+    """check_lakehouse=True raises ToolError when the backing Lakehouse is schema-enabled."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryGap,
+        LakehouseDiscoveryStatus,
+    )
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.list_table_sync_status",
+            new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+        ),
+        patch(
+            "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
+            new=AsyncMock(
+                return_value=LakehouseDiscoveryGap(
+                    status=LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED
+                )
+            ),
+        ),
+        pytest.raises(ToolError, match="could not run"),
+    ):
+        await call_tool(
+            mcp,
+            "list_table_sync_status",
+            {"workspace": WS_NAME, "item": WH_NAME, "check_lakehouse": True},
+        )
+
+
+async def test_list_table_sync_status_check_lakehouse_case_mismatch_row(
+    mock_ctx, ctx_patch
+) -> None:
+    """check_lakehouse=True reports a case-only difference distinctly, not as a flat miss."""
+    from fabric_dw.mcp.server import mcp  # noqa: PLC0415
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryGap,
+        LakehouseDiscoveryStatus,
+    )
+
+    mock_ctx.resolver.workspace_id = AsyncMock(return_value=WS_ID)
+    mock_ctx.resolver.item = AsyncMock(return_value=make_sql_endpoint_entry())
+
+    with (
+        ctx_patch,
+        patch(
+            "fabric_dw.services.tables.list_table_sync_status",
+            new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+        ),
+        patch(
+            "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
+            new=AsyncMock(
+                return_value=LakehouseDiscoveryGap(
+                    status=LakehouseDiscoveryStatus.OK,
+                    case_mismatched_table_names=(("factsales", "FactSales"),),
+                )
+            ),
+        ),
     ):
         result = await call_tool(
             mcp,
@@ -1469,8 +1546,12 @@ async def test_list_table_sync_status_check_lakehouse_inconclusive_is_no_op(
             {"workspace": WS_NAME, "item": WH_NAME, "check_lakehouse": True},
         )
 
-    assert len(result) == 1
-    assert result[0]["name"] == "FactSales"
+    assert len(result) == 2
+    mismatch_row = next(row for row in result if row["name"] == "factsales")
+    assert mismatch_row["in_endpoint_catalog"] is False
+    assert mismatch_row["case_mismatched_catalog_name"] == "FactSales"
+    exact_row = next(row for row in result if row["name"] == "FactSales")
+    assert exact_row["case_mismatched_catalog_name"] is None
 
 
 # ---------------------------------------------------------------------------

@@ -415,11 +415,11 @@ The listing is driven from `sys.tables`, so a table with no matching DMV row sti
 
 **Coverage limit:** by default, only tables that exist in the endpoint catalog (`sys.tables`) are listed. On a SQL Analytics Endpoint that catalog is itself maintained by the metadata sync, so a Lakehouse table whose discovery has not completed, or has failed, does not appear at all - it is not shown as a row with empty fields, it is simply absent. If a table you expect is missing, run `fdw sql-endpoints refresh` to force an item-level sync and check again, or pass `--check-lakehouse` (below) to see it listed directly.
 
-**Closing the gap with `--check-lakehouse`:** this flag cross-references the backing Lakehouse's own table inventory (via the Fabric REST "List Tables" API) and adds a row for every table it finds there but not in the endpoint catalog, with `in_endpoint_catalog: false` and every sync field empty (a table with no catalog row cannot have sync information yet). This costs at least one extra REST call beyond the normal single TDS query, so it is opt-in rather than always-on for a command you may run repeatedly. It only works for an endpoint backed by a **non-schema-enabled** Lakehouse:
+**Closing the gap with `--check-lakehouse`:** this flag cross-references the backing Lakehouse's own table inventory (via the Fabric REST "List Tables" API) and adds a row for every table it finds there but not in the endpoint catalog, with `in_endpoint_catalog: false` and every sync field empty (a table with no catalog row cannot have sync information yet). Names are compared **exactly (case-sensitively)**, matching Fabric's case-sensitive default collation - a Lakehouse `FactSales` and a catalog `factsales` are treated as distinct, and a Lakehouse table whose name differs from a catalog table only by case is reported with `case_mismatched_catalog_name` set to that catalog name, rather than as a flat "missing" table. This costs at least one extra REST call beyond the normal single TDS query, so it is opt-in rather than always-on for a command you may run repeatedly. It only works for an endpoint backed by a **non-schema-enabled** Lakehouse:
 
-- If the endpoint's backing item cannot be resolved to a Lakehouse at all (a mirrored database, or similar), the flag prints a note and falls back to the catalog-only listing.
-- If the backing Lakehouse has schema support enabled, the flag also prints a note and falls back: the Lakehouse "List Tables" API does not attribute tables to a schema, so a bare table name could belong to any schema, and guessing would risk a false "missing" report for a table that actually exists under a different schema.
-- In both cases the fallback is stated in the output, not silent - getting no extra rows back does not by itself prove the endpoint is fully discovered. `--check-lakehouse` is mutually exclusive with `--schema` and `--table`: it always compares the whole endpoint.
+- If the endpoint's backing item cannot be resolved to a Lakehouse at all (a mirrored database, or similar), `--check-lakehouse` fails with a clear error.
+- If the backing Lakehouse has schema support enabled, `--check-lakehouse` also fails: the Lakehouse "List Tables" API does not attribute tables to a schema, so a bare table name could belong to any schema, and guessing would risk a false "missing" report for a table that actually exists under a different schema.
+- Both cases are a hard failure (non-zero exit, no rows rendered), not a silent fallback to the catalog-only listing - you asked for the cross-check, so "no extra rows" must never be mistaken for "fully discovered". `--check-lakehouse` is mutually exclusive with `--schema` and `--table`: it always compares the whole endpoint.
 
 | Field | Meaning |
 | --- | --- |
@@ -427,7 +427,8 @@ The listing is driven from `sys.tables`, so a table with no matching DMV row sti
 | `latest_log_version` | The Delta transaction log version that was last processed. |
 | `latest_checkpoint_version` | The Delta checkpoint version that was last processed. |
 | `is_blocked` | Whether the last update attempt was blocked (for example, by a multi-part checkpoint, which the preview does not support). |
-| `in_endpoint_catalog` | `true` for every row sourced from `sys.tables` (i.e. every row without `--check-lakehouse`). `false` only for a `--check-lakehouse` row: present in the Lakehouse, absent from the endpoint catalog. |
+| `in_endpoint_catalog` | `true` for every row sourced from `sys.tables` (i.e. every row without `--check-lakehouse`). `false` only for a `--check-lakehouse` row: present in the Lakehouse, absent from the endpoint catalog under that exact name. |
+| `case_mismatched_catalog_name` | Only set on a `--check-lakehouse` row whose Lakehouse name matches an existing catalog table case-insensitively but not exactly - names the catalog table it likely corresponds to. `null` otherwise. |
 
 **Synopsis**
 
@@ -911,7 +912,9 @@ The listing is driven from `sys.tables`, so a table with no matching DMV row sti
 
     By default, this tool only returns tables already present in the endpoint's catalog (`sys.tables`), which is itself maintained by the metadata sync. A Lakehouse table whose discovery has not completed, or has failed, has no catalog row and is **absent from this result entirely** - it does not appear as a row with empty fields. Do not conclude a table was deleted, or never existed, just because it is missing from this list.
 
-Pass `check_lakehouse=True` to close part of this gap: it cross-references the backing Lakehouse's own table inventory and adds a row with `in_endpoint_catalog: false` (and every sync field `null`) for a table it finds there but not in the catalog. This costs one or more extra REST calls, so avoid setting it on every call of a tool an agent may invoke repeatedly. It only works for an endpoint backed by a **non-schema-enabled** Lakehouse; for anything else (a mirrored database, a schema-enabled Lakehouse, or no Lakehouse match at all) it is a no-op and the result is identical to `check_lakehouse=False` - getting no extra rows back does **not** by itself prove the endpoint is fully discovered. `check_lakehouse=True` cannot be combined with `schema` or `table`.
+Pass `check_lakehouse=True` to close part of this gap: it cross-references the backing Lakehouse's own table inventory and adds a row with `in_endpoint_catalog: false` (and every sync field `null`) for a table it finds there but not in the catalog. Names are compared **exactly (case-sensitively)**, matching Fabric's case-sensitive default collation - a Lakehouse table whose name matches a catalog table case-insensitively but not exactly gets `case_mismatched_catalog_name` set to that catalog name instead of being reported as a flat miss. This costs one or more extra REST calls, so avoid setting it on every call of a tool an agent may invoke repeatedly.
+
+It only works for an endpoint backed by a **non-schema-enabled** Lakehouse. For anything else (a mirrored database, a schema-enabled Lakehouse, or no Lakehouse match at all), `check_lakehouse=True` raises a `ToolError` explaining why, rather than silently returning the unchanged catalog-only result: a caller that explicitly asked for the cross-check must never read "no extra rows" as "fully discovered". `check_lakehouse=True` also raises a `ToolError` when combined with `schema` or `table`: it always compares the whole endpoint.
 
 **Parameters:**
 
@@ -919,7 +922,7 @@ Pass `check_lakehouse=True` to close part of this gap: it cross-references the b
 - `item` (`str`): SQL Analytics Endpoint name or GUID. Data Warehouses are rejected with a `ToolError`.
 - `schema` (`str | null`, optional): when provided, only tables in this schema are returned. Mutually exclusive with `check_lakehouse`.
 - `table` (`str | null`, optional): when provided, filter to this single (bare, unqualified) table name. Requires `schema` to also be given. Mutually exclusive with `check_lakehouse`.
-- `check_lakehouse` (`bool`, default `false`): also surface tables present in the backing Lakehouse but missing from the endpoint catalog entirely. See above for its cost and limits.
+- `check_lakehouse` (`bool`, default `false`): also surface tables present in the backing Lakehouse but missing from the endpoint catalog entirely. Raises a `ToolError` if it cannot run. See above for its cost and limits.
 
 **Returns:** `list[TableMetadataSyncStatus]`, one dict per table, each containing:
 
@@ -931,6 +934,7 @@ Pass `check_lakehouse=True` to close part of this gap: it cross-references the b
 - `latest_checkpoint_version` (`int | null`): the Delta checkpoint version last processed.
 - `is_blocked` (`bool | null`): whether the last update attempt was blocked.
 - `in_endpoint_catalog` (`bool`): `true` for every row sourced from `sys.tables` (i.e. every row when `check_lakehouse` is `false`). `false` only for a `check_lakehouse` row.
+- `case_mismatched_catalog_name` (`str | null`): only set on a `check_lakehouse` row whose Lakehouse name matches an existing catalog table case-insensitively but not exactly - names the catalog table it likely corresponds to. `null` otherwise.
 
 On an endpoint using the legacy metadata sync, the tool raises a `ToolError` with an actionable message naming the `New metadata sync` preview setting and pointing at `fdw sql-endpoints refresh` (or the `refresh_sql_endpoint_metadata` MCP tool) as the fallback for refreshing the whole item.
 
