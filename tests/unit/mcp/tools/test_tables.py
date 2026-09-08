@@ -1416,7 +1416,7 @@ async def test_list_table_sync_status_check_lakehouse_adds_missing_row(mock_ctx,
             new=AsyncMock(
                 return_value=LakehouseDiscoveryGap(
                     status=LakehouseDiscoveryStatus.OK,
-                    missing_table_names=("StagingRaw",),
+                    missing_tables=(("dbo", "StagingRaw"),),
                 )
             ),
         ),
@@ -1475,10 +1475,15 @@ async def test_list_table_sync_status_check_lakehouse_not_lakehouse_backed_raise
         )
 
 
-async def test_list_table_sync_status_check_lakehouse_schema_enabled_raises(
+async def test_list_table_sync_status_check_lakehouse_adds_missing_row_for_non_dbo_schema(
     mock_ctx, ctx_patch
 ) -> None:
-    """check_lakehouse=True raises ToolError when the backing Lakehouse is schema-enabled."""
+    """The cross-check now supports schema-enabled Lakehouses: a non-dbo schema works too.
+
+    Replaces the old refusal test for LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED
+    (#1060): that status no longer exists, since schema-enabled Lakehouses are now
+    supported end to end via the OneLake table API.
+    """
     from fabric_dw.mcp.server import mcp  # noqa: PLC0415
     from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
         LakehouseDiscoveryGap,
@@ -1492,23 +1497,30 @@ async def test_list_table_sync_status_check_lakehouse_schema_enabled_raises(
         ctx_patch,
         patch(
             "fabric_dw.services.tables.list_table_sync_status",
-            new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+            new=AsyncMock(return_value=[_make_sync_status("sales", "FactSales")]),
         ),
         patch(
             "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
             new=AsyncMock(
                 return_value=LakehouseDiscoveryGap(
-                    status=LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED
+                    status=LakehouseDiscoveryStatus.OK,
+                    missing_tables=(("sales", "StagingRaw"),),
                 )
             ),
         ),
-        pytest.raises(ToolError, match="could not run"),
     ):
-        await call_tool(
+        result = await call_tool(
             mcp,
             "list_table_sync_status",
             {"workspace": WS_NAME, "item": WH_NAME, "check_lakehouse": True},
         )
+
+    assert len(result) == 2
+    by_name = {row["name"]: row for row in result}
+    assert by_name["FactSales"]["schema_name"] == "sales"
+    assert by_name["StagingRaw"]["schema_name"] == "sales"
+    assert by_name["StagingRaw"]["in_endpoint_catalog"] is False
+    assert by_name["StagingRaw"]["qualified_name"] == "sales.StagingRaw"
 
 
 async def test_list_table_sync_status_check_lakehouse_case_mismatch_row(
@@ -1535,7 +1547,7 @@ async def test_list_table_sync_status_check_lakehouse_case_mismatch_row(
             new=AsyncMock(
                 return_value=LakehouseDiscoveryGap(
                     status=LakehouseDiscoveryStatus.OK,
-                    case_mismatched_table_names=(("factsales", "FactSales"),),
+                    case_mismatched_tables=(("dbo", "factsales", "FactSales"),),
                 )
             ),
         ),

@@ -118,10 +118,15 @@ _CAPACITY_NOT_ACTIVE_ERROR_CODE = "CapacityNotActive"
 
 
 class HttpBase(StrEnum):
-    """Base URLs for Fabric and Power BI REST APIs."""
+    """Base URLs for Fabric, Power BI, and OneLake table REST APIs."""
 
     FABRIC = "https://api.fabric.microsoft.com/v1"
     POWERBI = "https://api.powerbi.com/v1.0/myorg"
+    #: Unity-Catalog-compatible OneLake table API host (schemas/tables listing
+    #: for schema-enabled Lakehouses). See services.sql_endpoints for the only
+    #: current caller. Authenticates with STORAGE_SCOPE, not FABRIC_SCOPE --
+    #: pass ``scope=STORAGE_SCOPE`` to :meth:`FabricHttpClient.request`.
+    ONELAKE_TABLE_API = "https://onelake.table.fabric.microsoft.com"
 
 
 def _parse_retry_after(value: str) -> float:
@@ -398,7 +403,7 @@ class FabricHttpClient:
     # Core request
     # ------------------------------------------------------------------
 
-    async def request(
+    async def request(  # noqa: PLR0913
         self,
         method: str,
         base: HttpBase,
@@ -406,6 +411,7 @@ class FabricHttpClient:
         *,
         json: object = None,
         params: Mapping[str, Any] | None = None,
+        scope: str = auth.FABRIC_SCOPE,
     ) -> httpx.Response:
         """Send a single HTTP request, applying rate-limiting and error handling.
 
@@ -415,6 +421,12 @@ class FabricHttpClient:
             path: Path to append to the base URL.
             json: Optional JSON body.
             params: Optional query parameters.
+            scope: The OAuth2 scope to request a bearer token for. Defaults to
+                :data:`~fabric_dw.auth.FABRIC_SCOPE`; pass
+                :data:`~fabric_dw.auth.STORAGE_SCOPE` for a OneLake-hosted API
+                such as :attr:`HttpBase.ONELAKE_TABLE_API`. Tokens are cached
+                per scope (see :meth:`_get_token`), so mixing scopes across
+                calls on the same client never thrashes the cache.
 
         Returns:
             The successful httpx.Response.
@@ -430,10 +442,10 @@ class FabricHttpClient:
         url = f"{base}{path}"
         combined_deadline = time.monotonic() + self._combined_deadline_s
         return await self._request_with_retry(
-            method, url, json=json, params=params, combined_deadline=combined_deadline
+            method, url, json=json, params=params, combined_deadline=combined_deadline, scope=scope
         )
 
-    async def _request_with_retry(
+    async def _request_with_retry(  # noqa: PLR0913
         self,
         method: str,
         url: str,
@@ -441,6 +453,7 @@ class FabricHttpClient:
         json: object = None,
         params: Mapping[str, Any] | None = None,
         combined_deadline: float | None = None,
+        scope: str = auth.FABRIC_SCOPE,
     ) -> httpx.Response:
         """Inner request with tenacity 5xx and idempotent-timeout retry.
 
@@ -458,12 +471,17 @@ class FabricHttpClient:
         )
         async def _attempt() -> httpx.Response:
             return await self._do_request(
-                method, url, json=json, params=params, combined_deadline=combined_deadline
+                method,
+                url,
+                json=json,
+                params=params,
+                combined_deadline=combined_deadline,
+                scope=scope,
             )
 
         return await _attempt()
 
-    async def _do_request(
+    async def _do_request(  # noqa: PLR0913
         self,
         method: str,
         url: str,
@@ -471,6 +489,7 @@ class FabricHttpClient:
         json: object = None,
         params: Mapping[str, Any] | None = None,
         combined_deadline: float | None = None,
+        scope: str = auth.FABRIC_SCOPE,
     ) -> httpx.Response:
         """Execute a request with rate limiting and 429 handling.
 
@@ -498,7 +517,7 @@ class FabricHttpClient:
                     status=429,
                 )
 
-            resp = await self._send_once(method, url, json=json, params=params)
+            resp = await self._send_once(method, url, json=json, params=params, scope=scope)
 
             if resp.status_code == http.HTTPStatus.TOO_MANY_REQUESTS:
                 consecutive_429 += 1
@@ -544,6 +563,7 @@ class FabricHttpClient:
         *,
         json: object = None,
         params: Mapping[str, Any] | None = None,
+        scope: str = auth.FABRIC_SCOPE,
     ) -> httpx.Response:
         """Wait for any pause deadline, fetch token, acquire the limiter, and send.
 
@@ -567,7 +587,7 @@ class FabricHttpClient:
             await asyncio.sleep(remaining)
 
         # Fetch token outside the limiter to avoid wasting RPS budget on refresh.
-        token = await self._get_token()
+        token = await self._get_token(scope)
 
         headers = {"Authorization": f"Bearer {token}"}
 

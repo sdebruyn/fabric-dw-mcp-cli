@@ -264,9 +264,24 @@ _SP_TABLE_HEALTH_METRICS_SQL = "EXEC sp_get_table_health_metrics '{schema}.{tabl
 # into the SQL text -- authoring this constant is not "parsing SQL" under
 # CLAUDE.md, which concerns extracting/rewriting existing SQL, not issuing a
 # new statement.
+#
+# @tableName is declared nvarchar(517) by sys.sp_dw_refresh_ext_table. Binding
+# the ? placeholder straight into the EXEC call fails against a live endpoint
+# with "Procedure expects parameter '@tableName' of type 'nvarchar(517)'":
+# mssql-python infers SQL_VARCHAR (ANSI) for a plain-ASCII Python str (see
+# Cursor._map_sql_type), and this particular system procedure -- unlike an
+# ordinary routine such as sp_rename -- rejects that mismatch outright instead
+# of implicitly widening it. Routing the same ? parameter through a typed
+# local (`DECLARE @t nvarchar(517) = ?`) sidesteps this: assigning a bound
+# value to a declared T-SQL variable goes through ordinary implicit
+# conversion (varchar -> nvarchar always widens cleanly), and the procedure
+# then receives an argument that is already nvarchar(517) at the SQL level.
+# The value stays a bound parameter throughout -- this is not the qualified
+# name being interpolated into the SQL text.
 _SP_REFRESH_TABLE_SQL = """\
 DECLARE @rc int;
-EXEC @rc = sys.sp_dw_refresh_ext_table ?;
+DECLARE @tableName nvarchar(517) = ?;
+EXEC @rc = sys.sp_dw_refresh_ext_table @tableName;
 SELECT @rc AS rc;
 """
 
@@ -1443,8 +1458,8 @@ async def list_table_sync_status(
     cross-check needs a REST call and lives in
     :func:`~fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables`,
     orchestrated by the CLI/MCP layer), and it only works for Lakehouse-backed
-    endpoints whose Lakehouse does not have schema support enabled -- see that
-    function's docstring for the full set of cases it cannot cover either.
+    endpoints -- see that function's docstring for the one case it cannot
+    cover either (an endpoint backed by something other than a Lakehouse).
 
     Only available on SQL Analytics Endpoints created after the workspace's
     ``New metadata sync`` (preview) setting was enabled. On every other
@@ -1593,8 +1608,10 @@ async def refresh_table_metadata(
     validate_identifier(table_name)
 
     # sp_dw_refresh_ext_table takes the two-part name as a plain string
-    # argument (not an ODBC-quoted identifier), bound as a ? parameter --
-    # mirrors rename_table's sp_rename argument handling.
+    # argument (not an ODBC-quoted identifier), bound as a ? parameter into a
+    # typed nvarchar(517) local -- see _SP_REFRESH_TABLE_SQL for why the
+    # extra DECLARE is needed here (unlike rename_table's sp_rename argument
+    # handling, which binds ? directly).
     qualified = f"{schema}.{table_name}"
 
     def _run() -> None:

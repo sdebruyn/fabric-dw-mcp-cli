@@ -415,11 +415,14 @@ The listing is driven from `sys.tables`, so a table with no matching DMV row sti
 
 **Coverage limit:** by default, only tables that exist in the endpoint catalog (`sys.tables`) are listed. On a SQL Analytics Endpoint that catalog is itself maintained by the metadata sync, so a Lakehouse table whose discovery has not completed, or has failed, does not appear at all - it is not shown as a row with empty fields, it is simply absent. If a table you expect is missing, run `fdw sql-endpoints refresh` to force an item-level sync and check again, or pass `--check-lakehouse` (below) to see it listed directly.
 
-**Closing the gap with `--check-lakehouse`:** this flag cross-references the backing Lakehouse's own table inventory (via the Fabric REST "List Tables" API) and adds a row for every table it finds there but not in the endpoint catalog, with `in_endpoint_catalog: false` and every sync field empty (a table with no catalog row cannot have sync information yet). Names are compared **exactly (case-sensitively)**, matching Fabric's case-sensitive default collation - a Lakehouse `FactSales` and a catalog `factsales` are treated as distinct, and a Lakehouse table whose name differs from a catalog table only by case is reported with `case_mismatched_catalog_name` set to that catalog name, rather than as a flat "missing" table. This costs at least one extra REST call beyond the normal single TDS query, so it is opt-in rather than always-on for a command you may run repeatedly. It only works for an endpoint backed by a **non-schema-enabled** Lakehouse:
+**Closing the gap with `--check-lakehouse`:** this flag cross-references the backing Lakehouse's own table inventory and adds a row for every table it finds there but not in the endpoint catalog, with `in_endpoint_catalog: false` and every sync field empty (a table with no catalog row cannot have sync information yet). It works for both kinds of Lakehouse:
 
-- If the endpoint's backing item cannot be resolved to a Lakehouse at all (a mirrored database, or similar), `--check-lakehouse` fails with a clear error.
-- If the backing Lakehouse has schema support enabled, `--check-lakehouse` also fails: the Lakehouse "List Tables" API does not attribute tables to a schema, so a bare table name could belong to any schema, and guessing would risk a false "missing" report for a table that actually exists under a different schema.
-- Both cases are a hard failure (non-zero exit, no rows rendered), not a silent fallback to the catalog-only listing - you asked for the cross-check, so "no extra rows" must never be mistaken for "fully discovered". `--check-lakehouse` is mutually exclusive with `--schema` and `--table`: it always compares the whole endpoint.
+- A **classic (non-schema-enabled)** Lakehouse, via the GA Fabric REST "List Tables" API. Every table belongs to the implicit `dbo` schema.
+- A **schema-enabled** Lakehouse, via the [OneLake table APIs](https://learn.microsoft.com/en-us/fabric/onelake/table-apis/table-apis-overview?WT.mc_id=MVP_310840), a preview, Unity-Catalog-compatible API family that lists schemas and tables with schema attribution. Because it is a preview API with no documented GA date, the classic path above is kept for classic Lakehouses rather than routed through it too.
+
+Within each schema, names are compared **exactly (case-sensitively)**, matching Fabric's case-sensitive default collation - a Lakehouse `FactSales` and a catalog `factsales` are treated as distinct, and a Lakehouse table whose name differs from a catalog table only by case is reported with `case_mismatched_catalog_name` set to that catalog name, rather than as a flat "missing" table. This costs at least one extra REST call beyond the normal single TDS query (more for a schema-enabled Lakehouse, one per schema), so it is opt-in rather than always-on for a command you may run repeatedly.
+
+If the endpoint's backing item cannot be resolved to a Lakehouse at all (a mirrored database, or similar), `--check-lakehouse` fails with a clear error - a hard failure (non-zero exit, no rows rendered), not a silent fallback to the catalog-only listing, since you asked for the cross-check and "no extra rows" must never be mistaken for "fully discovered". `--check-lakehouse` is mutually exclusive with `--schema` and `--table`: it always compares the whole endpoint.
 
 | Field | Meaning |
 | --- | --- |
@@ -453,7 +456,7 @@ fdw -w MyWorkspace tables sync-status MyLakehouseEP --table dbo.FactSales
 fdw -w MyWorkspace tables sync-status MyLakehouseEP --check-lakehouse
 ```
 
-Reference: [Lakehouse - Tables - List Tables](https://learn.microsoft.com/en-us/rest/api/fabric/lakehouse/tables/list-tables?WT.mc_id=MVP_310840)
+References: [Lakehouse - Tables - List Tables](https://learn.microsoft.com/en-us/rest/api/fabric/lakehouse/tables/list-tables?WT.mc_id=MVP_310840) (classic Lakehouse path), [OneLake table APIs overview](https://learn.microsoft.com/en-us/fabric/onelake/table-apis/table-apis-overview?WT.mc_id=MVP_310840) (schema-enabled Lakehouse path, preview)
 
 ### tables refresh
 
@@ -912,9 +915,9 @@ The listing is driven from `sys.tables`, so a table with no matching DMV row sti
 
     By default, this tool only returns tables already present in the endpoint's catalog (`sys.tables`), which is itself maintained by the metadata sync. A Lakehouse table whose discovery has not completed, or has failed, has no catalog row and is **absent from this result entirely** - it does not appear as a row with empty fields. Do not conclude a table was deleted, or never existed, just because it is missing from this list.
 
-Pass `check_lakehouse=True` to close part of this gap: it cross-references the backing Lakehouse's own table inventory and adds a row with `in_endpoint_catalog: false` (and every sync field `null`) for a table it finds there but not in the catalog. Names are compared **exactly (case-sensitively)**, matching Fabric's case-sensitive default collation - a Lakehouse table whose name matches a catalog table case-insensitively but not exactly gets `case_mismatched_catalog_name` set to that catalog name instead of being reported as a flat miss. This costs one or more extra REST calls, so avoid setting it on every call of a tool an agent may invoke repeatedly.
+Pass `check_lakehouse=True` to close part of this gap: it cross-references the backing Lakehouse's own table inventory and adds a row with `in_endpoint_catalog: false` (and every sync field `null`) for a table it finds there but not in the catalog. This works for both a classic (non-schema-enabled) Lakehouse, via the GA "List Tables" API, and a schema-enabled Lakehouse, via the preview, Unity-Catalog-compatible [OneLake table APIs](https://learn.microsoft.com/en-us/fabric/onelake/table-apis/table-apis-overview?WT.mc_id=MVP_310840). Within each schema, names are compared **exactly (case-sensitively)**, matching Fabric's case-sensitive default collation - a Lakehouse table whose name matches a catalog table case-insensitively but not exactly gets `case_mismatched_catalog_name` set to that catalog name instead of being reported as a flat miss. This costs one or more extra REST calls (one per schema for a schema-enabled Lakehouse), so avoid setting it on every call of a tool an agent may invoke repeatedly.
 
-It only works for an endpoint backed by a **non-schema-enabled** Lakehouse. For anything else (a mirrored database, a schema-enabled Lakehouse, or no Lakehouse match at all), `check_lakehouse=True` raises a `ToolError` explaining why, rather than silently returning the unchanged catalog-only result: a caller that explicitly asked for the cross-check must never read "no extra rows" as "fully discovered". `check_lakehouse=True` also raises a `ToolError` when combined with `schema` or `table`: it always compares the whole endpoint.
+If the endpoint's backing item cannot be resolved to a Lakehouse at all (a mirrored database, or similar), `check_lakehouse=True` raises a `ToolError` explaining why, rather than silently returning the unchanged catalog-only result: a caller that explicitly asked for the cross-check must never read "no extra rows" as "fully discovered". `check_lakehouse=True` also raises a `ToolError` when combined with `schema` or `table`: it always compares the whole endpoint.
 
 **Parameters:**
 
@@ -938,7 +941,7 @@ It only works for an endpoint backed by a **non-schema-enabled** Lakehouse. For 
 
 On an endpoint using the legacy metadata sync, the tool raises a `ToolError` with an actionable message naming the `New metadata sync` preview setting and pointing at `fdw sql-endpoints refresh` (or the `refresh_sql_endpoint_metadata` MCP tool) as the fallback for refreshing the whole item.
 
-References: [sys.dm_db_external_tables_log_status](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-external-tables-log-status-transact-sql?view=fabric&WT.mc_id=MVP_310840), [Lakehouse - Tables - List Tables](https://learn.microsoft.com/en-us/rest/api/fabric/lakehouse/tables/list-tables?WT.mc_id=MVP_310840)
+References: [sys.dm_db_external_tables_log_status](https://learn.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-external-tables-log-status-transact-sql?view=fabric&WT.mc_id=MVP_310840), [Lakehouse - Tables - List Tables](https://learn.microsoft.com/en-us/rest/api/fabric/lakehouse/tables/list-tables?WT.mc_id=MVP_310840) (classic Lakehouse path), [OneLake table APIs overview](https://learn.microsoft.com/en-us/fabric/onelake/table-apis/table-apis-overview?WT.mc_id=MVP_310840) (schema-enabled Lakehouse path, preview)
 
 ### refresh_table_metadata
 

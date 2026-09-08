@@ -18,7 +18,7 @@ from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import CredentialUnavailableError
 from freezegun import freeze_time
 
-from fabric_dw.auth import FABRIC_SCOPE, SQL_SCOPE
+from fabric_dw.auth import FABRIC_SCOPE, SQL_SCOPE, STORAGE_SCOPE
 from fabric_dw.exceptions import (
     AuthError,
     BadRequestError,
@@ -1303,9 +1303,9 @@ async def test_send_once_deadline_sleep_happens_before_get_token() -> None:
     original_get_token = FabricHttpClient._get_token  # type: ignore[attr-defined]
     original_sleep = asyncio.sleep
 
-    async def tracking_get_token(self: FabricHttpClient) -> str:
+    async def tracking_get_token(self: FabricHttpClient, scope: str = FABRIC_SCOPE) -> str:
         event_log.append("get_token")
-        return await original_get_token(self)
+        return await original_get_token(self, scope)
 
     async def tracking_sleep(seconds: float) -> None:
         if seconds > 0:
@@ -1688,6 +1688,70 @@ async def test_get_token_caches_per_scope() -> None:
     assert scopes_requested.count(SQL_SCOPE) == 1, (
         f"Expected 1 fetch for SQL_SCOPE; got {scopes_requested.count(SQL_SCOPE)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# scope threading: request() -> _request_with_retry() -> _do_request() ->
+# _send_once() -> _get_token(scope) (#1060 part 3)
+# ---------------------------------------------------------------------------
+
+
+async def test_request_threads_scope_to_get_token() -> None:
+    """request()'s scope argument must reach _get_token all the way through the stack.
+
+    Exercises the full chain used by a non-Fabric host such as the OneLake
+    table API, which authenticates with STORAGE_SCOPE rather than the default
+    FABRIC_SCOPE: request() -> _request_with_retry() -> _do_request() ->
+    _send_once() -> _get_token(scope). Before this threading existed, every
+    call silently used a FABRIC_SCOPE token regardless of which host it was
+    sent to.
+    """
+    scopes_requested: list[str] = []
+
+    async def tracking_get_token(scope: str, *_: object, **__: object) -> AccessToken:
+        scopes_requested.append(scope)
+        return AccessToken(token=f"token-for-{scope}", expires_on=int(time.time()) + 3600)
+
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(side_effect=tracking_get_token)
+
+    captured_auth_headers: list[str] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured_auth_headers.append(request.headers.get("authorization", ""))
+        return httpx.Response(200, json={"value": []})
+
+    with respx.mock:
+        respx.get("https://onelake.table.fabric.microsoft.com/delta/x").mock(side_effect=capture)
+
+        client = FabricHttpClient(credential=cred, rps=10)
+        async with client:
+            await client.request("GET", HttpBase.ONELAKE_TABLE_API, "/delta/x", scope=STORAGE_SCOPE)
+
+    assert scopes_requested == [STORAGE_SCOPE]
+    assert captured_auth_headers == [f"Bearer token-for-{STORAGE_SCOPE}"]
+
+
+async def test_request_default_scope_is_fabric_scope() -> None:
+    """Omitting scope on request() must still default to FABRIC_SCOPE (no behaviour change)."""
+    scopes_requested: list[str] = []
+
+    async def tracking_get_token(scope: str, *_: object, **__: object) -> AccessToken:
+        scopes_requested.append(scope)
+        return AccessToken(token="tok", expires_on=int(time.time()) + 3600)  # noqa: S106
+
+    cred = MagicMock(spec=AsyncTokenCredential)
+    cred.get_token = AsyncMock(side_effect=tracking_get_token)
+
+    with respx.mock:
+        respx.get("https://api.fabric.microsoft.com/v1/items").mock(
+            return_value=httpx.Response(200, json={"value": []})
+        )
+        client = FabricHttpClient(credential=cred, rps=10)
+        async with client:
+            await client.request("GET", HttpBase.FABRIC, "/items")
+
+    assert scopes_requested == [FABRIC_SCOPE]
 
 
 # ---------------------------------------------------------------------------

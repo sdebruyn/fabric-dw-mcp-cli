@@ -4396,7 +4396,7 @@ class TestTablesSyncStatusCheckLakehouse:
                 new=AsyncMock(
                     return_value=LakehouseDiscoveryGap(
                         status=LakehouseDiscoveryStatus.OK,
-                        missing_table_names=("StagingRaw",),
+                        missing_tables=(("dbo", "StagingRaw"),),
                     )
                 ),
             ),
@@ -4496,7 +4496,7 @@ class TestTablesSyncStatusCheckLakehouse:
                 new=AsyncMock(
                     return_value=LakehouseDiscoveryGap(
                         status=LakehouseDiscoveryStatus.OK,
-                        case_mismatched_table_names=(("factsales", "FactSales"),),
+                        case_mismatched_tables=(("dbo", "factsales", "FactSales"),),
                     )
                 ),
             ),
@@ -4562,8 +4562,15 @@ class TestTablesSyncStatusCheckLakehouse:
         assert "could not run" in result.output
         assert "mirrored" in result.output
 
-    def test_check_lakehouse_schema_enabled_fails(self, runner: CliRunner, cache_env: Path) -> None:
-        """Requesting the cross-check when it cannot run is a hard failure, not a silent no-op."""
+    def test_check_lakehouse_adds_missing_row_for_a_non_dbo_schema(
+        self, runner: CliRunner, cache_env: Path
+    ) -> None:
+        """The cross-check now supports schema-enabled Lakehouses: a non-dbo schema works too.
+
+        Replaces the old refusal test for LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED
+        (#1060): that status no longer exists, since schema-enabled Lakehouses are now
+        supported end to end via the OneLake table API.
+        """
         from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
             LakehouseDiscoveryGap,
             LakehouseDiscoveryStatus,
@@ -4582,23 +4589,38 @@ class TestTablesSyncStatusCheckLakehouse:
             ),
             patch(
                 "fabric_dw.services.tables.list_table_sync_status",
-                new=AsyncMock(return_value=[_make_sync_status("dbo", "FactSales")]),
+                new=AsyncMock(return_value=[_make_sync_status("sales", "FactSales")]),
             ),
             patch(
                 "fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables",
                 new=AsyncMock(
                     return_value=LakehouseDiscoveryGap(
-                        status=LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED
+                        status=LakehouseDiscoveryStatus.OK,
+                        missing_tables=(("sales", "StagingRaw"),),
                     )
                 ),
             ),
         ):
             result = runner.invoke(
-                cli, ["-w", WS_GUID, "tables", "sync-status", SE_GUID, "--check-lakehouse"]
+                cli,
+                [
+                    "-w",
+                    WS_GUID,
+                    "--json",
+                    "tables",
+                    "sync-status",
+                    SE_GUID,
+                    "--check-lakehouse",
+                ],
             )
-        assert result.exit_code != 0
-        assert "could not run" in result.output
-        assert "schema" in result.output.lower()
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert len(parsed) == 2
+        by_name = {row["name"]: row for row in parsed}
+        assert by_name["FactSales"]["schema_name"] == "sales"
+        assert by_name["StagingRaw"]["schema_name"] == "sales"
+        assert by_name["StagingRaw"]["in_endpoint_catalog"] is False
+        assert by_name["StagingRaw"]["qualified_name"] == "sales.StagingRaw"
 
     def test_check_lakehouse_inconclusive_fails_in_json_mode_too(
         self, runner: CliRunner, cache_env: Path

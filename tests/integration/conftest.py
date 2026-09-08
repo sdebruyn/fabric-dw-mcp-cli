@@ -472,7 +472,29 @@ async def _seed_sample_data(target: SqlTarget) -> None:
     )
 
 
-def _build_delta_log_entry(table_name: str, parquet_size: int, row_count: int) -> str:
+# Delta schema strings for the two shared seed tables (colors, numbers). Kept
+# separate from _build_delta_log_entry so callers writing an arbitrary
+# (schema, table) pair -- e.g. _write_delta_table_to_onelake -- can pass their
+# own schema string instead of extending this table-name-keyed lookup.
+_SEED_TABLE_SCHEMA_STRINGS: dict[str, str] = {
+    "colors": (
+        '{"type":"struct","fields":['
+        '{"name":"id","type":"integer","nullable":true,"metadata":{}},'
+        '{"name":"name","type":"string","nullable":true,"metadata":{}}'
+        "]}"
+    ),
+    "numbers": (
+        '{"type":"struct","fields":['
+        '{"name":"id","type":"integer","nullable":true,"metadata":{}},'
+        '{"name":"value","type":"integer","nullable":true,"metadata":{}}'
+        "]}"
+    ),
+}
+
+
+def _build_delta_log_entry(
+    table_uuid_seed: str, schema_string: str, parquet_size: int, row_count: int
+) -> str:
     """Return the content of the initial Delta log commit file (JSON lines).
 
     A minimal Delta Lake log commit contains four action entries in a single
@@ -484,10 +506,16 @@ def _build_delta_log_entry(table_name: str, parquet_size: int, row_count: int) -
     - ``add``       — one entry per Parquet data file in this commit.
 
     OneLake / Fabric honours this layout and projects the table into the SQL
-    analytics endpoint's metadata catalog after a ``refresh_metadata`` call.
+    analytics endpoint's metadata catalog after a ``refresh_metadata`` call
+    (or, for the OneLake table API used by :func:`_write_delta_table_to_onelake`,
+    without any refresh at all -- that call is what makes the table exist in the
+    Lakehouse's own catalog without ever reaching ``sys.tables``).
 
     Args:
-        table_name: Name of the table (used only in schema string for reference).
+        table_uuid_seed: A string used to derive a deterministic ``metaData.id``
+            (Fabric validates it is a canonical UUID/GUID string) via ``uuid5``,
+            so repeated writes for the same logical table are stable.
+        schema_string: The Delta ``schemaString`` JSON for this table.
         parquet_size: Byte size of the single Parquet data file.
         row_count: Number of rows in the data file (encoded in ``stats``).
 
@@ -495,33 +523,9 @@ def _build_delta_log_entry(table_name: str, parquet_size: int, row_count: int) -
         A newline-separated string of JSON objects forming the commit file.
     """
     import json  # noqa: PLC0415
-
-    # Schema strings vary per table; both tables use INT32 + STRING/INT32.
-    _schema_strings: dict[str, str] = {
-        "colors": (
-            '{"type":"struct","fields":['
-            '{"name":"id","type":"integer","nullable":true,"metadata":{}},'
-            '{"name":"name","type":"string","nullable":true,"metadata":{}}'
-            "]}"
-        ),
-        "numbers": (
-            '{"type":"struct","fields":['
-            '{"name":"id","type":"integer","nullable":true,"metadata":{}},'
-            '{"name":"value","type":"integer","nullable":true,"metadata":{}}'
-            "]}"
-        ),
-    }
-    if table_name not in _schema_strings:
-        msg = f"unknown seed table: {table_name!r} — add a schema string entry to _schema_strings"
-        raise ValueError(msg)
-    schema_string = _schema_strings[table_name]
-
-    # Fabric validates that metaData.id is a canonical UUID (Guid) string.
-    # Use uuid5 seeded from the table name so the value is deterministic and
-    # stable across fixture re-runs while still satisfying the GUID constraint.
     import uuid as _uuid  # noqa: PLC0415
 
-    table_uuid = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, f"pytest-seed-{table_name}"))
+    table_uuid = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, table_uuid_seed))
 
     protocol = {"protocol": {"minReaderVersion": 1, "minWriterVersion": 2}}
     metadata = {
@@ -713,7 +717,12 @@ async def _seed_lakehouse_sample_data(
                 dir_resp.raise_for_status()
 
                 # Upload the Delta log commit file.
-                delta_log_content = _build_delta_log_entry(table_name, parquet_size, row_count)
+                delta_log_content = _build_delta_log_entry(
+                    f"pytest-seed-{table_name}",
+                    _SEED_TABLE_SCHEMA_STRINGS[table_name],
+                    parquet_size,
+                    row_count,
+                )
                 delta_log_bytes = delta_log_content.encode()
                 delta_log_dfs_url = f"{table_prefix}/_delta_log/00000000000000000000.json"
                 await _dfs_upload_bytes(
@@ -730,6 +739,109 @@ async def _seed_lakehouse_sample_data(
     logger.info(
         "_seed_lakehouse_sample_data: metadata refreshed for endpoint %s",
         endpoint_id,
+    )
+
+
+async def _write_delta_table_to_onelake(
+    workspace_id: UUID,
+    lakehouse_id: str,
+    schema_name: str,
+    table_name: str,
+) -> None:
+    """Write one minimal Delta table directly to OneLake, deliberately WITHOUT refreshing.
+
+    Reuses the same DFS create/append/flush + Delta-log-commit approach as
+    :func:`_seed_lakehouse_sample_data`, generalised to an arbitrary
+    ``(schema_name, table_name)`` pair, but stops short of calling
+    ``refresh_metadata``. That omission is the point: it produces a table that
+    exists in the Lakehouse's own OneLake table inventory but has never been
+    synced to the SQL analytics endpoint's ``sys.tables`` catalog -- a real,
+    on-demand discovery gap, used by
+    ``test_find_undiscovered_tables_finds_a_real_gap`` (#1060) to prove the
+    cross-check's OK (gap found) path actually works end to end, not only
+    that it refuses to run.
+
+    A schema-enabled Lakehouse's schemas are just folder-level namespaces
+    under ``Tables/`` -- no separate "create schema" call is needed before
+    writing under a new *schema_name*, exactly as
+    :func:`_seed_lakehouse_sample_data` already relies on for ``sample``.
+
+    Args:
+        workspace_id: Workspace UUID.
+        lakehouse_id: UUID string of the Lakehouse to write into.
+        schema_name: Schema to write the table under.
+        table_name: Name of the table to write.
+    """
+    import tempfile  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    import httpx  # noqa: PLC0415
+    import pyarrow as pa  # noqa: PLC0415 — runtime dep, always available
+    import pyarrow.parquet as pq  # noqa: PLC0415
+
+    from fabric_dw.auth import STORAGE_SCOPE  # noqa: PLC0415
+
+    cred = get_credential()
+    token_obj = await cred.get_token(STORAGE_SCOPE)
+    token = token_obj.token
+    dfs_headers: dict[str, str] = {
+        "Authorization": f"Bearer {token}",
+        "x-ms-version": _DFS_API_VERSION,
+    }
+
+    pa_table = pa.table(
+        {
+            "id": pa.array([1, 2], type=pa.int32()),
+            "label": pa.array(["a", "b"], type=pa.string()),
+        }
+    )
+    schema_string = (
+        '{"type":"struct","fields":['
+        '{"name":"id","type":"integer","nullable":true,"metadata":{}},'
+        '{"name":"label","type":"string","nullable":true,"metadata":{}}'
+        "]}"
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        parquet_file = Path(tmp_dir) / f"{table_name}.parquet"
+        pq.write_table(pa_table, parquet_file)
+        parquet_bytes = parquet_file.read_bytes()
+
+    table_prefix = (
+        f"{_ONELAKE_DFS_BASE}/{workspace_id}/{lakehouse_id}/Tables/{schema_name}/{table_name}"
+    )
+
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        await _dfs_upload_bytes(
+            client, f"{table_prefix}/part-00000.parquet", parquet_bytes, dfs_headers
+        )
+
+        dir_resp = await client.put(
+            f"{table_prefix}/_delta_log",
+            params={"resource": "directory"},
+            headers={**dfs_headers, "Content-Length": "0"},
+            content=b"",
+        )
+        dir_resp.raise_for_status()
+
+        delta_log_content = _build_delta_log_entry(
+            f"pytest-gap-{schema_name}-{table_name}",
+            schema_string,
+            len(parquet_bytes),
+            pa_table.num_rows,
+        )
+        await _dfs_upload_bytes(
+            client,
+            f"{table_prefix}/_delta_log/00000000000000000000.json",
+            delta_log_content.encode(),
+            dfs_headers,
+        )
+
+    logger.info(
+        "_write_delta_table_to_onelake: wrote %s.%s to lakehouse %s (no refresh_metadata)",
+        schema_name,
+        table_name,
+        lakehouse_id,
     )
 
 

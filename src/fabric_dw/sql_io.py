@@ -235,7 +235,10 @@ def write_arrow(
         AssertionError: If an unhandled :class:`OutputFormat` member is
             encountered (indicates a programmer error, not a user error).
     """
-    if fmt not in OutputFormat:
+    # Valid at runtime: StrEnum.__contains__ supports value-based membership
+    # testing (`"json" in OutputFormat`). ty 0.0.78 does not model that
+    # overload and flags it as an unsupported operator on the enum class.
+    if fmt not in OutputFormat:  # ty: ignore[unsupported-operator]
         msg = f"Unknown output format {fmt!r}; expected one of {[f.value for f in OutputFormat]}"
         raise ValueError(msg)
 

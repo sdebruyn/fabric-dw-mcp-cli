@@ -24,6 +24,8 @@ workspace.  It is covered in unit tests with full LRO mocking.
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
 from uuid import UUID
 
@@ -33,6 +35,8 @@ from fabric_dw.exceptions import NotFoundError
 from fabric_dw.http_client import FabricHttpClient
 from fabric_dw.models import TableSyncStatus, Warehouse, WarehouseKind
 from fabric_dw.services import sql_endpoints
+
+from .conftest import SharedSqlEndpointTarget, _write_delta_table_to_onelake
 
 pytestmark = pytest.mark.integration
 
@@ -152,20 +156,22 @@ async def test_refresh_metadata_returns_table_sync_statuses(
 
 
 # ---------------------------------------------------------------------------
-# Lakehouse discovery-gap cross-check (#1064)
+# Lakehouse discovery-gap cross-check (#1064; schema-enabled support #1060)
 # ---------------------------------------------------------------------------
 #
 # ephemeral_sql_endpoint is backed by a SCHEMA-ENABLED Lakehouse (see its
-# fixture docstring above ephemeral_lakehouse), so it exercises the
-# SCHEMA_ENABLED_UNSUPPORTED refusal path deterministically and proves that
-# properties.defaultSchema really is present on a live schema-enabled
-# Lakehouse -- the assumption the whole refusal is built on.
+# fixture docstring above ephemeral_lakehouse), so it exercises exactly the
+# path find_undiscovered_lakehouse_tables uses for a schema-enabled Lakehouse
+# (the OneLake table API), and proves that properties.defaultSchema really is
+# present on a live schema-enabled Lakehouse -- the signal that path branches
+# on.
 #
-# It cannot exercise the OK (successful comparison, gap found or not) path:
-# that needs a non-schema-enabled Lakehouse with a Delta table written
-# directly to OneLake but not yet synced to the endpoint catalog, a state
-# issue #1064 itself flagged as "awkward to produce on demand". That path is
-# unverified against a live tenant -- see the PR description.
+# test_find_undiscovered_tables_finds_a_real_gap (below) is the first live
+# proof that the OK (successful comparison, gap found) path actually works
+# end to end: it writes a Delta table directly to OneLake without refreshing
+# the endpoint's metadata sync, then asserts the cross-check finds exactly
+# that table under its real schema. Up to #1060, this feature had only ever
+# been proven to refuse to run, never to work.
 
 
 async def test_resolve_backing_lakehouse_finds_schema_enabled_lakehouse(
@@ -195,19 +201,6 @@ async def test_resolve_backing_lakehouse_finds_schema_enabled_lakehouse(
     )
 
 
-async def test_find_undiscovered_tables_schema_enabled_lakehouse_is_unsupported(
-    http: FabricHttpClient,
-    workspace_id: UUID,
-    ephemeral_sql_endpoint: Warehouse,
-) -> None:
-    """A real schema-enabled Lakehouse-backed endpoint refuses the comparison."""
-    result = await sql_endpoints.find_undiscovered_lakehouse_tables(
-        http, workspace_id, ephemeral_sql_endpoint.id, frozenset()
-    )
-    assert result.status == sql_endpoints.LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED
-    assert result.missing_table_names == ()
-
-
 async def test_find_undiscovered_tables_non_lakehouse_endpoint_id(
     http: FabricHttpClient, workspace_id: UUID
 ) -> None:
@@ -219,8 +212,100 @@ async def test_find_undiscovered_tables_non_lakehouse_endpoint_id(
     would take.
     """
     bogus = uuid.uuid4()
-    result = await sql_endpoints.find_undiscovered_lakehouse_tables(
-        http, workspace_id, bogus, frozenset()
-    )
+    result = await sql_endpoints.find_undiscovered_lakehouse_tables(http, workspace_id, bogus, {})
     assert result.status == sql_endpoints.LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED
-    assert result.missing_table_names == ()
+    assert result.missing_tables == ()
+
+
+# Bounded polling for the OneLake table API to pick up a table written
+# directly to OneLake outside its own metadata sync. This latency is
+# unconfirmed against a live tenant -- see the skip branch below.
+_GAP_TABLE_VISIBLE_TIMEOUT_S = 120  # 2 min
+_GAP_TABLE_POLL_INTERVAL_S = 5
+
+
+@pytest.mark.sql_endpoint
+async def test_find_undiscovered_tables_finds_a_real_gap(
+    http: FabricHttpClient,
+    shared_sql_endpoint: SharedSqlEndpointTarget,
+) -> None:
+    """Live proof that the OK (gap found) comparison path actually works end to end (#1060).
+
+    Every prior integration test for this feature could only prove a REFUSAL
+    (SCHEMA_ENABLED_UNSUPPORTED, since removed, or NOT_LAKEHOUSE_BACKED) --
+    never that the comparison itself finds a real gap. This test writes one
+    Delta table directly to OneLake, under a schema unique to this run, via
+    :func:`~tests.integration.conftest._write_delta_table_to_onelake`,
+    deliberately WITHOUT calling ``refresh_metadata`` afterwards. That means
+    the table exists in the Lakehouse's own OneLake table inventory but can
+    never appear in the endpoint's ``sys.tables`` catalog during this test --
+    a real, on-demand discovery gap, not a simulated one.
+
+    The gap schema is unique per test run (a fresh UUID suffix) and distinct
+    from the shared ``sample`` schema other ``sql_endpoint``-marked tests read
+    from concurrently in the same session, so this never touches, and does
+    not need to avoid, the shared seed data -- see ``shared_sql_endpoint``'s
+    "MUST NOT mutate the seed schema" rule in conftest.py.
+    """
+    from fabric_dw.services import tables as tables_svc  # noqa: PLC0415
+    from fabric_dw.services.sql_endpoints import (  # noqa: PLC0415
+        LakehouseDiscoveryStatus,
+        find_undiscovered_lakehouse_tables,
+    )
+
+    gap_schema = f"pytest_gap_{uuid.uuid4().hex[:8]}"
+    gap_table = "gaptable"
+
+    await _write_delta_table_to_onelake(
+        shared_sql_endpoint.workspace_id,
+        shared_sql_endpoint.lakehouse_id,
+        gap_schema,
+        gap_table,
+    )
+
+    # Build the real known-names-by-schema map from the endpoint's current
+    # catalog (sample.colors / sample.numbers, already synced by the shared
+    # fixture) so the assertion below can be an exact match rather than a
+    # "somewhere in here" membership check.
+    catalog_rows = await tables_svc.list_table_sync_status(
+        shared_sql_endpoint.sql_target, kind=WarehouseKind.SQL_ENDPOINT
+    )
+    known_by_schema: dict[str, set[str]] = {}
+    for row in catalog_rows:
+        known_by_schema.setdefault(row.schema_name, set()).add(row.name)
+    known_names_by_schema = {s: frozenset(n) for s, n in known_by_schema.items()}
+
+    # The OneLake table API's discovery latency for a brand-new schema/table
+    # written directly (rather than via a Fabric-driven ingestion path) is not
+    # documented anywhere; poll with a bounded timeout instead of assuming the
+    # write is visible immediately, mirroring this file's other live-latency
+    # waits (e.g. _wait_for_seeded_tables_visible).
+    deadline = time.monotonic() + _GAP_TABLE_VISIBLE_TIMEOUT_S
+    while True:
+        result = await find_undiscovered_lakehouse_tables(
+            http,
+            shared_sql_endpoint.workspace_id,
+            shared_sql_endpoint.endpoint.id,
+            known_names_by_schema,
+        )
+        if result.status != LakehouseDiscoveryStatus.OK:
+            pytest.fail(
+                f"expected LakehouseDiscoveryStatus.OK for a schema-enabled Lakehouse-backed "
+                f"endpoint, got {result.status!r}"
+            )
+        if (gap_schema, gap_table) in result.missing_tables:
+            break
+        if time.monotonic() >= deadline:
+            pytest.skip(
+                f"table {gap_schema}.{gap_table} was written directly to OneLake but never "
+                f"appeared via the OneLake table API within {_GAP_TABLE_VISIBLE_TIMEOUT_S}s -- "
+                "discovery latency for this preview API is unconfirmed against a live tenant; "
+                f"seen so far: {result.missing_tables!r}"
+            )
+        await asyncio.sleep(_GAP_TABLE_POLL_INTERVAL_S)
+
+    # Exact match: the ONLY gap against the real catalog is the table this
+    # test just wrote, under its real schema -- not "a gap was found
+    # somewhere", but precisely this one.
+    assert result.missing_tables == ((gap_schema, gap_table),)
+    assert result.case_mismatched_tables == ()
