@@ -31,7 +31,7 @@ from fabric_dw.cli.commands._utils import (
 )
 from fabric_dw.exceptions import FabricError
 from fabric_dw.http_client import FabricHttpClient
-from fabric_dw.models import ColumnSpec, CopyIntoResult, TableMetadataSyncStatus
+from fabric_dw.models import ColumnSpec, CopyIntoResult
 from fabric_dw.services import sql_endpoints as _sql_endpoints_svc
 from fabric_dw.services import tables as _tables_svc
 from fabric_dw.services.columns import get_object_columns_or_raise as _get_columns
@@ -368,8 +368,8 @@ async def health_check_cmd(
     help=(
         "Cross-reference the backing Lakehouse's table inventory and add rows for "
         "tables it has but the endpoint catalog does not (in_endpoint_catalog=false). "
-        "Costs at least one extra REST call; only works for a non-schema-enabled "
-        "Lakehouse-backed endpoint. Exclusive with --schema and --table."
+        "Costs at least one extra REST call; works for both classic and schema-enabled "
+        "Lakehouse-backed endpoints. Exclusive with --schema and --table."
     ),
 )
 @click.pass_obj
@@ -395,14 +395,16 @@ async def sync_status_cmd(
     has failed, does not appear at all. Pass --check-lakehouse to close this
     gap: it cross-references the backing Lakehouse's own table inventory and
     adds a row (in_endpoint_catalog=false, all sync fields empty) for every
-    table found there but missing from the endpoint catalog, comparing names
-    exactly (case-sensitively). A Lakehouse table that differs from a catalog
-    table only by case is reported with case_mismatched_catalog_name set,
-    rather than as a flat miss. This only works for an endpoint backed by a
-    non-schema-enabled Lakehouse: for anything else (a mirrored database, a
-    schema-enabled Lakehouse, ...) --check-lakehouse fails with an explanatory
-    error rather than silently falling back to the catalog-only listing, since
-    a caller who explicitly asked for the cross-check must not read "no extra
+    table found there but missing from the endpoint catalog, per schema,
+    comparing names exactly (case-sensitively). A Lakehouse table that
+    differs from a catalog table only by case is reported with
+    case_mismatched_catalog_name set, rather than as a flat miss. This works
+    for both classic and schema-enabled Lakehouse-backed endpoints (the
+    schema-enabled path uses a preview OneLake table API); if the endpoint's
+    backing item cannot be resolved to a Lakehouse at all (a mirrored
+    database, or similar), --check-lakehouse fails with an explanatory error
+    rather than silently falling back to the catalog-only listing, since a
+    caller who explicitly asked for the cross-check must not read "no extra
     rows" as "fully discovered". Otherwise, run 'fdw sql-endpoints refresh' to
     force an item-level sync and check again.
     """
@@ -430,7 +432,7 @@ async def sync_status_cmd(
                 mode=ctx.auth,
             )
             if check_lakehouse:
-                items = await _apply_lakehouse_discovery_gap(
+                items = await _sql_endpoints_svc.apply_lakehouse_discovery_gap(
                     http, UUID(target.workspace_id), entry.id, items
                 )
             render(
@@ -440,72 +442,6 @@ async def sync_status_cmd(
             )
     except (ValueError, FabricError) as exc:
         raise click.ClickException(str(exc)) from exc
-
-
-#: Shared wording for the CLI (ClickException) and MCP (ToolError) "the
-#: cross-check was explicitly requested but could not run" errors, so the two
-#: surfaces never drift.
-_CHECK_LAKEHOUSE_NOT_LAKEHOUSE_BACKED_MSG = (
-    "--check-lakehouse could not run: this endpoint's backing item could not be "
-    "resolved to a Lakehouse (it may be backed by a mirrored database or similar)."
-)
-_CHECK_LAKEHOUSE_SCHEMA_ENABLED_MSG = (
-    "--check-lakehouse could not run: the backing Lakehouse has schema support "
-    "enabled, and the Lakehouse table-listing API does not attribute tables to schemas."
-)
-
-
-async def _apply_lakehouse_discovery_gap(
-    http: FabricHttpClient,
-    workspace_id: UUID,
-    endpoint_id: UUID,
-    items: list[TableMetadataSyncStatus],
-) -> list[TableMetadataSyncStatus]:
-    """Cross-reference the backing Lakehouse and append discovery-gap rows to *items*.
-
-    Raises a clean error when the cross-check cannot run at all (no matching
-    Lakehouse, or the Lakehouse has schema support enabled), rather than
-    silently returning *items* unchanged: the caller explicitly asked for the
-    cross-check, so "no extra rows" must never be readable as "fully
-    discovered" -- see #1064.
-    """
-    known_dbo = frozenset(t.name for t in items if t.schema_name.casefold() == "dbo")
-    gap = await _sql_endpoints_svc.find_undiscovered_lakehouse_tables(
-        http, workspace_id, endpoint_id, known_dbo
-    )
-    if gap.status == _sql_endpoints_svc.LakehouseDiscoveryStatus.NOT_LAKEHOUSE_BACKED:
-        raise click.ClickException(_CHECK_LAKEHOUSE_NOT_LAKEHOUSE_BACKED_MSG)
-    if gap.status == _sql_endpoints_svc.LakehouseDiscoveryStatus.SCHEMA_ENABLED_UNSUPPORTED:
-        raise click.ClickException(_CHECK_LAKEHOUSE_SCHEMA_ENABLED_MSG)
-    if not gap.missing_table_names and not gap.case_mismatched_table_names:
-        return items
-    extra = [
-        TableMetadataSyncStatus(
-            schema_name="dbo",
-            name=name,
-            qualified_name=f"dbo.{name}",
-            last_update_time_utc=None,
-            latest_log_version=None,
-            latest_checkpoint_version=None,
-            is_blocked=None,
-            in_endpoint_catalog=False,
-        )
-        for name in gap.missing_table_names
-    ] + [
-        TableMetadataSyncStatus(
-            schema_name="dbo",
-            name=lakehouse_name,
-            qualified_name=f"dbo.{lakehouse_name}",
-            last_update_time_utc=None,
-            latest_log_version=None,
-            latest_checkpoint_version=None,
-            is_blocked=None,
-            in_endpoint_catalog=False,
-            case_mismatched_catalog_name=catalog_name,
-        )
-        for lakehouse_name, catalog_name in gap.case_mismatched_table_names
-    ]
-    return sorted([*items, *extra], key=lambda t: (t.schema_name, t.name))
 
 
 @tables_group.command("refresh")

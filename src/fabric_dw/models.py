@@ -632,9 +632,10 @@ class TableMetadataSyncStatus(_FabricBase):
     ``False`` row has no catalog row at all, so its four DMV-sourced fields
     are always ``None`` too, for the same reason. See
     :func:`~fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables`
-    for the cross-check's own coverage limits (Lakehouse-backed, non-schema-enabled
-    endpoints only), and for why the Lakehouse-vs-catalog comparison it performs
-    is exact (case-sensitive), matching Fabric's case-sensitive default collation.
+    for the cross-check's own coverage limits (Lakehouse-backed endpoints
+    only -- classic and schema-enabled are both supported), and for why the
+    Lakehouse-vs-catalog comparison it performs is exact (case-sensitive),
+    matching Fabric's case-sensitive default collation.
 
     A ``False`` row whose Lakehouse name differs from an existing catalog row
     only by case (e.g. Lakehouse ``FactSales`` vs. catalog ``factsales``) sets

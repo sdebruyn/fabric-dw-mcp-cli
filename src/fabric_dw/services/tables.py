@@ -1458,8 +1458,8 @@ async def list_table_sync_status(
     cross-check needs a REST call and lives in
     :func:`~fabric_dw.services.sql_endpoints.find_undiscovered_lakehouse_tables`,
     orchestrated by the CLI/MCP layer), and it only works for Lakehouse-backed
-    endpoints whose Lakehouse does not have schema support enabled -- see that
-    function's docstring for the full set of cases it cannot cover either.
+    endpoints -- see that function's docstring for the one case it cannot
+    cover either (an endpoint backed by something other than a Lakehouse).
 
     Only available on SQL Analytics Endpoints created after the workspace's
     ``New metadata sync`` (preview) setting was enabled. On every other
