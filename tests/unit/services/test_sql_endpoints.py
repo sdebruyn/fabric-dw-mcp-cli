@@ -1529,3 +1529,172 @@ async def test_onelake_pagination_two_consecutive_empty_pages_do_not_falsely_rai
 
     assert call_count == 3
     assert result == ["sales"]
+
+
+# ===========================================================================
+# OneLake table API: fail closed on a malformed response (#1068 review)
+# ===========================================================================
+#
+# A successful HTTP response that is not valid JSON, is not an object, is
+# missing the expected collection key, or has a non-list value for it used to
+# be silently normalised to "no items" -- which, with no next_page_token,
+# made find_undiscovered_lakehouse_tables return OK with an empty gap: a
+# confident false all-clear from the one command whose job is finding what's
+# missing. These pin the fix (fail closed) and the one legitimate exception
+# (a present, empty list is a real answer, not a failure).
+
+
+def test_parse_onelake_page_body_invalid_json_raises() -> None:
+    """A response body that is not valid JSON must raise, not become {}."""
+    from fabric_dw.services.sql_endpoints import _parse_onelake_page_body  # noqa: PLC0415
+
+    resp = httpx.Response(200, content=b"not json at all {")
+    with pytest.raises(FabricServerError, match="not valid JSON"):
+        _parse_onelake_page_body(resp, "/delta/x")
+
+
+@pytest.mark.parametrize("body", [[1, 2, 3], "a string", 42])
+def test_parse_onelake_page_body_non_object_raises(body: object) -> None:
+    """A response body that decodes to something other than a JSON object must raise."""
+    from fabric_dw.services.sql_endpoints import _parse_onelake_page_body  # noqa: PLC0415
+
+    resp = httpx.Response(200, json=body)
+    with pytest.raises(FabricServerError, match="not a JSON object"):
+        _parse_onelake_page_body(resp, "/delta/x")
+
+
+def test_extract_onelake_items_missing_key_raises() -> None:
+    """The response is missing the expected collection key entirely -> raise."""
+    from fabric_dw.services.sql_endpoints import _extract_onelake_items  # noqa: PLC0415
+
+    with pytest.raises(FabricServerError, match="missing the 'schemas' key"):
+        _extract_onelake_items(
+            {"unexpected_key": []}, "/delta/x", key="schemas", required_fields=("name",)
+        )
+
+
+def test_extract_onelake_items_non_list_value_raises() -> None:
+    """The collection key is present but its value is not a list -> raise."""
+    from fabric_dw.services.sql_endpoints import _extract_onelake_items  # noqa: PLC0415
+
+    with pytest.raises(FabricServerError, match="non-list 'tables' value"):
+        _extract_onelake_items(
+            {"tables": "not-a-list"}, "/delta/x", key="tables", required_fields=("name",)
+        )
+
+
+def test_extract_onelake_items_non_object_entry_raises() -> None:
+    """An entry in the collection that is not itself an object -> raise."""
+    from fabric_dw.services.sql_endpoints import _extract_onelake_items  # noqa: PLC0415
+
+    with pytest.raises(FabricServerError, match="non-object entry"):
+        _extract_onelake_items(
+            {"schemas": ["not-an-object"]}, "/delta/x", key="schemas", required_fields=("name",)
+        )
+
+
+def test_extract_onelake_items_missing_name_raises() -> None:
+    """A schema entry missing 'name' -> raise (the identity field this listing needs)."""
+    from fabric_dw.services.sql_endpoints import _extract_onelake_items  # noqa: PLC0415
+
+    with pytest.raises(FabricServerError, match="missing required field"):
+        _extract_onelake_items(
+            {"schemas": [{"catalog_name": "x"}]},
+            "/delta/x",
+            key="schemas",
+            required_fields=("name",),
+        )
+
+
+def test_extract_onelake_items_table_missing_schema_name_raises() -> None:
+    """A table entry with a name but no schema_name -> raise.
+
+    Schema attribution is the entire reason the OneLake table API is used
+    over the classic one; a table entry we cannot attribute to a schema is
+    exactly the malformed-response case this fix defends against.
+    """
+    from fabric_dw.services.sql_endpoints import _extract_onelake_items  # noqa: PLC0415
+
+    with pytest.raises(FabricServerError, match=r"missing required field.*schema_name"):
+        _extract_onelake_items(
+            {"tables": [{"name": "FactSales"}]},
+            "/delta/x",
+            key="tables",
+            required_fields=("name", "schema_name"),
+        )
+
+
+def test_extract_onelake_items_present_empty_list_is_valid() -> None:
+    """A present, genuinely empty collection is a real answer, not a failure.
+
+    This is the distinction the fix must not break: {"tables": []} means "this
+    schema has no tables" and must return cleanly, not raise.
+    """
+    from fabric_dw.services.sql_endpoints import _extract_onelake_items  # noqa: PLC0415
+
+    result = _extract_onelake_items(
+        {"tables": []}, "/delta/x", key="tables", required_fields=("name", "schema_name")
+    )
+    assert result == []
+
+
+async def test_list_lakehouse_schema_names_malformed_response_raises() -> None:
+    """End to end: a malformed schemas listing raises rather than returning []."""
+    from fabric_dw.services.sql_endpoints import list_lakehouse_schema_names  # noqa: PLC0415
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_GAP_SCHEMAS_URL).mock(return_value=httpx.Response(200, json={}))
+
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricServerError, match="missing the 'schemas' key"):
+                await list_lakehouse_schema_names(client, _WORKSPACE_ID, UUID(_GAP_LAKEHOUSE_ID))
+
+
+async def test_list_lakehouse_schema_table_names_empty_list_is_valid_end_to_end() -> None:
+    """End to end: a schema with a present-but-empty tables list returns cleanly."""
+    from fabric_dw.services.sql_endpoints import list_lakehouse_schema_table_names  # noqa: PLC0415
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_GAP_ONELAKE_TABLES_URL).mock(
+            return_value=httpx.Response(200, json={"tables": []})
+        )
+
+        client = await _make_client()
+        async with client:
+            result = await list_lakehouse_schema_table_names(
+                client, _WORKSPACE_ID, UUID(_GAP_LAKEHOUSE_ID), "sales"
+            )
+
+    assert result == []
+
+
+async def test_find_undiscovered_tables_malformed_tables_response_raises_not_ok() -> None:
+    """The exact regression this fix closes: a malformed tables page must not look like a clean OK.
+
+    Before the fix, a tables response with no "tables" key at all would have
+    been normalised to zero items, and with no next_page_token,
+    find_undiscovered_lakehouse_tables would have returned
+    LakehouseDiscoveryStatus.OK with an empty gap -- a false all-clear. It
+    must now raise instead.
+    """
+    from fabric_dw.services.sql_endpoints import find_undiscovered_lakehouse_tables  # noqa: PLC0415
+
+    with respx.mock(assert_all_called=False) as mock_router:
+        mock_router.get(_LAKEHOUSES_URL).mock(
+            return_value=httpx.Response(200, json=_GAP_LAKEHOUSE_MATCH_SCHEMA_ENABLED_PAYLOAD)
+        )
+        mock_router.get(_GAP_SCHEMAS_URL).mock(
+            return_value=httpx.Response(200, json=_onelake_schemas_page(["sales"]))
+        )
+        # Malformed: no "tables" key at all (e.g. a degraded 200 or API drift).
+        mock_router.get(_GAP_ONELAKE_TABLES_URL, params={"schema_name": "sales"}).mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+        client = await _make_client()
+        async with client:
+            with pytest.raises(FabricServerError, match="missing the 'tables' key"):
+                await find_undiscovered_lakehouse_tables(
+                    client, _WORKSPACE_ID, _ENDPOINT_ID, {"sales": frozenset({"FactSales"})}
+                )

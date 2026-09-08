@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from fabric_dw._fabric_api import resolve_backing_lakehouse, resolve_lakehouse_connection_string
@@ -22,6 +23,9 @@ from fabric_dw.models import TableMetadataSyncStatus, TableSyncStatus, Warehouse
 from fabric_dw.services._helpers import scan_all_workspaces
 from fabric_dw.services.capacities import get_capacity_states
 from fabric_dw.services.workspaces import list_all as _list_all_workspaces
+
+if TYPE_CHECKING:
+    import httpx
 
 _logger = logging.getLogger("fabric_dw.sql_endpoints")
 
@@ -347,6 +351,22 @@ async def refresh_metadata(
 # Lakehouse discovery-gap cross-check (#1064; schema-enabled support #1060)
 # ---------------------------------------------------------------------------
 #
+# GUIDING RULE FOR THIS FEATURE: this code is a detector. Its only job is to
+# say "here is what is missing". Anywhere it cannot tell whether something is
+# missing, it must say so (refuse, or raise) -- never silently fold "I don't
+# know" into "nothing to report". A false all-clear from the one command
+# whose entire purpose is finding gaps is worse than no answer at all. This
+# has already gone wrong four times in this feature's history: sys.tables
+# itself cannot see an undiscovered table (the reason this cross-check exists
+# at all), a missing DMV row was once read as "never synced", an inconclusive
+# cross-check briefly looked identical to a clean one, and a malformed OneLake
+# API response used to be normalised to an empty page instead of raising (see
+# _iter_onelake_table_api). One necessary exception: a *present but genuinely
+# empty* collection -- a schema with zero tables, an endpoint with zero rows
+# in its catalog -- is a real, valid "no gap here" answer, not an unknown.
+# Only an absent, wrong-typed, or malformed collection is a failure; don't
+# let this rule be misread as "never return an empty result".
+#
 # tables.list_table_sync_status (TDS-only) lists tables from sys.tables, which
 # on a SQL Analytics Endpoint is itself populated by the metadata sync -- a
 # Lakehouse Delta table whose discovery has not completed, or has failed, has
@@ -476,12 +496,80 @@ async def list_lakehouse_table_names(
     return names
 
 
+def _parse_onelake_page_body(resp: httpx.Response, path: str) -> dict[str, object]:
+    """Parse and validate one OneLake table API page body, failing closed.
+
+    Extracted from :func:`_iter_onelake_table_api` so that "the body must be a
+    JSON object" is checked once, in one place, and independently testable.
+    Raises :class:`~fabric_dw.exceptions.FabricServerError` rather than
+    normalising a bad body to ``{}`` -- see the guiding rule in the module
+    comment above.
+    """
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise FabricServerError(
+            f"OneLake table API response for {path} was not valid JSON: {exc}"
+        ) from exc
+    if not isinstance(body, dict):
+        raise FabricServerError(
+            f"OneLake table API response for {path} was not a JSON object "
+            f"(got {type(body).__name__})"
+        )
+    return body
+
+
+def _extract_onelake_items(
+    body: dict[str, object],
+    path: str,
+    *,
+    key: str,
+    required_fields: tuple[str, ...],
+) -> list[dict[str, object]]:
+    """Validate and return the *key* collection from a parsed OneLake page body.
+
+    Fails closed (see the module's guiding rule): the *key* collection must
+    be present and a list, and every entry must be an object carrying a
+    truthy value for each of *required_fields*. An empty list is a valid,
+    non-error result -- only an absent, wrong-typed, or malformed collection
+    raises :class:`~fabric_dw.exceptions.FabricServerError`.
+    """
+    if key not in body:
+        raise FabricServerError(
+            f"OneLake table API response for {path} is missing the {key!r} key "
+            f"(keys present: {sorted(body.keys())!r})"
+        )
+    raw_items = body[key]
+    if not isinstance(raw_items, list):
+        raise FabricServerError(
+            f"OneLake table API response for {path} has a non-list {key!r} value "
+            f"(got {type(raw_items).__name__})"
+        )
+
+    items: list[dict[str, object]] = []
+    for i, raw_item in enumerate(raw_items):
+        if not isinstance(raw_item, dict):
+            raise FabricServerError(
+                f"OneLake table API response for {path} has a non-object entry at "
+                f"{key}[{i}] (got {type(raw_item).__name__})"
+            )
+        missing_fields = [f for f in required_fields if not raw_item.get(f)]
+        if missing_fields:
+            raise FabricServerError(
+                f"OneLake table API response for {path} has an entry at {key}[{i}] "
+                f"missing required field(s) {missing_fields!r}: {raw_item!r}"
+            )
+        items.append(raw_item)
+    return items
+
+
 async def _iter_onelake_table_api(
     http: FabricHttpClient,
     path: str,
     params: dict[str, str],
     *,
     key: str,
+    required_fields: tuple[str, ...] = ("name",),
 ) -> AsyncIterator[dict[str, object]]:
     """Page through a OneLake table API (Unity-Catalog-compatible) listing.
 
@@ -496,16 +584,31 @@ async def _iter_onelake_table_api(
     request-side parameters or a multi-page response for this preview API, so
     treat these names as best-effort, not confirmed.
 
-    Never truncates silently. This is the third time this exact failure class
-    has come up in this feature: a response carries a ``next_page_token``,
-    but if the follow-up request does not actually make progress -- the same
-    token comes back, or the exact same items come back again -- returning
-    what has been collected so far would silently produce a partial
-    inventory. A partial inventory reports "no gap" for tables nobody ever
-    looked at, which is exactly the silent incompleteness this whole feature
-    exists to prevent. So this raises
-    :class:`~fabric_dw.exceptions.FabricServerError` instead of returning
-    early.
+    Fails closed on anything that is not a well-formed page, rather than
+    normalising it to "no items" (see the guiding rule in this module's
+    docstring comment above -- this is the fourth time a variant of that
+    mistake has come up in this feature). A response that is
+    not valid JSON, is not a JSON object, is missing the *key* collection
+    entirely, has a non-list value for *key*, or has an entry missing one of
+    *required_fields* all raise :class:`~fabric_dw.exceptions.FabricServerError`
+    instead of silently degrading to ``{}`` / ``[]``. Against a preview API
+    with no documented GA date, response-shape drift is a realistic scenario,
+    not a hypothetical, and a degraded 200 must never look like "nothing to
+    report" from the one function whose entire purpose is finding what is
+    missing.
+
+    A *present but empty* collection (``{"tables": []}``, a schema that
+    genuinely has no tables yet) is NOT an error -- it is a real, valid
+    answer, and must keep yielding zero items without raising. Only an
+    *absent or wrong-typed* collection, or a malformed entry inside it, is a
+    failure.
+
+    Also never truncates silently across pages: a response carries a
+    ``next_page_token``, but if the follow-up request does not actually make
+    progress -- the same token comes back, or the exact same items come back
+    again -- returning what has been collected so far would silently produce
+    a partial inventory. So this also raises ``FabricServerError`` rather
+    than returning early in that case.
 
     Args:
         http: An authenticated :class:`~fabric_dw.http_client.FabricHttpClient`.
@@ -515,13 +618,18 @@ async def _iter_onelake_table_api(
             be added without mutating the caller's dict.
         key: The JSON key whose list value contains the items for this
             listing (``"schemas"`` or ``"tables"``).
+        required_fields: Field names every entry in *key* must carry a
+            truthy value for (e.g. ``("name", "schema_name")`` for a tables
+            listing, since schema attribution is the entire reason this API
+            is used over the classic one). Defaults to ``("name",)``.
 
     Yields:
         Individual items from the *key* array in each page.
 
     Raises:
-        FabricServerError: If pagination does not make progress across a page
-            boundary.
+        FabricServerError: If the response is malformed in any of the ways
+            described above, or if pagination does not make progress across
+            a page boundary.
     """
     page_token: str | None = None
     seen_tokens: set[str] = set()
@@ -538,15 +646,8 @@ async def _iter_onelake_table_api(
             params=page_params,
             scope=STORAGE_SCOPE,
         )
-        try:
-            body = resp.json()
-        except ValueError:
-            body = {}
-        if not isinstance(body, dict):
-            body = {}
-
-        raw_items = body.get(key, [])
-        items = [i for i in raw_items if isinstance(i, dict)] if isinstance(raw_items, list) else []
+        body = _parse_onelake_page_body(resp, path)
+        items = _extract_onelake_items(body, path, key=key, required_fields=required_fields)
 
         raw_next_token = body.get("next_page_token")
         next_token = str(raw_next_token) if raw_next_token else None
@@ -636,6 +737,7 @@ async def list_lakehouse_schema_table_names(
         f"/delta/{workspace_id}/{lakehouse_id}/api/2.1/unity-catalog/tables",
         {"catalog_name": str(lakehouse_id), "schema_name": schema_name},
         key="tables",
+        required_fields=("name", "schema_name"),
     ):
         name = item.get("name")
         if name:
@@ -672,6 +774,12 @@ async def find_undiscovered_lakehouse_tables(
     known_names_by_schema: Mapping[str, frozenset[str]],
 ) -> LakehouseDiscoveryGap:
     """Find Lakehouse tables missing from a SQL endpoint's ``sys.tables`` catalog.
+
+    This function, and everything it calls, is a detector: see the guiding
+    rule at the top of this module's "Lakehouse discovery-gap cross-check"
+    comment block before changing any of its error handling. In short,
+    absence of data must never be silently converted into absence of a gap
+    -- except that a present, genuinely empty collection IS a valid answer.
 
     Resolves *endpoint_id* to its backing Lakehouse via
     :func:`~fabric_dw._fabric_api.resolve_backing_lakehouse`, refuses the
