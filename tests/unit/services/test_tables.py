@@ -3425,6 +3425,44 @@ class TestRefreshTableMetadata:
         assert params is not None
         assert list(params) == ["dbo.FactSales"]
 
+    async def test_parameter_is_typed_nvarchar_517_before_the_exec_call(self) -> None:
+        """Regression test for #1060's live failure.
+
+        Against a real endpoint, ``EXEC @rc = sys.sp_dw_refresh_ext_table ?``
+        raised ``Procedure expects parameter '@tableName' of type
+        'nvarchar(517)'``: mssql-python infers ``SQL_VARCHAR`` (ANSI) for a
+        plain-ASCII Python ``str``, and this particular system procedure
+        rejects that mismatch outright rather than implicitly widening it.
+        The fix binds ``?`` into a ``DECLARE @tableName nvarchar(517) = ?``
+        local instead, so the EXEC call itself passes an already-typed
+        nvarchar(517) argument.
+
+        What this test would NOT have caught: it only inspects the SQL
+        *text*, not the wire-level type mssql-python actually binds for the
+        mocked cursor -- the unit suite mocks ``run_query``'s connection
+        entirely, so it can never see SQL_VARCHAR vs SQL_WVARCHAR. That gap
+        is exactly why the original bug shipped with green unit tests; only
+        a live endpoint (the ``sql_endpoint`` integration tests) can confirm
+        the driver-level type actually matches.
+        """
+        target = _make_target()
+        refresh_conn = _make_conn_for_rc(0)
+        fetch_conn = _make_conn([_SYNC_ROW_SYNCED], _SYNC_STATUS_COLS)
+        with patch("fabric_dw.sql.open_connection", side_effect=[refresh_conn, fetch_conn]):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        cursor = refresh_conn.cursor.return_value
+        call_sql: str = cursor.execute.call_args[0][0]
+        assert "nvarchar(517)" in call_sql.lower()
+        exec_line = next(
+            line for line in call_sql.splitlines() if "sp_dw_refresh_ext_table" in line.lower()
+        )
+        # The EXEC call must reference the typed local, not bind ? directly --
+        # binding ? directly into the EXEC call is what triggered the live
+        # type-mismatch error.
+        assert "?" not in exec_line
+
     async def test_nonzero_return_code_raises_with_code_and_table(self) -> None:
         target = _make_target()
         refresh_conn = _make_conn_for_rc(1)
