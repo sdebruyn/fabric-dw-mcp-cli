@@ -669,11 +669,14 @@ def register(mcp: MCPServer) -> None:  # noqa: PLR0915
 
         ``qualified_name`` must already exist in the endpoint's catalog --
         the procedure does not create it, and raises a ``ToolError`` naming
-        the table instead. It may also decline a table by type, for reasons
-        Microsoft does not document, raised as a ``ToolError`` in the same
-        family as the legacy-sync one above. Either failure points at
-        ``refresh_sql_endpoint_metadata`` (or ``fdw sql-endpoints refresh``)
-        as the working alternative.
+        the table instead. That same error also fires when the table exists
+        but you lack permission to it, since the driver does not
+        distinguish the two -- ``refresh_sql_endpoint_metadata`` only helps
+        the missing case, not a permissions one. The procedure may also
+        decline a table by type, for reasons Microsoft does not document,
+        raised as a ``ToolError`` in the same family as the legacy-sync one
+        above; that failure also points at ``refresh_sql_endpoint_metadata``
+        (or ``fdw sql-endpoints refresh``) as the working alternative.
 
         Args:
             workspace: Workspace name or GUID.

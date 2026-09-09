@@ -943,10 +943,12 @@ async def test_refresh_table_metadata_on_unknown_table_raises_not_found(
         if bogus_table.lower() in lowered:
             # Expected, now-confirmed outcome: the procedure does not create
             # a table absent from the endpoint's catalog -- it names the
-            # table in its "not present" translation instead. Checked before
-            # the legacy-sync fragment below because both translated
-            # messages mention "new metadata sync" by design (same message
-            # family), while only this one names the table.
+            # table in its missing-or-inaccessible translation instead
+            # (which stays deliberately ambiguous between the two causes;
+            # see refresh_table_metadata's docstring). Checked before the
+            # legacy-sync fragment below because both translated messages
+            # mention "new metadata sync" by design (same message family),
+            # while only this one names the table.
             assert "fdw sql-endpoints refresh" in msg
             return
         if "new metadata sync" in lowered:

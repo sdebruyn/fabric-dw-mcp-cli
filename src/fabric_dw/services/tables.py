@@ -146,17 +146,32 @@ _REFRESH_TABLE_LEGACY_SYNC_MSG = (
     "instead."
 )
 
-# Fragment (lower-cased) of the SQL Server 15151 driver error
-# ("Cannot find the object <name> because it does not exist or you do not
-# have permissions") that sys.sp_dw_refresh_ext_table raises for a two-part
-# name absent from this endpoint's catalog entirely. This settles #1060's
-# open question against a live endpoint: the procedure does NOT create a
-# table that is not already present -- it fails instead, so
-# refresh_table_metadata (and 'tables refresh') has no item-scoped side
-# effect. map_driver_error does not classify this message (no fragment/error
-# number match), so run_query surfaces it as an unmapped FabricServerError;
-# it is translated here into a NotFoundError naming the table.
-_REFRESH_TABLE_UNKNOWN_OBJECT_FRAGMENT = "cannot find the object"
+# General rule for every fragment translation below (and any added later):
+# a translated message must never assert more than the original driver error
+# established. Flattening an uncertain driver message into a confident one
+# is the same mistake as reading absent data as "nothing to report" (see the
+# guiding rule in sql_endpoints.py's Lakehouse discovery-gap comment) -- it
+# just runs in the other direction, toward false certainty instead of false
+# completeness. Where the driver text itself is ambiguous, the translation
+# must stay ambiguous too, and must not recommend a fix that only addresses
+# one of the possibilities.
+
+# Fragment (lower-cased) of the SQL Server 15151 driver error ("Cannot find
+# the object <name> because it does not exist or you do not have
+# permissions") that sys.sp_dw_refresh_ext_table raises both for a two-part
+# name absent from this endpoint's catalog AND for a table this identity
+# lacks permission to -- the driver text does not distinguish the two, so
+# neither does the translation below. Against an ACTUALLY-nonexistent table
+# on a live endpoint, this settled #1060's open question: the procedure does
+# NOT create the table -- it fails instead, so refresh_table_metadata (and
+# 'tables refresh') has no item-scoped side effect. That finding is about
+# the nonexistent-table case specifically, not a licence to read every
+# occurrence of this message as "missing" -- an existing-but-inaccessible
+# table hits this exact same branch. map_driver_error does not classify this
+# message (no fragment/error number match), so run_query surfaces it as an
+# unmapped FabricServerError; it is translated here into a NotFoundError
+# naming the table without picking one cause over the other.
+_REFRESH_TABLE_MISSING_OR_INACCESSIBLE_FRAGMENT = "cannot find the object"
 
 # Fragment (lower-cased) of the driver error sys.sp_dw_refresh_ext_table
 # raises for a table it declines to refresh by type. Observed against a live
@@ -1622,11 +1637,17 @@ async def refresh_table_metadata(
     :class:`~fabric_dw.exceptions.NotFoundError` naming what to do next,
     rather than reaching the caller as a raw driver string:
 
-    * The procedure does NOT create a table absent from the endpoint's
-      catalog -- it fails with a "cannot find the object" error instead.
-      Confirmed against a live endpoint (#1060's open design question,
-      settled): ``refresh_table_metadata`` (and ``tables refresh``) has no
-      item-scoped side effect.
+    * The driver reports "Cannot find the object ... because it does not
+      exist or you do not have permissions", which covers two causes it
+      does not itself distinguish: the table is absent from this endpoint's
+      catalog entirely, or it exists but this identity lacks permission to
+      it. The translated message keeps that ambiguity rather than picking
+      one, and does not offer an item-level sync as the fix for both, since
+      a permissions problem is not something a sync addresses. Confirmed
+      against a live endpoint using an ACTUALLY-nonexistent table (settling
+      #1060's open design question for that specific case): the procedure
+      does not create it -- it fails instead, so ``refresh_table_metadata``
+      (and ``tables refresh``) has no item-scoped side effect.
     * The procedure can also refuse a specific table by type ("Refresh is
       not supported for this type of table") even when it exists on an
       endpoint where the procedure itself is present -- observed against a
@@ -1655,11 +1676,12 @@ async def refresh_table_metadata(
             :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *schema* or *table_name* fails identifier validation.
         NotFoundError: If the endpoint is on the legacy metadata sync (the
-            procedure does not exist); if the table is not present in the
-            endpoint's catalog at all (the procedure does not create it); if
-            the procedure declines to refresh this table by type; or if the
-            table is not present in the endpoint's catalog after an
-            otherwise-successful refresh.
+            procedure does not exist); if the table is missing from the
+            endpoint's catalog or this identity lacks permission to it (the
+            driver does not distinguish the two, so neither does this
+            message); if the procedure declines to refresh this table by
+            type; or if the table is not present in the endpoint's catalog
+            after an otherwise-successful refresh.
         FabricError: If the procedure reports a non-zero return code, or if
             its result set does not have the expected single ``rc`` column.
         PermissionDeniedError: If the driver reports a permission error.
@@ -1695,13 +1717,22 @@ async def refresh_table_metadata(
             raise
         except FabricServerError as exc:
             lowered = str(exc).lower()
-            if _REFRESH_TABLE_UNKNOWN_OBJECT_FRAGMENT in lowered:
+            if _REFRESH_TABLE_MISSING_OR_INACCESSIBLE_FRAGMENT in lowered:
+                # The driver says "does not exist or you do not have
+                # permissions" and does not distinguish the two -- neither
+                # does this message. Only one of the two possible fixes
+                # (an item-level sync) is offered per case; presenting it as
+                # the answer to both would send a permissions problem
+                # somewhere that cannot fix it.
                 msg = (
-                    f"Table {qualified!r} is not present in this endpoint's table "
-                    "catalog; sys.sp_dw_refresh_ext_table does not create a table "
-                    "that does not already exist, it fails instead. Run 'fdw "
-                    "sql-endpoints refresh' to force an item-level metadata sync "
-                    "and try again."
+                    f"sys.sp_dw_refresh_ext_table could not find or could not "
+                    f"access {qualified!r} (the driver reports 'does not exist "
+                    "or you do not have permissions' and does not distinguish "
+                    "the two). If the table is missing from this endpoint's "
+                    "catalog, run 'fdw sql-endpoints refresh' to force an "
+                    "item-level metadata sync and try again. If it exists but "
+                    "this identity lacks permission to it, that sync will not "
+                    "help -- check permissions on the table instead."
                 )
                 raise NotFoundError(msg) from exc
             if _REFRESH_TABLE_UNSUPPORTED_TYPE_FRAGMENT in lowered:

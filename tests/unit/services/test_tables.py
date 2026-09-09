@@ -3607,22 +3607,32 @@ class TestRefreshTableMetadata:
         assert "new metadata sync" not in msg.lower()
         assert "some_other_proc" in msg
 
-    async def test_unknown_table_error_settles_open_question_as_not_found(self) -> None:
-        """Regression test settling #1060's open question against a live endpoint.
+    async def test_missing_or_inaccessible_table_error_is_translated_without_overclaiming(
+        self,
+    ) -> None:
+        """Regression test for a review finding: the translation must not overclaim.
 
-        sys.sp_dw_refresh_ext_table does NOT create a table absent from the
-        endpoint's catalog: it fails with a "cannot find the object" driver
-        error instead, which map_driver_error does not classify (no matching
-        fragment or error number), so run_query would otherwise surface a raw
-        FabricServerError. This must be translated into an actionable
-        NotFoundError naming the table, not leak the raw driver text.
+        The driver's "Cannot find the object ... because it does not exist
+        or you do not have permissions" fires for BOTH an absent table and
+        an existing-but-inaccessible one, and does not itself distinguish
+        which. The earlier translation replaced this with a definitive
+        "table is not present" plus a recommendation to run an item-level
+        sync -- which cannot fix a permissions problem, and asserts more
+        certainty than the driver error established. The fixed translation
+        must keep the ambiguity: name permission as a real possibility, and
+        not present the item-level sync as the answer to both causes.
+
+        map_driver_error does not classify this message (no matching
+        fragment or error number), so run_query would otherwise surface a
+        raw FabricServerError; this must still become an actionable
+        NotFoundError, not leak the raw driver text.
         """
         target = _make_target()
         conn = MagicMock()
         cursor = MagicMock()
         cursor.execute.side_effect = _unclassified_driver_error(
-            'Cannot find the object "dbo.NonexistentTable" because it does '
-            "not exist or you do not have permissions."
+            'Cannot find the object "dbo.SomeTable" because it does not '
+            "exist or you do not have permissions."
         )
         conn.cursor.return_value = cursor
         with (
@@ -3630,11 +3640,20 @@ class TestRefreshTableMetadata:
             pytest.raises(NotFoundError) as exc_info,
         ):
             await tables.refresh_table_metadata(
-                target, "dbo", "NonexistentTable", kind=WarehouseKind.SQL_ENDPOINT
+                target, "dbo", "SomeTable", kind=WarehouseKind.SQL_ENDPOINT
             )
         msg = str(exc_info.value)
-        assert "dbo.NonexistentTable" in msg
-        assert "does not create" in msg
+        lowered = msg.lower()
+        assert "dbo.SomeTable" in msg
+        # Must NOT assert a definitive absence claim the driver error itself
+        # never established -- this is the exact overclaim the review found.
+        assert "is not present" not in lowered
+        assert "does not create" not in lowered
+        # Must preserve the ambiguity: permission is named as a real
+        # possibility, not silently dropped.
+        assert "permission" in lowered
+        # Must not present the item-level sync as fixing both causes.
+        assert "will not help" in lowered
         assert "fdw sql-endpoints refresh" in msg
 
     async def test_unsupported_table_type_error_is_translated(self) -> None:
