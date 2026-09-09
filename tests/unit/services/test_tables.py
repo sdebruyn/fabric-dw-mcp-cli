@@ -3398,15 +3398,41 @@ class TestRefreshTableMetadata:
         assert result.name == "FactSales"
         assert result.qualified_name == "dbo.FactSales"
 
-    async def test_commits_after_execute(self) -> None:
+    async def test_runs_with_autocommit_not_an_explicit_commit(self) -> None:
+        """Regression test for the live failure that followed the nvarchar fix.
+
+        Against a real endpoint, the refresh batch raised ``Stored procedure
+        sp_dw_refresh_ext_table cannot be called inside an existing
+        transaction`` -- the same restriction ``KILL`` hits (#776).
+        ``run_query``'s own ``commit=True`` still opens the connection
+        without ODBC-level autocommit and wraps the batch in one; only
+        ``autocommit=True`` opens the connection so the driver never wraps it
+        in a transaction at all. This asserts the connection is opened with
+        ``autocommit=True`` and that no explicit ``conn.commit()`` is called
+        (autocommit persists each statement as it completes), so a
+        regression back to ``commit=True`` is caught here rather than only
+        against a live endpoint.
+
+        What this does NOT catch: that the ODBC ``autocommit`` flag really
+        does suppress the driver's implicit transaction server-side -- that
+        is exactly what a live endpoint proved in the integration run this
+        fixes, and the mock has no transaction state to get wrong.
+        """
         target = _make_target()
         refresh_conn = _make_conn_for_rc(0)
         fetch_conn = _make_conn([_SYNC_ROW_SYNCED], _SYNC_STATUS_COLS)
-        with patch("fabric_dw.sql.open_connection", side_effect=[refresh_conn, fetch_conn]):
+        with patch(
+            "fabric_dw.sql.open_connection", side_effect=[refresh_conn, fetch_conn]
+        ) as mock_open_connection:
             await tables.refresh_table_metadata(
                 target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
             )
-        refresh_conn.commit.assert_called_once()
+        refresh_call = mock_open_connection.call_args_list[0]
+        assert refresh_call.kwargs.get("autocommit") is True, (
+            f"expected the refresh connection to be opened with autocommit=True; "
+            f"got call {refresh_call!r}"
+        )
+        refresh_conn.commit.assert_not_called()
 
     async def test_qualified_name_is_bound_param_not_interpolated(self) -> None:
         target = _make_target()

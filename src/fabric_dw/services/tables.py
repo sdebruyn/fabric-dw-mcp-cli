@@ -1564,6 +1564,15 @@ async def refresh_table_metadata(
     :class:`~fabric_dw.exceptions.FabricError` is raised instead of silently
     trusting whatever came back.
 
+    ``sys.sp_dw_refresh_ext_table`` refuses to run inside a user transaction
+    ("Stored procedure sp_dw_refresh_ext_table cannot be called inside an
+    existing transaction") -- the same class of restriction ``KILL`` hits
+    (issue #776). The batch is therefore run with ``autocommit=True``
+    (ODBC-level autocommit, not :func:`~fabric_dw.sql.run_query`'s ``commit``
+    flag), so the driver never wraps it in an explicit ``BEGIN TRANSACTION``
+    and each statement commits as it completes -- the refresh persists even
+    though no explicit ``conn.commit()`` is ever called.
+
     After a successful refresh, the table's refreshed sync-status row is
     fetched via :func:`list_table_sync_status` and returned, so callers see
     the new ``last_update_time_utc`` without a second call. If the table is
@@ -1616,12 +1625,16 @@ async def refresh_table_metadata(
 
     def _run() -> None:
         try:
+            # autocommit=True (ODBC-level), not commit=True: sys.sp_dw_refresh_ext_table
+            # rejects being called inside a user transaction (the same restriction
+            # KILL hits, #776), and run_query would otherwise open the connection
+            # without autocommit and wrap the batch in one. See the docstring above.
             cols, rows = run_query(
                 target,
                 _SP_REFRESH_TABLE_SQL,
                 params=[qualified],
                 mode=mode,
-                commit=True,
+                autocommit=True,
                 fetch="one",
             )
         except NotFoundError as exc:
