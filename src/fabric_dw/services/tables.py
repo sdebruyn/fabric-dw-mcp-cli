@@ -40,7 +40,7 @@ from typing import cast
 from uuid import uuid4
 
 from fabric_dw.auth import CredentialMode
-from fabric_dw.exceptions import FabricError, ItemKindError, NotFoundError
+from fabric_dw.exceptions import FabricError, FabricServerError, ItemKindError, NotFoundError
 from fabric_dw.identifiers import parse_qualified_name, quote_identifier, validate_identifier
 from fabric_dw.models import (
     ClusterColumn,
@@ -144,6 +144,37 @@ _REFRESH_TABLE_LEGACY_SYNC_MSG = (
     "in the workspace hosting this endpoint. On endpoints using the legacy "
     "metadata sync, use 'fdw sql-endpoints refresh' to refresh the whole item "
     "instead."
+)
+
+# Fragment (lower-cased) of the SQL Server 15151 driver error
+# ("Cannot find the object <name> because it does not exist or you do not
+# have permissions") that sys.sp_dw_refresh_ext_table raises for a two-part
+# name absent from this endpoint's catalog entirely. This settles #1060's
+# open question against a live endpoint: the procedure does NOT create a
+# table that is not already present -- it fails instead, so
+# refresh_table_metadata (and 'tables refresh') has no item-scoped side
+# effect. map_driver_error does not classify this message (no fragment/error
+# number match), so run_query surfaces it as an unmapped FabricServerError;
+# it is translated here into a NotFoundError naming the table.
+_REFRESH_TABLE_UNKNOWN_OBJECT_FRAGMENT = "cannot find the object"
+
+# Fragment (lower-cased) of the driver error sys.sp_dw_refresh_ext_table
+# raises for a table it declines to refresh by type. Observed against a live
+# schema-enabled-Lakehouse-backed endpoint where the procedure DOES exist
+# (ruling out the legacy-sync case above), so this is a distinct refusal
+# shape. Microsoft's reference for this procedure and for the new metadata
+# sync (preview) do not document which table types it accepts or rejects, or
+# describe this message at all -- treat the preview-feature explanation
+# below as the best available guidance, not a confirmed root cause.
+_REFRESH_TABLE_UNSUPPORTED_TYPE_FRAGMENT = "refresh is not supported for this type of table"
+_REFRESH_TABLE_UNSUPPORTED_TYPE_MSG = (
+    "sys.sp_dw_refresh_ext_table declined to refresh this table ('Refresh is "
+    "not supported for this type of table'). Microsoft documents this "
+    "procedure as usable only on a SQL analytics endpoint created after 'New "
+    "metadata sync' was enabled under Workspace settings, Warehouse settings, "
+    "in the workspace hosting this endpoint; which table types it accepts "
+    "once available is not documented. Use 'fdw sql-endpoints refresh' to "
+    "refresh the whole item instead."
 )
 
 
@@ -1587,6 +1618,24 @@ async def refresh_table_metadata(
     at the workspace setting and at ``fdw sql-endpoints refresh`` as the
     fallback.
 
+    Two further driver refusals are translated the same way, into
+    :class:`~fabric_dw.exceptions.NotFoundError` naming what to do next,
+    rather than reaching the caller as a raw driver string:
+
+    * The procedure does NOT create a table absent from the endpoint's
+      catalog -- it fails with a "cannot find the object" error instead.
+      Confirmed against a live endpoint (#1060's open design question,
+      settled): ``refresh_table_metadata`` (and ``tables refresh``) has no
+      item-scoped side effect.
+    * The procedure can also refuse a specific table by type ("Refresh is
+      not supported for this type of table") even when it exists on an
+      endpoint where the procedure itself is present -- observed against a
+      schema-enabled-Lakehouse-backed endpoint. Microsoft does not document
+      which table types are accepted or rejected; the translated message
+      points at the same preview-feature setting as the legacy-sync case
+      and at ``fdw sql-endpoints refresh`` as the working alternative,
+      without claiming a confirmed root cause.
+
     Args:
         target: The SQL Analytics Endpoint to refresh. Data Warehouses are
             rejected with :class:`~fabric_dw.exceptions.ItemKindError`.
@@ -1606,8 +1655,11 @@ async def refresh_table_metadata(
             :attr:`~fabric_dw.models.WarehouseKind.SQL_ENDPOINT`.
         ValueError: If *schema* or *table_name* fails identifier validation.
         NotFoundError: If the endpoint is on the legacy metadata sync (the
-            procedure does not exist), or if the table is not present in the
-            endpoint's catalog after a successful refresh.
+            procedure does not exist); if the table is not present in the
+            endpoint's catalog at all (the procedure does not create it); if
+            the procedure declines to refresh this table by type; or if the
+            table is not present in the endpoint's catalog after an
+            otherwise-successful refresh.
         FabricError: If the procedure reports a non-zero return code, or if
             its result set does not have the expected single ``rc`` column.
         PermissionDeniedError: If the driver reports a permission error.
@@ -1640,6 +1692,20 @@ async def refresh_table_metadata(
         except NotFoundError as exc:
             if _REFRESH_TABLE_LEGACY_SYNC_FRAGMENT in str(exc).lower():
                 raise NotFoundError(_REFRESH_TABLE_LEGACY_SYNC_MSG) from exc
+            raise
+        except FabricServerError as exc:
+            lowered = str(exc).lower()
+            if _REFRESH_TABLE_UNKNOWN_OBJECT_FRAGMENT in lowered:
+                msg = (
+                    f"Table {qualified!r} is not present in this endpoint's table "
+                    "catalog; sys.sp_dw_refresh_ext_table does not create a table "
+                    "that does not already exist, it fails instead. Run 'fdw "
+                    "sql-endpoints refresh' to force an item-level metadata sync "
+                    "and try again."
+                )
+                raise NotFoundError(msg) from exc
+            if _REFRESH_TABLE_UNSUPPORTED_TYPE_FRAGMENT in lowered:
+                raise NotFoundError(_REFRESH_TABLE_UNSUPPORTED_TYPE_MSG) from exc
             raise
         if not rows or [c.casefold() for c in cols] != ["rc"]:
             msg = (

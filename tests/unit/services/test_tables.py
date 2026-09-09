@@ -16,6 +16,7 @@ import pytest
 from fabric_dw.exceptions import (
     AuthError,
     FabricError,
+    FabricServerError,
     ItemKindError,
     NotFoundError,
     PermissionDeniedError,
@@ -3364,6 +3365,19 @@ def _missing_procedure_error(proc_name: str) -> _DriverError:
     return _DriverError(msg, f"[SQL Server]{msg} (2812)")
 
 
+def _unclassified_driver_error(msg: str) -> _DriverError:
+    """A driver error map_driver_error does NOT classify (unlike _missing_procedure_error).
+
+    Native error number 15151 is not in _NOT_FOUND_ERROR_NUMBERS and *msg* is
+    chosen by callers to avoid every fragment in _NOT_FOUND_FRAGMENTS /
+    _PERMISSION_DENIED_FRAGMENTS / _AUTH_FAILED_FRAGMENTS, so run_query wraps
+    it via _wrap_unmapped_driver_error into a plain FabricServerError -- the
+    same shape a real, unclassified sys.sp_dw_refresh_ext_table error reaches
+    refresh_table_metadata as.
+    """
+    return _DriverError(msg, f"[SQL Server]{msg} (15151)")
+
+
 def _make_conn_for_rc(rc: int, *, col_name: str = "rc") -> MagicMock:
     """Return a mock DB-API connection for the DECLARE/EXEC/SELECT rc batch.
 
@@ -3592,6 +3606,81 @@ class TestRefreshTableMetadata:
         msg = str(exc_info.value)
         assert "new metadata sync" not in msg.lower()
         assert "some_other_proc" in msg
+
+    async def test_unknown_table_error_settles_open_question_as_not_found(self) -> None:
+        """Regression test settling #1060's open question against a live endpoint.
+
+        sys.sp_dw_refresh_ext_table does NOT create a table absent from the
+        endpoint's catalog: it fails with a "cannot find the object" driver
+        error instead, which map_driver_error does not classify (no matching
+        fragment or error number), so run_query would otherwise surface a raw
+        FabricServerError. This must be translated into an actionable
+        NotFoundError naming the table, not leak the raw driver text.
+        """
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = _unclassified_driver_error(
+            'Cannot find the object "dbo.NonexistentTable" because it does '
+            "not exist or you do not have permissions."
+        )
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError) as exc_info,
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "NonexistentTable", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        msg = str(exc_info.value)
+        assert "dbo.NonexistentTable" in msg
+        assert "does not create" in msg
+        assert "fdw sql-endpoints refresh" in msg
+
+    async def test_unsupported_table_type_error_is_translated(self) -> None:
+        """A table the procedure refuses by type gets an actionable NotFoundError.
+
+        Observed against a live schema-enabled-Lakehouse-backed endpoint
+        where sys.sp_dw_refresh_ext_table itself exists (so the legacy-sync
+        translation above never fires) but still refuses this specific
+        table. Translated into the same message family as the legacy-sync
+        case: names the preview-feature workspace setting and points at
+        'fdw sql-endpoints refresh' as the working alternative.
+        """
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = _unclassified_driver_error(
+            "Refresh is not supported for this type of table."
+        )
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError) as exc_info,
+        ):
+            await tables.refresh_table_metadata(
+                target, "sample", "colors", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        msg = str(exc_info.value)
+        assert "new metadata sync" in msg.lower()
+        assert "fdw sql-endpoints refresh" in msg
+
+    async def test_unrelated_fabric_server_error_propagates_unchanged(self) -> None:
+        """A FabricServerError matching neither translated fragment is untouched."""
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = _unclassified_driver_error("Some other server-side failure.")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(FabricServerError) as exc_info,
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        msg = str(exc_info.value)
+        assert "some other server-side failure" in msg.lower()
 
     async def test_empty_post_refresh_lookup_raises_not_in_catalog(self) -> None:
         target = _make_target()
