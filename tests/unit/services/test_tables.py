@@ -16,6 +16,7 @@ import pytest
 from fabric_dw.exceptions import (
     AuthError,
     FabricError,
+    FabricServerError,
     ItemKindError,
     NotFoundError,
     PermissionDeniedError,
@@ -3364,6 +3365,19 @@ def _missing_procedure_error(proc_name: str) -> _DriverError:
     return _DriverError(msg, f"[SQL Server]{msg} (2812)")
 
 
+def _unclassified_driver_error(msg: str) -> _DriverError:
+    """A driver error map_driver_error does NOT classify (unlike _missing_procedure_error).
+
+    Native error number 15151 is not in _NOT_FOUND_ERROR_NUMBERS and *msg* is
+    chosen by callers to avoid every fragment in _NOT_FOUND_FRAGMENTS /
+    _PERMISSION_DENIED_FRAGMENTS / _AUTH_FAILED_FRAGMENTS, so run_query wraps
+    it via _wrap_unmapped_driver_error into a plain FabricServerError -- the
+    same shape a real, unclassified sys.sp_dw_refresh_ext_table error reaches
+    refresh_table_metadata as.
+    """
+    return _DriverError(msg, f"[SQL Server]{msg} (15151)")
+
+
 def _make_conn_for_rc(rc: int, *, col_name: str = "rc") -> MagicMock:
     """Return a mock DB-API connection for the DECLARE/EXEC/SELECT rc batch.
 
@@ -3592,6 +3606,100 @@ class TestRefreshTableMetadata:
         msg = str(exc_info.value)
         assert "new metadata sync" not in msg.lower()
         assert "some_other_proc" in msg
+
+    async def test_missing_or_inaccessible_table_error_is_translated_without_overclaiming(
+        self,
+    ) -> None:
+        """Regression test for a review finding: the translation must not overclaim.
+
+        The driver's "Cannot find the object ... because it does not exist
+        or you do not have permissions" fires for BOTH an absent table and
+        an existing-but-inaccessible one, and does not itself distinguish
+        which. The earlier translation replaced this with a definitive
+        "table is not present" plus a recommendation to run an item-level
+        sync -- which cannot fix a permissions problem, and asserts more
+        certainty than the driver error established. The fixed translation
+        must keep the ambiguity: name permission as a real possibility, and
+        not present the item-level sync as the answer to both causes.
+
+        map_driver_error does not classify this message (no matching
+        fragment or error number), so run_query would otherwise surface a
+        raw FabricServerError; this must still become an actionable
+        NotFoundError, not leak the raw driver text.
+        """
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = _unclassified_driver_error(
+            'Cannot find the object "dbo.SomeTable" because it does not '
+            "exist or you do not have permissions."
+        )
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError) as exc_info,
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "SomeTable", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        msg = str(exc_info.value)
+        lowered = msg.lower()
+        assert "dbo.SomeTable" in msg
+        # Must NOT assert a definitive absence claim the driver error itself
+        # never established -- this is the exact overclaim the review found.
+        assert "is not present" not in lowered
+        assert "does not create" not in lowered
+        # Must preserve the ambiguity: permission is named as a real
+        # possibility, not silently dropped.
+        assert "permission" in lowered
+        # Must not present the item-level sync as fixing both causes.
+        assert "will not help" in lowered
+        assert "fdw sql-endpoints refresh" in msg
+
+    async def test_unsupported_table_type_error_is_translated(self) -> None:
+        """A table the procedure refuses by type gets an actionable NotFoundError.
+
+        Observed against a live schema-enabled-Lakehouse-backed endpoint
+        where sys.sp_dw_refresh_ext_table itself exists (so the legacy-sync
+        translation above never fires) but still refuses this specific
+        table. Translated into the same message family as the legacy-sync
+        case: names the preview-feature workspace setting and points at
+        'fdw sql-endpoints refresh' as the working alternative.
+        """
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = _unclassified_driver_error(
+            "Refresh is not supported for this type of table."
+        )
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(NotFoundError) as exc_info,
+        ):
+            await tables.refresh_table_metadata(
+                target, "sample", "colors", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        msg = str(exc_info.value)
+        assert "new metadata sync" in msg.lower()
+        assert "fdw sql-endpoints refresh" in msg
+
+    async def test_unrelated_fabric_server_error_propagates_unchanged(self) -> None:
+        """A FabricServerError matching neither translated fragment is untouched."""
+        target = _make_target()
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.execute.side_effect = _unclassified_driver_error("Some other server-side failure.")
+        conn.cursor.return_value = cursor
+        with (
+            patch("fabric_dw.sql.open_connection", return_value=conn),
+            pytest.raises(FabricServerError) as exc_info,
+        ):
+            await tables.refresh_table_metadata(
+                target, "dbo", "FactSales", kind=WarehouseKind.SQL_ENDPOINT
+            )
+        msg = str(exc_info.value)
+        assert "some other server-side failure" in msg.lower()
 
     async def test_empty_post_refresh_lookup_raises_not_in_catalog(self) -> None:
         target = _make_target()

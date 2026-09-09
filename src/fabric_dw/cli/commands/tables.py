@@ -462,6 +462,15 @@ async def refresh_cmd(
     setting was enabled. This does not pick up schema changes (tables added
     or dropped) -- for that, use 'fdw sql-endpoints refresh' instead.
 
+    QUALIFIED_NAME must already exist in the endpoint's catalog; the
+    procedure does not create it. If it reports the table missing, that
+    same error also fires when the table exists but you lack permission to
+    it, since the driver does not distinguish the two -- 'fdw
+    sql-endpoints refresh' only helps the missing case, not a permissions
+    one. The procedure may also decline a table by type for reasons
+    Microsoft does not document; that failure also points at 'fdw
+    sql-endpoints refresh' as the working alternative.
+
     On success, prints a one-line confirmation followed by the table's
     refreshed sync-status row (the same shape as 'tables sync-status'), so
     the new last_update_time_utc is visible without a second command.

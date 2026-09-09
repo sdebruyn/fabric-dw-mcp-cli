@@ -468,6 +468,10 @@ This refreshes **data only** - it re-reads the underlying Delta log for that one
 
 On success, the command prints a one-line confirmation followed by the table's refreshed sync-status row (the same shape as [`tables sync-status`](#tables-sync-status)), so the new `last_update_time_utc` is visible without a second command. A non-zero procedure return code (the procedure returns `0` for success, `1` for failure) fails with a clear error and a non-zero exit code.
 
+**QUALIFIED_NAME must already exist in the endpoint's catalog.** The procedure does not create a table on demand. If it reports the table missing, the command fails with an actionable error - but the same driver error also fires when the table exists and the caller lacks permission to it, and the two are not distinguishable from the message alone. The error names both possibilities rather than asserting one: for a missing table, [`fdw sql-endpoints refresh`](sql-endpoints.md#sql-endpoints-refresh) forces an item-level sync and picks it up; for a permissions problem, that sync will not help - check permissions on the table instead.
+
+**The procedure can also decline a table by type**, reported as "Refresh is not supported for this type of table" and translated into the same actionable error as the legacy-sync case above. Microsoft's reference for this procedure does not document which table types it accepts or rejects. If it fails for you with either message, [`fdw sql-endpoints refresh`](sql-endpoints.md#sql-endpoints-refresh) is the working alternative for that table.
+
 `--json` emits a single JSON object, not an array - the command always acts on exactly one table, so `fdw tables refresh MyLakehouseEP dbo.FactSales --json | jq .last_update_time_utc` works without indexing.
 
 **Synopsis**
@@ -492,6 +496,8 @@ Refreshed table metadata for dbo.FactSales.
 ```shell
 fdw -w MyWorkspace --json tables refresh MyLakehouseEP dbo.FactSales | jq .last_update_time_utc
 ```
+
+References: [sys.sp_dw_refresh_ext_table](https://learn.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sp-dw-refresh-ext-table-transact-sql?view=fabric&WT.mc_id=MVP_310840), [SQL analytics endpoint metadata sync](https://learn.microsoft.com/en-us/fabric/data-engineering/sql-analytics-endpoint-metadata-sync?WT.mc_id=MVP_310840) (the `New metadata sync` preview setting)
 
 ### tables list
 
@@ -963,7 +969,11 @@ Mutating (respects `FABRIC_MCP_READONLY`) but **not** destructive: it never drop
 
 On an endpoint using the legacy metadata sync, the tool raises a `ToolError` with the same actionable message as `list_table_sync_status`. A non-zero procedure return code (the procedure returns `0` for success, `1` for failure) also raises a `ToolError`. If the table is not present in the endpoint's catalog after a successful refresh, the tool raises a `ToolError` naming the table and pointing at `refresh_sql_endpoint_metadata` (or `fdw sql-endpoints refresh`) as the fallback.
 
-Reference: [sys.sp_dw_refresh_ext_table](https://learn.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sp-dw-refresh-ext-table-transact-sql?view=fabric&WT.mc_id=MVP_310840)
+`qualified_name` must already name a table present in the endpoint's catalog: the procedure does not create one on demand. If it reports the table missing, the tool raises a `ToolError` naming it - but the same driver error also fires when the table exists and the caller lacks permission to it, and the two are not distinguishable from the message alone, so the error names both possibilities rather than asserting one. For a missing table, `refresh_sql_endpoint_metadata` (or `fdw sql-endpoints refresh`) forces an item-level sync and picks it up; for a permissions problem, that sync will not help - check permissions on the table instead.
+
+The procedure can also decline a table by type, reported as "Refresh is not supported for this type of table" and raised as a `ToolError` in the same family as the legacy-sync message above. Microsoft's reference for this procedure does not document which table types it accepts or rejects. If it fails for you with either message, `refresh_sql_endpoint_metadata` (or `fdw sql-endpoints refresh`) is the working alternative for that table.
+
+References: [sys.sp_dw_refresh_ext_table](https://learn.microsoft.com/en-us/sql/relational-databases/system-stored-procedures/sp-dw-refresh-ext-table-transact-sql?view=fabric&WT.mc_id=MVP_310840), [SQL analytics endpoint metadata sync](https://learn.microsoft.com/en-us/fabric/data-engineering/sql-analytics-endpoint-metadata-sync?WT.mc_id=MVP_310840) (the `New metadata sync` preview setting)
 
 ### import_table_from_url
 
